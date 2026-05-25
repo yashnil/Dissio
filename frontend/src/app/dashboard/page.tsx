@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import Link from "next/link";
+import ApiStatusCard from "@/components/ApiStatusCard";
 
 export default function DashboardPage() {
   return (
@@ -13,6 +14,8 @@ export default function DashboardPage() {
           <Link href="/session">New Session</Link>
         </Button>
       </div>
+
+      <ApiStatusCard />
 
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
