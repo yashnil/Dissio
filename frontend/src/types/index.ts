@@ -3,10 +3,95 @@ export interface HealthResponse {
   service: string;
 }
 
-// Sprint 2+: expand as AI pipeline schemas are defined.
-export interface Session {
+export type SpeechType =
+  | "constructive"
+  | "rebuttal"
+  | "summary"
+  | "final_focus"
+  | "crossfire";
+
+export type SpeechSide = "pro" | "con";
+export type JudgeType = "lay" | "flow" | "tech" | "coach";
+export type SpeechStatus =
+  | "pending"
+  | "transcribing"
+  | "analyzing"
+  | "done"
+  | "error";
+
+export type ArgumentType =
+  | "offense"
+  | "defense"
+  | "weighing"
+  | "response"
+  | "unclear";
+
+export interface ArgumentItem {
+  label: string;
+  claim: string;
+  warrant: string;
+  evidence: string | null;
+  impact: string;
+  argument_type: ArgumentType;
+  issues: string[];
+  confidence: number | null;
+}
+
+export interface ArgumentMap {
   id: string;
-  title: string;
-  status: "pending" | "processing" | "done" | "error";
+  speech_id: string;
+  arguments: ArgumentItem[];
   created_at: string;
+}
+
+export interface Transcript {
+  id: string;
+  speech_id: string;
+  text: string;
+  word_count: number | null;
+  created_at: string;
+}
+
+export interface FeedbackScores {
+  clash: number;
+  weighing: number;
+  extensions: number;
+  drops: number;
+  judge_adaptation: number;
+}
+
+export interface FeedbackReport {
+  id: string;
+  speech_id: string;
+  overall_score: number | null;
+  scores: FeedbackScores;
+  summary: string | null;
+  strengths: string[];
+  weaknesses: string[];
+  raw_feedback: {
+    decision_logic?: string;
+    dropped_or_undercovered_arguments?: string[];
+    warranting_diagnostics?: string[];
+    weighing_diagnostics?: string[];
+    evidence_diagnostics?: string[];
+    judge_adaptation_notes?: string;
+    top_3_priorities?: string[];
+    recommendations?: string[];
+  } | null;
+  created_at: string;
+}
+
+export interface Speech {
+  id: string;
+  user_id: string;
+  title: string;
+  speech_type: SpeechType;
+  side: SpeechSide | null;
+  judge_type: JudgeType | null;
+  topic: string | null;
+  audio_url: string | null;
+  duration_seconds: number | null;
+  status: SpeechStatus;
+  created_at: string;
+  updated_at: string;
 }

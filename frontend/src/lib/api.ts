@@ -7,7 +7,14 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
-    throw new Error(`API error ${res.status} on ${path}`);
+    let message = `API error ${res.status} on ${path}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) message = String(body.detail);
+    } catch {
+      // response body wasn't JSON — keep the default message
+    }
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
