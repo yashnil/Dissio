@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Check, ChevronDown, ChevronUp,
+  Check, ChevronDown, ChevronUp, FileText,
   Mic, RefreshCw, Trash2, Upload, ThumbsUp, ThumbsDown,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
@@ -399,7 +399,7 @@ export default function SpeechPage() {
   const [pageLoad,   setPageLoad]   = useState(true);
   const [pageErr,    setPageErr]    = useState("");
 
-  const [mode,       setMode]       = useState<"record" | "upload">("record");
+  const [mode,       setMode]       = useState<"record" | "upload" | "paste">("record");
   const [recState,   setRecState]   = useState<RecordState>("idle");
   const [recSecs,    setRecSecs]    = useState(0);
   const [recBlob,    setRecBlob]    = useState<Blob | null>(null);
@@ -410,6 +410,10 @@ export default function SpeechPage() {
   const [upErr,      setUpErr]      = useState("");
   const [uploading,  setUploading]  = useState(false);
   const [resetting,  setResetting]  = useState(false);
+
+  const [pastedText,   setPastedText]   = useState("");
+  const [submittingText, setSubmittingText] = useState(false);
+  const [pasteErr,     setPasteErr]     = useState("");
 
   const [transcript,   setTranscript]   = useState<Transcript | null>(null);
   const [transcribing, setTranscribing] = useState(false);
@@ -563,6 +567,25 @@ export default function SpeechPage() {
   }
 
   function clearFile() { setSelFile(null); setFileErr(""); }
+
+  async function submitPastedText() {
+    if (!pastedText.trim() || !userId) return;
+    setPasteErr(""); setSubmittingText(true);
+    try {
+      const txResult = await apiFetch<Transcript>(`/speeches/${speechId}/transcript?user_id=${userId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: pastedText.trim() }),
+      });
+      setTranscript(txResult);
+      // Update speech status
+      const updatedSpeech = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`);
+      setSpeech(updatedSpeech);
+      setPastedText("");
+    } catch (err: unknown) {
+      setPasteErr(err instanceof Error ? err.message : "Failed to save transcript.");
+    } finally { setSubmittingText(false); }
+  }
 
   // ── Reset audio ────────────────────────────────────────────────────────────
 
@@ -855,7 +878,7 @@ export default function SpeechPage() {
                 ) : (
                   <div className="flex flex-col gap-4">
                     <div className="flex gap-0.5 rounded-lg border border-hairline bg-surface-2 p-0.5">
-                      {(["record", "upload"] as const).map((m) => (
+                      {(["record", "upload", "paste"] as const).map((m) => (
                         <button
                           key={m}
                           type="button"
@@ -868,7 +891,7 @@ export default function SpeechPage() {
                               : "text-ink-subtle hover:text-ink-muted",
                           ].join(" ")}
                         >
-                          {m === "record" ? <><Mic size={12} /> Record</> : <><Upload size={12} /> Upload</>}
+                          {m === "record" ? <><Mic size={12} /> Record</> : m === "upload" ? <><Upload size={12} /> Upload</> : <><FileText size={12} /> Paste</>}
                         </button>
                       ))}
                     </div>
@@ -886,7 +909,7 @@ export default function SpeechPage() {
                             onSaveRecording={saveRec}  onDiscardRecording={discardRec}
                           />
                         </motion.div>
-                      ) : (
+                      ) : mode === "upload" ? (
                         <motion.div key="upload"
                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                           transition={T.fast}
@@ -896,6 +919,39 @@ export default function SpeechPage() {
                             uploadError={upErr}    uploading={uploading}
                             onFileChange={onFileChange} onUpload={uploadFile} onClearFile={clearFile}
                           />
+                        </motion.div>
+                      ) : (
+                        <motion.div key="paste"
+                          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                          transition={T.fast}
+                          className="flex flex-col gap-3"
+                        >
+                          <div className="flex flex-col gap-2">
+                            <label className="text-xs font-medium text-ink-subtle">Paste your speech text</label>
+                            <textarea
+                              value={pastedText}
+                              onChange={(e) => setPastedText(e.target.value)}
+                              placeholder="Paste or type your speech here... (minimum 30 seconds / ~75 words)"
+                              className="h-48 w-full rounded-md border border-hairline bg-surface-2 px-3 py-2 text-sm text-ink outline-none transition-colors focus-visible:border-lav/50 focus-visible:ring-2 focus-visible:ring-lav/20 resize-none"
+                            />
+                            {pastedText.trim() && (
+                              <p className="text-xs text-ink-faint">
+                                {pastedText.trim().split(/\s+/).length} words
+                              </p>
+                            )}
+                          </div>
+                          {pasteErr && <InlineAlert variant="danger">{pasteErr}</InlineAlert>}
+                          <Button
+                            onClick={submitPastedText}
+                            disabled={!pastedText.trim() || submittingText}
+                            size="sm"
+                            className="w-full"
+                          >
+                            {submittingText ? "Saving..." : "Save Text & Continue"}
+                          </Button>
+                          <p className="text-xs text-ink-faint leading-relaxed">
+                            Paste a speech you've already prepared. RoundLab will analyze the text and generate flow and feedback.
+                          </p>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -912,6 +968,25 @@ export default function SpeechPage() {
                   <WorkspaceCard key="fb-done">
                     <CardContent className="flex flex-col gap-5 px-5 py-5">
                       <StepHeader n={4} title="Coaching Report" done />
+
+                      {/* Regenerate Banner */}
+                      <div className="rounded-lg border border-lav/20 bg-lav/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex flex-col gap-1">
+                          <p className="text-sm font-medium text-lav">Update Available</p>
+                          <p className="text-xs text-ink-muted leading-relaxed">
+                            This report may use an older rubric. Regenerate to apply the latest speech-type scoring.
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={generateFeedback}
+                          disabled={genFb}
+                          className="shrink-0"
+                        >
+                          {genFb ? "Regenerating..." : "Regenerate Report"}
+                        </Button>
+                      </div>
 
                       {/* Summary Card */}
                       <div className="rounded-xl border border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10 p-5">
@@ -1433,6 +1508,25 @@ export default function SpeechPage() {
                       <CardContent className="flex flex-col gap-5 px-5 py-5">
                         <StepHeader n={4} title="Coaching Report" done />
 
+                        {/* Regenerate Banner */}
+                        <div className="rounded-lg border border-lav/20 bg-lav/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div className="flex flex-col gap-1">
+                            <p className="text-sm font-medium text-lav">Update Available</p>
+                            <p className="text-xs text-ink-muted leading-relaxed">
+                              This report may use an older rubric. Regenerate to apply the latest speech-type scoring.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            onClick={generateFeedback}
+                            disabled={genFb}
+                            className="shrink-0"
+                          >
+                            {genFb ? "Regenerating..." : "Regenerate Report"}
+                          </Button>
+                        </div>
+
                         {/* Summary Card */}
                         <div className="rounded-xl border border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10 p-5">
                           <ScoreCard score={feedback.overall_score} summary={feedback.summary} />
@@ -1465,7 +1559,7 @@ export default function SpeechPage() {
                             <p className="text-eyebrow text-ink-subtle">Judge Ballot</p>
                           </div>
                           <div className="rounded-lg border border-hairline bg-surface-2 p-4">
-                            <ScoreBreakdown scores={feedback.scores} />
+                            <ScoreBreakdown scores={feedback.scores} speechType={speech?.speech_type} />
                           </div>
                         </div>
 

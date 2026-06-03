@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.models.transcript import TranscriptRow
 from app.services.supabase_client import get_supabase
@@ -14,6 +15,11 @@ from app.services.transcription import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/speeches", tags=["transcripts"])
+
+
+class CreateTranscriptRequest(BaseModel):
+    """Request body for creating a transcript from pasted text."""
+    text: str
 
 
 @router.post("/{speech_id}/transcribe", response_model=TranscriptRow)
@@ -108,6 +114,64 @@ async def transcribe(speech_id: str, user_id: str = Query(...)) -> TranscriptRow
         _set_error_status()
         raise HTTPException(
             status_code=500, detail="Transcription failed. Check backend logs."
+        ) from exc
+
+
+@router.post("/{speech_id}/transcript", response_model=TranscriptRow)
+async def create_transcript_from_text(
+    speech_id: str,
+    request: CreateTranscriptRequest,
+    user_id: str = Query(...),
+) -> TranscriptRow:
+    """Create or update transcript from pasted text (no audio required)."""
+    supabase = get_supabase()
+    logger.info("create_transcript_from_text: speech_id=%s text_length=%d", speech_id, len(request.text))
+
+    # 1. Verify speech ownership
+    try:
+        speech_result = (
+            supabase.table("speeches")
+            .select("*")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("create_transcript_from_text: fetch_speech failed | exc_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to fetch speech") from exc
+
+    if not speech_result.data:
+        raise HTTPException(status_code=404, detail="Speech not found")
+
+    # 2. Validate text
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Transcript text cannot be empty")
+
+    word_count = len(text.split())
+    logger.info("create_transcript_from_text: word_count=%d", word_count)
+
+    # 3. Upsert transcript and mark speech done
+    try:
+        transcript_result = (
+            supabase.table("transcripts")
+            .upsert(
+                {"speech_id": speech_id, "text": text, "word_count": word_count},
+                on_conflict="speech_id",
+            )
+            .execute()
+        )
+        supabase.table("speeches").update({"status": "done"}).eq("id", speech_id).execute()
+        logger.info("create_transcript_from_text: success | speech_id=%s", speech_id)
+        return transcript_result.data[0]
+    except Exception as exc:
+        logger.error(
+            "create_transcript_from_text: upsert failed | exc_type=%s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to save transcript"
         ) from exc
 
 

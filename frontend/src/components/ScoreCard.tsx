@@ -5,11 +5,14 @@ import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { cn } from "@/lib/utils";
 
 const GRADE_SCALE = [
-  { min: 88, grade: "Excellent",   ring: "border-ok"     },
-  { min: 75, grade: "Strong",      ring: "border-lav"    },
-  { min: 62, grade: "Developing",  ring: "border-lav-lo" },
-  { min: 50, grade: "Needs Work",  ring: "border-warn"   },
-  { min:  0, grade: "Beginning",   ring: "border-danger" },
+  { min: 90, grade: "Tournament-Ready",        ring: "border-ok"     },
+  { min: 80, grade: "Strong",                  ring: "border-ok"     },
+  { min: 70, grade: "Solid",                   ring: "border-lav"    },
+  { min: 60, grade: "Developing",              ring: "border-lav-lo" },
+  { min: 50, grade: "Flawed but Complete",     ring: "border-warn"   },
+  { min: 40, grade: "Needs Foundation",        ring: "border-warn"   },
+  { min: 30, grade: "Severely Underdeveloped", ring: "border-danger" },
+  { min:  0, grade: "Incomplete",              ring: "border-danger" },
 ] as const;
 
 function resolve(score: number | null) {

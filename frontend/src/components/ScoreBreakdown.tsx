@@ -54,10 +54,23 @@ function barColor(pct: number): string {
   return "bg-danger";
 }
 
+function normalizeSpeechType(speechType?: string): string | undefined {
+  if (!speechType) return undefined;
+  const normalized = speechType.toLowerCase().replace(/[_\s]/g, '');
+  // Map variations to standard types
+  if (normalized.includes('construct')) return 'constructive';
+  if (normalized.includes('rebut')) return 'rebuttal';
+  if (normalized.includes('summar')) return 'summary';
+  if (normalized.includes('final') || normalized.includes('focus')) return 'final_focus';
+  if (normalized.includes('cross')) return 'crossfire';
+  return speechType.toLowerCase();
+}
+
 export default function ScoreBreakdown({ scores, speechType }: { scores: FeedbackScores; speechType?: string }) {
   // Get speech-type-specific dimensions
-  const dims = speechType ? (SPEECH_TYPE_DIMS[speechType] || DEFAULT_DIMS) : DEFAULT_DIMS;
-  const purpose = speechType ? SPEECH_TYPE_PURPOSE[speechType] : null;
+  const normalizedType = normalizeSpeechType(speechType);
+  const dims = normalizedType ? (SPEECH_TYPE_DIMS[normalizedType] || DEFAULT_DIMS) : DEFAULT_DIMS;
+  const purpose = normalizedType ? SPEECH_TYPE_PURPOSE[normalizedType] : null;
 
   // Find lowest scoring dimension
   const lowestDim = dims.reduce((lowest, dim) =>
