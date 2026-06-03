@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.models.feedback_report import FeedbackScores
+from app.services.pf_rubrics import get_rubric, get_score_band, SCORE_BANDS
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,9 @@ or argument map. Distinguish between 'argument was absent,' 'argument was presen
 'argument was asserted but not impacted,' and 'argument was impacted but not weighed.' Your goal is \
 to help the student know exactly what to fix in the next recording.
 
+IMPORTANT: If a student cites evidence vaguely, critique the attribution and explanation, but do NOT \
+invent what the card says. Do NOT fabricate evidence.
+
 Speech context:
 - Speech type: {speech_type}
 - Side: {side}
@@ -113,29 +117,21 @@ Speech type guidance:
 Judge type guidance:
 {judge_guidance}
 
-Scoring instructions (be accurate, consistent, and honest — do not inflate scores):
+RUBRIC FOR THIS SPEECH TYPE ({speech_type}):
+{rubric_details}
 
 SCORING CALIBRATION:
-- 90–100: Tournament-ready. Clear warranting on all arguments, explicit weighing with magnitude/probability/timeframe, clean extensions through the speech, strong judge adaptation. Minimal weaknesses.
-- 75–89: Strong performance but missing some strategic depth. Most arguments warranted, some weighing present, extensions mostly done, adapted to judge type.
-- 60–74: Understandable but with notable debate weaknesses. Some warranting present, limited weighing, inconsistent extensions, or generic judge approach.
-- 40–59: Major missing components. Thin warranting, no weighing, dropped arguments, or inappropriate for judge type.
-- Below 40: Incomplete, very unclear, or too short to evaluate fairly.
+{score_bands}
 
-IMPORTANT: Score consistently. The same transcript should produce similar scores. Use the rubric anchors above.
+IMPORTANT: Score consistently using the rubric above. The same transcript should produce similar scores.
 
-- overall_score: Integer 1–100. Derived from the sum of the 5 category scores below (max 100).
-- scores.clash (0–20): Direct engagement with opponent arguments. 0 = none, 20 = thorough line-by-line. NOTE: For constructive speeches, clash may not be expected—if the speech type doesn't call for clash, score based on what was appropriate for that speech, not penalize absence.
-- scores.weighing (0–20): Impact comparison and magnitude/probability/timeframe analysis. 0 = none, 20 = precise. Most critical for summary and final focus.
-- scores.extensions (0–20): Whether own arguments were clearly extended. 0 = dropped, 20 = fully extended. Most relevant for summary and final focus, not applicable to constructive.
-- scores.drops (0–20): Whether the speaker addressed everything they needed to. 20 = nothing important dropped. Universal dimension—applies to all speech types.
-- scores.judge_adaptation (0–20): How well the speech was tailored to this judge type. Universal dimension—applies to all speech types.
+LEGACY SCORE MAPPING (for backwards compatibility with 5-dimension schema):
+You must output 5 scores (clash, weighing, extensions, drops, judge_adaptation) even though this \
+speech type may not use all dimensions. Map the rubric dimensions as follows:
+{score_mapping}
 
-SPEECH-TYPE SCORING GUIDANCE:
-- Constructive: Emphasize argument structure quality (complete claim→warrant→evidence→impact chains), clarity, evidence use, and judge adaptation. Clash and extensions are not expected—do not penalize their absence.
-- Rebuttal: Emphasize clash (direct refutation), coverage (drops), and weighing setup. Extensions are less critical here.
-- Summary: Emphasize extensions (building on prior speeches), weighing (impact comparison), and strategic collapse. Clash should focus on key turns.
-- Final Focus: Emphasize weighing (crystallization), extensions (final story), and judge adaptation. This is the ballot story—score on clarity and decisiveness.
+DO NOT PENALIZE HEAVILY:
+{do_not_penalize}
 
 Output field instructions:
 - summary: 3–5 sentences. Post-round assessment as the judge. Honest, specific, educational.
@@ -143,12 +139,12 @@ Output field instructions:
 - weaknesses: 3–5 items. Specific problems — explain WHY each is a problem and WHAT to do to fix it next time.
 - decision_logic: 2–4 sentences. If this were a real round, who is winning and on what arguments? What is the decisive issue?
 - dropped_or_undercovered_arguments: Arguments the debater should have addressed (or addressed more thoroughly) but did not. Empty list if nothing was dropped.
-- warranting_diagnostics: For each main argument, diagnose the warrant: sufficient / thin / absent / 'asserted not impacted' / 'impacted but not weighed.' Include topic-aware examples showing BEFORE (weak) and AFTER (strong) versions using the actual speech's claims and topic. Label examples with 'Model example only—do not copy word-for-word.' Do not fabricate specific citations or evidence. Use general topic context (e.g., if speech is about Section 230, examples should reference platform liability conceptually, not invent fake studies).
+- warranting_diagnostics: For each main argument, diagnose the warrant: sufficient / thin / absent / 'asserted not impacted' / 'impacted but not weighed.' Include topic-aware examples showing BEFORE (weak) and AFTER (strong) versions using the actual speech's claims and topic. Label examples with 'Model example only—do not copy word-for-word.' Do not fabricate specific citations or evidence. Use general topic context.
 - weighing_diagnostics: For each impact claim, diagnose whether weighing was present and how precise. Note missing magnitude, probability, or timeframe analysis. Include topic-aware examples showing how to improve weighing for this specific argument. Use BEFORE/AFTER format with the actual topic and claims. Explain WHY the improved version is stronger.
-- evidence_diagnostics: For each cited source, statistic, or study, assess whether it was used correctly and contextualized. Empty list if no evidence was cited. If examples are needed, use the actual topic context but clearly mark as 'model example only.'
+- evidence_diagnostics: For each cited source, statistic, or study, assess whether it was used correctly and contextualized. Empty list if no evidence was cited. If the student cites vaguely, critique attribution but do NOT invent what the evidence says.
 - judge_adaptation_notes: 2–3 sentences. Was this speech appropriate for a {judge_type} judge? What specific changes would better adapt it?
-- top_3_priorities: Exactly 3 items. The most important skills to develop before the next round, ordered by priority.
-- recommendations: 3–5 specific practice drills, exercises, or techniques that directly address the top weaknesses.\
+- top_3_priorities: Exactly 3 items. The most important skills to develop before the next round, ordered by priority. Make these {speech_type}-specific (e.g., for constructive: warranting, impact development; for summary: extensions, weighing).
+- recommendations: 3–5 specific practice drills, exercises, or techniques that directly address the top weaknesses. Make these {speech_type}-appropriate.\
 """
 
 
@@ -174,13 +170,67 @@ def generate_feedback(
         bool(settings.openai_api_key),
     )
 
-    calibration_note = ""
+    # Get speech-type-specific rubric
+    rubric = get_rubric(speech_type)
+
+    # Build rubric details for prompt
+    rubric_details = f"Purpose: {rubric['purpose']}\n\nDimensions to evaluate:\n"
+    for dim in rubric["dimensions"]:
+        rubric_details += f"- {dim['student_friendly_label']} (0-{dim['max_score']}): {dim['description']}\n"
+        rubric_details += f"  Reward: {dim['what_to_reward']}\n"
+        rubric_details += f"  Penalize: {dim['what_to_penalize']}\n"
+
+    # Build score bands
+    score_bands = ""
+    for band_key, band_data in SCORE_BANDS.items():
+        score_bands += f"- {band_data['min']}-{band_data['max']}: {band_data['label']}\n"
+
+    # Build score mapping for legacy 5-dimension schema
+    if speech_type == "constructive":
+        score_mapping = """
+- clash: Map case_structure score (scale to 0-20). Constructive doesn't have clash, so score organization.
+- weighing: Map impact_development score (scale to 0-20).
+- extensions: Map judge_clarity score (scale to 0-20). No extensions in constructive.
+- drops: Map evidence_use score (scale to 0-20).
+- judge_adaptation: Map judge_clarity score (scale to 0-20).
+NOTE: Total these to get overall_score out of 100."""
+    elif speech_type == "rebuttal":
+        score_mapping = """
+- clash: Map clash_refutation score (scale to 0-20).
+- weighing: Map weighing_setup score (scale to 0-20).
+- extensions: Map response_quality score (scale to 0-20).
+- drops: Map coverage_prioritization score (scale to 0-20).
+- judge_adaptation: Map evidence_comparison score (scale to 0-20).
+NOTE: Total these to get overall_score out of 100."""
+    elif speech_type == "summary":
+        score_mapping = """
+- clash: Map frontlining score (scale to 0-20).
+- weighing: Map weighing score (scale to 0-20).
+- extensions: Map extension_quality score (scale to 0-20).
+- drops: Map collapse_strategy score (scale to 0-20).
+- judge_adaptation: Map judge_clarity score (scale to 0-20).
+NOTE: Total these to get overall_score out of 100."""
+    elif speech_type == "final_focus":
+        score_mapping = """
+- clash: Map crystallization score (scale to 0-20).
+- weighing: Map comparative_weighing score (scale to 0-20).
+- extensions: Map ballot_story score (scale to 0-20).
+- drops: Map consistency score (scale to 0-20).
+- judge_adaptation: Map judge_adaptation score (scale to 0-20).
+NOTE: Total these to get overall_score out of 100."""
+    else:
+        score_mapping = """
+- Map dimensions as appropriate to the 5 legacy fields.
+- Overall score should reflect total performance."""
+
+    do_not_penalize = "- " + "\n- ".join(rubric["do_not_penalize_heavily"]) if rubric["do_not_penalize_heavily"] else "None"
+
+    calibration_note = f"\n\nCALIBRATION NOTES:\n{rubric['calibration_notes']}"
     if 0 < word_count < 75:
-        calibration_note = (
-            f"\n\nSCORING CALIBRATION: This transcript is short ({word_count} words — typically under 30 seconds). "
+        calibration_note += (
+            f"\n\nThis transcript is short ({word_count} words — typically under 30 seconds). "
             "Score conservatively. Do not infer sophisticated debate performance from limited evidence. "
-            "Score only what is actually present. If content is absent, score it as absent. "
-            "A short sample cannot demonstrate clash, drops, or extensions — score those at 0–5 unless explicitly shown."
+            "Score only what is actually present. If content is absent, score it as absent."
         )
 
     judge_key = judge_type or ""
@@ -195,6 +245,10 @@ def generate_feedback(
         judge_guidance=_JUDGE_GUIDANCE.get(
             judge_key, "Evaluate on general debate quality."
         ),
+        rubric_details=rubric_details,
+        score_bands=score_bands,
+        score_mapping=score_mapping,
+        do_not_penalize=do_not_penalize,
     )
     system_prompt += calibration_note
 

@@ -41,9 +41,7 @@ RoundLab helps debaters practice and improve through AI-powered coaching. Record
 - ✅ Drill attempts with re-recording and progress tracking
 
 ### Gamification (Practice-Focused)
-- ✅ **Granular XP System**: Rewards every workflow step, not just uploads
-  - +2 XP per speech upload
-  - +3 XP per transcript
+- ✅ **Drill-First XP System**: Rewards practice and completion, not just recording
   - +5 XP per flow generated
   - +10 XP per feedback report
   - +15 XP per drill assigned
@@ -51,9 +49,21 @@ RoundLab helps debaters practice and improve through AI-powered coaching. Record
   - +50 XP per first drill attempt (biggest reward!)
   - +20 XP per repeat drill attempt
   - +25 XP bonus for completing full practice loop (feedback + drills + attempts)
+  - **No XP for speech upload/transcription** — level up by completing drills and practice attempts
 - ✅ Level progression (Level 1: 0-99 XP, Level 2: 100-249, Level 3: 250-499, Level 4: 500-899, Level 5: 900-1399, Level 6+: 1400+ [+300 per level])
 - ✅ **Practice-Focused Badges**: First Feedback, First Drill Attempt, Practice Habit (3 attempts), Full Practice Loop, Feedback Analyst (3 reports), Team Player
 - ✅ Skill averages dashboard (clash, weighing, extensions, drops, judge adaptation)
+
+### PF Rubric Calibration (Speech-Type-Specific Scoring)
+- ✅ **Expert-Grounded Rubrics**: Different scoring dimensions for each PF speech type
+  - **Constructive**: Case Structure (20) · Warranting (25) · Evidence Use (20) · Impact Development (20) · Clarity (15)
+  - **Rebuttal**: Clash/Refutation (30) · Coverage (20) · Response Quality (20) · Evidence Comparison (15) · Strategic Framing (15)
+  - **Summary**: Extension Quality (25) · Collapse Strategy (20) · Frontlining (20) · Weighing (25) · Judge Clarity (10)
+  - **Final Focus**: Ballot Story/Voters (30) · Comparative Weighing (25) · Crystallization (20) · Consistency (15) · Judge Adaptation (10)
+- ✅ **Speech-Type Awareness**: Constructive speeches are not penalized for missing clash or extensions; Rebuttal emphasizes direct refutation; Summary focuses on extensions and weighing; Final Focus prioritizes voters and crystallization
+- ✅ **Calibrated Scoring**: 90-100 = Tournament-Ready · 80-89 = Strong · 70-79 = Solid · 60-69 = Developing · 50-59 = Flawed but Complete · 40-49 = Major Issues · 30-39 = Severely Underdeveloped · <30 = Incomplete
+- ✅ **Novice/JV Calibration**: Complete constructives with evidence and clear advocacy score 50-60 even with weak warrants (not 30); 30-39 reserved for severely underdeveloped or incoherent speeches
+- ✅ **Topic-Aware Examples**: Coach Diagnosis uses the student's actual speech topic and claims in before/after improvement examples (e.g., Section 230 examples for tech policy speeches)
 
 ### Authentication
 - ✅ Supabase Auth with PKCE OAuth flow
