@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   ChevronDown, ChevronUp, CheckSquare, Square,
   Target, BookOpen, Zap, Headphones,
@@ -71,6 +71,7 @@ export default function DrillCard({
   const [expanded, setExpanded] = useState(index === 0);
   const [attempts, setAttempts] = useState<DrillAttempt[]>([]);
   const [loadingAttempts, setLoadingAttempts] = useState(false);
+  const [attemptsFetched, setAttemptsFetched] = useState(false);
 
   const skill  = SKILL_LABELS[drill.skill_target] ?? { label: drill.skill_target, variant: "default" as const };
   const diff   = DIFFICULTY_BADGE[drill.difficulty] ?? DIFFICULTY_BADGE.beginner;
@@ -79,21 +80,27 @@ export default function DrillCard({
   const steps  = drill.instructions?.split("\n").filter(Boolean) ?? [];
   const isUpdating = updatingId === drill.id;
 
-  // Fetch attempts when expanded
+  // Fetch attempts when expanded (only once)
   useEffect(() => {
-    if (expanded && attempts.length === 0 && !loadingAttempts) {
+    if (expanded && !attemptsFetched && !loadingAttempts) {
       setLoadingAttempts(true);
       apiFetch<DrillAttempt[]>(`/drills/${drill.id}/attempts`)
-        .then(setAttempts)
+        .then((data) => {
+          setAttempts(data);
+          setAttemptsFetched(true);
+        })
         .catch(() => {})
         .finally(() => setLoadingAttempts(false));
     }
-  }, [expanded, drill.id, attempts.length, loadingAttempts]);
+  }, [expanded, drill.id, attemptsFetched, loadingAttempts]);
 
   function handleAttemptSaved() {
-    // Refresh attempts list
+    // Refresh attempts list without triggering loading state
     apiFetch<DrillAttempt[]>(`/drills/${drill.id}/attempts`)
-      .then(setAttempts)
+      .then((data) => {
+        setAttempts(data);
+        setAttemptsFetched(true);
+      })
       .catch(() => {});
   }
 
@@ -147,15 +154,8 @@ export default function DrillCard({
       </button>
 
       {/* Expanded content */}
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
+      {expanded && (
+        <div className="overflow-hidden">
             <div className="flex flex-col gap-4 border-t border-hairline px-5 py-4">
               {/* Description */}
               {drill.description && (
@@ -257,22 +257,21 @@ export default function DrillCard({
                     speechId={drill.speech_id}
                     onAttemptSaved={handleAttemptSaved}
                   />
-                  {loadingAttempts && (
-                    <p className="text-xs text-ink-faint">Loading attempts…</p>
-                  )}
-                  {attempts.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
+                  {/* Stable container for attempts count to prevent layout shift */}
+                  <div className="min-h-[20px]">
+                    {loadingAttempts ? (
+                      <p className="text-xs text-ink-faint">Loading attempts…</p>
+                    ) : attempts.length > 0 ? (
                       <p className="text-xs font-medium text-ink-subtle">
                         {attempts.length} attempt{attempts.length !== 1 ? "s" : ""} recorded
                       </p>
-                    </div>
-                  )}
+                    ) : null}
+                  </div>
                 </div>
               )}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
     </motion.div>
   );
 }

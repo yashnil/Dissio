@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models.feedback_report import FeedbackReportRow
+from app.models.feedback_report import FeedbackRatingUpdate, FeedbackReportRow
 from app.services.feedback_generation import FeedbackGenerationError, generate_feedback
 from app.services.supabase_client import get_supabase
 
@@ -214,3 +214,62 @@ async def get_feedback(speech_id: str, user_id: str = Query(...)) -> FeedbackRep
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to fetch feedback report") from exc
+
+
+@router.patch("/{speech_id}/feedback/rating", response_model=FeedbackReportRow)
+async def update_feedback_rating(
+    speech_id: str, body: FeedbackRatingUpdate, user_id: str = Query(...)
+) -> FeedbackReportRow:
+    """Update the helpful_rating for a feedback report.
+
+    Only the speech owner can rate their own feedback.
+    """
+    supabase = get_supabase()
+
+    # 1. Verify speech ownership
+    try:
+        speech_check = (
+            supabase.table("speeches")
+            .select("id")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not speech_check.data:
+            raise HTTPException(status_code=404, detail="Speech not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
+
+    # 2. Update feedback rating
+    valid_ratings = {"helpful", "not_helpful"}
+    if body.helpful_rating not in valid_ratings:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid rating. Must be one of: {', '.join(valid_ratings)}",
+        )
+
+    try:
+        result = (
+            supabase.table("feedback_reports")
+            .update({"helpful_rating": body.helpful_rating})
+            .eq("speech_id", speech_id)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Feedback report not found")
+        logger.info(
+            "update_feedback_rating: success | speech_id=%s rating=%s",
+            speech_id,
+            body.helpful_rating,
+        )
+        return result.data[0]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "update_feedback_rating: failed | exc_type=%s", type(exc).__name__
+        )
+        raise HTTPException(status_code=500, detail="Failed to update feedback rating") from exc

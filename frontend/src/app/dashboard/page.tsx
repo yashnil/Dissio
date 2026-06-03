@@ -7,7 +7,7 @@ import { motion } from "motion/react";
 import {
   Mic, CheckCircle2, Target, TrendingUp, Headphones,
   MoreHorizontal, Trash2, ArrowUpRight, ArrowRight,
-  BookOpen, Zap,
+  BookOpen, Zap, Users, Play,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import MetricCard from "@/components/MetricCard";
@@ -267,6 +267,60 @@ export default function DashboardPage() {
               ))}
             </motion.div>
           ) : null}
+
+          {/* Onboarding Checklist - show only if user hasn't completed any drill attempts */}
+          {!loading && !err && progress && progress.drill_attempts_count === 0 && (
+            <motion.div variants={staggerChild}>
+              <Card className="border-lav/20 bg-lav/5">
+                <CardContent className="px-5 py-5">
+                  <div className="mb-4 flex items-center gap-2">
+                    <Play size={14} className="text-lav" />
+                    <p className="text-eyebrow text-lav">Getting Started</p>
+                  </div>
+                  <p className="mb-4 text-sm font-semibold text-ink">
+                    Complete your first practice session
+                  </p>
+                  <div className="mb-4 flex flex-col gap-2">
+                    {[
+                      { label: "Join a team (optional)", done: false, icon: Users },
+                      { label: "Create a practice session", done: progress.speech_count > 0, icon: Mic },
+                      { label: "Record a 45-90 second speech", done: speeches.some(s => s.audio_url), icon: Mic },
+                      { label: "Generate feedback", done: progress.feedback_ready_count > 0, icon: CheckCircle2 },
+                      { label: "Complete one drill", done: progress.drill_attempts_count > 0, icon: Target },
+                    ].map((step, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        {step.done ? (
+                          <CheckCircle2 size={14} className="shrink-0 text-ok" />
+                        ) : (
+                          <div className="h-3.5 w-3.5 shrink-0 rounded-full border border-hairline-strong" />
+                        )}
+                        <span className={`text-xs ${step.done ? "text-ink-subtle line-through" : "text-ink-muted"}`}>
+                          {step.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild size="sm" className="gap-1.5">
+                      <Link href="/session">
+                        <Mic size={11} />
+                        New Session
+                      </Link>
+                    </Button>
+                    <Button asChild size="sm" variant="secondary" className="gap-1.5">
+                      <Link href="/team">
+                        <Users size={11} />
+                        Join Team
+                      </Link>
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-xs text-ink-faint">
+                    If you join a team, your coach can see your practice progress and feedback status.
+                  </p>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
 
           {/* Error */}
           {!loading && err && (

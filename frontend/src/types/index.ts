@@ -78,6 +78,8 @@ export interface FeedbackReport {
     top_3_priorities?: string[];
     recommendations?: string[];
   } | null;
+  helpful_rating?: string | null;
+  helpful_comment?: string | null;
   created_at: string;
 }
 

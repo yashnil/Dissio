@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import { Mic, Square, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { T } from "@/lib/motion";
 
 type RecordState = "idle" | "requesting" | "recording" | "recorded" | "uploading" | "error";
 
@@ -171,78 +169,43 @@ export default function DrillAttemptRecorder({
         <span className="text-eyebrow text-ink-subtle">Record Attempt</span>
       </div>
 
-      <AnimatePresence mode="wait">
+      {/* Fixed min-height to prevent layout shift */}
+      <div className="min-h-[120px]">
         {state === "idle" || state === "requesting" || state === "error" ? (
-          <motion.div
-            key="idle"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={T.fast}
-            className="flex flex-col items-center gap-3 py-4"
-          >
-            <motion.button
+          <div className="flex flex-col items-center gap-3 py-4">
+            <button
               type="button"
               onClick={startRec}
               disabled={state === "requesting"}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              transition={T.fast}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-lav disabled:opacity-50"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-lav transition-opacity disabled:opacity-50 hover:opacity-90"
             >
               <Mic size={20} className="text-white" />
-            </motion.button>
+            </button>
             <p className="text-xs text-ink-subtle">
               {state === "requesting" ? "Requesting mic…" : "Tap to record"}
             </p>
             {error && (
-              <motion.p
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-xs text-danger"
-              >
+              <p className="text-xs text-danger">
                 {error}
-              </motion.p>
+              </p>
             )}
-          </motion.div>
+          </div>
         ) : state === "recording" ? (
-          <motion.div
-            key="recording"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={T.fast}
-            className="flex flex-col items-center gap-3 py-4"
-          >
-            <motion.button
+          <div className="flex flex-col items-center gap-3 py-4">
+            <button
               type="button"
               onClick={stopRec}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              transition={T.fast}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-danger"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-danger transition-opacity hover:opacity-90"
             >
               <Square size={14} className="fill-white text-white" />
-            </motion.button>
-            <motion.span
-              key={seconds}
-              initial={{ opacity: 0.5, y: -2 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.12 }}
-              className="font-mono text-xl font-semibold tabular-nums text-ink"
-            >
+            </button>
+            <span className="font-mono text-xl font-semibold tabular-nums text-ink">
               {formatTime(seconds)}
-            </motion.span>
+            </span>
             <p className="text-xs text-ink-subtle">Recording…</p>
-          </motion.div>
+          </div>
         ) : state === "recorded" && url ? (
-          <motion.div
-            key="recorded"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={T.base}
-            className="flex flex-col gap-3"
-          >
+          <div className="flex flex-col gap-3">
             <div className="rounded-md border border-hairline bg-surface-3 p-2">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs font-medium text-ink-subtle">Preview</span>
@@ -265,21 +228,14 @@ export default function DrillAttemptRecorder({
                 Discard
               </Button>
             </div>
-          </motion.div>
+          </div>
         ) : state === "uploading" ? (
-          <motion.div
-            key="uploading"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={T.fast}
-            className="flex flex-col items-center gap-2 py-4"
-          >
+          <div className="flex flex-col items-center gap-2 py-4">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-lav border-t-transparent" />
             <p className="text-xs text-ink-subtle">Saving attempt…</p>
-          </motion.div>
+          </div>
         ) : null}
-      </AnimatePresence>
+      </div>
     </div>
   );
 }

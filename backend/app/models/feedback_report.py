@@ -21,4 +21,10 @@ class FeedbackReportRow(BaseModel):
     strengths: list[str] = []
     weaknesses: list[str] = []
     raw_feedback: Optional[dict[str, Any]] = None
+    helpful_rating: Optional[str] = None
+    helpful_comment: Optional[str] = None
     created_at: datetime
+
+
+class FeedbackRatingUpdate(BaseModel):
+    helpful_rating: str

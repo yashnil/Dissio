@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import {
   Users, Copy, Check, TrendingUp, Mic, Target, Headphones,
-  UserPlus, Plus,
+  UserPlus, Plus, MessageSquare,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import EmptyState from "@/components/EmptyState";
@@ -47,6 +47,7 @@ export default function TeamPage() {
 
   // Invite code copy
   const [copied, setCopied] = useState(false);
+  const [copiedMessage, setCopiedMessage] = useState(false);
 
   useEffect(() => {
     createClient().auth.getUser()
@@ -149,6 +150,20 @@ export default function TeamPage() {
     navigator.clipboard.writeText(selectedTeam.invite_code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function copyInviteMessage() {
+    if (!selectedTeam) return;
+    const appUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const message = `Join our RoundLab practice team:
+1. Go to ${appUrl}
+2. Sign in
+3. Open Team
+4. Enter invite code: ${selectedTeam.invite_code}
+5. Record one 45-90 second Summary or Final Focus before our next practice.`;
+    navigator.clipboard.writeText(message);
+    setCopiedMessage(true);
+    setTimeout(() => setCopiedMessage(false), 2000);
   }
 
   if (loading) {
@@ -334,6 +349,70 @@ export default function TeamPage() {
                       </>
                     )}
                   </Button>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Coach Pilot Setup Card */}
+          {selectedTeam?.role === "coach" && (
+            <motion.div variants={staggerChild}>
+              <Card>
+                <CardContent className="px-5 py-5">
+                  <div className="mb-4 flex items-center gap-2">
+                    <MessageSquare size={14} className="text-lav" />
+                    <p className="text-eyebrow text-ink-subtle">Pilot Setup</p>
+                  </div>
+                  <div className="mb-4 flex flex-col gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-ink-subtle">Team Name</p>
+                      <p className="text-sm text-ink">{selectedTeam.team_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-ink-subtle">Invite Code</p>
+                      <p className="font-mono text-sm font-bold tracking-wide text-ink">{selectedTeam.invite_code}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={copyInviteCode}
+                      size="sm"
+                      variant="secondary"
+                      className="gap-1.5"
+                    >
+                      {copied ? (
+                        <>
+                          <Check size={12} />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={12} />
+                          Copy Code
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={copyInviteMessage}
+                      size="sm"
+                      className="gap-1.5"
+                    >
+                      {copiedMessage ? (
+                        <>
+                          <Check size={12} />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare size={12} />
+                          Copy Invite Message
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-xs text-ink-faint">
+                    Share the invite code or full message with your students to get started.
+                  </p>
                 </CardContent>
               </Card>
             </motion.div>
