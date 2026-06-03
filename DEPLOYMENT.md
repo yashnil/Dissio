@@ -140,8 +140,17 @@ RoundLab uses SQL migrations in `supabase/migrations/`. Apply them **in order** 
 
 1. Go to Authentication → URL Configuration
    - Set Site URL to your frontend domain: `https://your-app.vercel.app`
-   - Add redirect URLs: `https://your-app.vercel.app/**`
-   - For local development also add: `http://localhost:3000/**`
+   - Add redirect URLs (all required for OAuth to work):
+     - **Production**: 
+       - `https://your-app.vercel.app/auth/callback`
+       - `https://your-app.vercel.app/dashboard`
+       - `https://your-app.vercel.app/**`
+     - **Local development**:
+       - `http://localhost:3000/auth/callback`
+       - `http://localhost:3000/dashboard`
+       - `http://localhost:3000/**`
+
+⚠️ **Important**: The `/auth/callback` route is required for Google OAuth. Without it, users will be created in Supabase but won't be logged into the frontend.
 
 ---
 
