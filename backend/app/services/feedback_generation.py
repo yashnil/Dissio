@@ -125,11 +125,17 @@ SCORING CALIBRATION:
 IMPORTANT: Score consistently. The same transcript should produce similar scores. Use the rubric anchors above.
 
 - overall_score: Integer 1–100. Derived from the sum of the 5 category scores below (max 100).
-- scores.clash (0–20): Direct engagement with opponent arguments. 0 = none, 20 = thorough line-by-line.
-- scores.weighing (0–20): Impact comparison and magnitude/probability/timeframe analysis. 0 = none, 20 = precise.
-- scores.extensions (0–20): Whether own arguments were clearly extended. 0 = dropped, 20 = fully extended.
-- scores.drops (0–20): Whether the speaker addressed everything they needed to. 20 = nothing important dropped.
-- scores.judge_adaptation (0–20): How well the speech was tailored to this judge type.
+- scores.clash (0–20): Direct engagement with opponent arguments. 0 = none, 20 = thorough line-by-line. NOTE: For constructive speeches, clash may not be expected—if the speech type doesn't call for clash, score based on what was appropriate for that speech, not penalize absence.
+- scores.weighing (0–20): Impact comparison and magnitude/probability/timeframe analysis. 0 = none, 20 = precise. Most critical for summary and final focus.
+- scores.extensions (0–20): Whether own arguments were clearly extended. 0 = dropped, 20 = fully extended. Most relevant for summary and final focus, not applicable to constructive.
+- scores.drops (0–20): Whether the speaker addressed everything they needed to. 20 = nothing important dropped. Universal dimension—applies to all speech types.
+- scores.judge_adaptation (0–20): How well the speech was tailored to this judge type. Universal dimension—applies to all speech types.
+
+SPEECH-TYPE SCORING GUIDANCE:
+- Constructive: Emphasize argument structure quality (complete claim→warrant→evidence→impact chains), clarity, evidence use, and judge adaptation. Clash and extensions are not expected—do not penalize their absence.
+- Rebuttal: Emphasize clash (direct refutation), coverage (drops), and weighing setup. Extensions are less critical here.
+- Summary: Emphasize extensions (building on prior speeches), weighing (impact comparison), and strategic collapse. Clash should focus on key turns.
+- Final Focus: Emphasize weighing (crystallization), extensions (final story), and judge adaptation. This is the ballot story—score on clarity and decisiveness.
 
 Output field instructions:
 - summary: 3–5 sentences. Post-round assessment as the judge. Honest, specific, educational.
@@ -137,9 +143,9 @@ Output field instructions:
 - weaknesses: 3–5 items. Specific problems — explain WHY each is a problem and WHAT to do to fix it next time.
 - decision_logic: 2–4 sentences. If this were a real round, who is winning and on what arguments? What is the decisive issue?
 - dropped_or_undercovered_arguments: Arguments the debater should have addressed (or addressed more thoroughly) but did not. Empty list if nothing was dropped.
-- warranting_diagnostics: For each main argument, diagnose the warrant: sufficient / thin / absent / 'asserted not impacted' / 'impacted but not weighed.' Be specific to the argument.
-- weighing_diagnostics: For each impact claim, diagnose whether weighing was present and how precise. Note missing magnitude, probability, or timeframe analysis.
-- evidence_diagnostics: For each cited source, statistic, or study, assess whether it was used correctly and contextualized. Empty list if no evidence was cited.
+- warranting_diagnostics: For each main argument, diagnose the warrant: sufficient / thin / absent / 'asserted not impacted' / 'impacted but not weighed.' Include topic-aware examples showing BEFORE (weak) and AFTER (strong) versions using the actual speech's claims and topic. Label examples with 'Model example only—do not copy word-for-word.' Do not fabricate specific citations or evidence. Use general topic context (e.g., if speech is about Section 230, examples should reference platform liability conceptually, not invent fake studies).
+- weighing_diagnostics: For each impact claim, diagnose whether weighing was present and how precise. Note missing magnitude, probability, or timeframe analysis. Include topic-aware examples showing how to improve weighing for this specific argument. Use BEFORE/AFTER format with the actual topic and claims. Explain WHY the improved version is stronger.
+- evidence_diagnostics: For each cited source, statistic, or study, assess whether it was used correctly and contextualized. Empty list if no evidence was cited. If examples are needed, use the actual topic context but clearly mark as 'model example only.'
 - judge_adaptation_notes: 2–3 sentences. Was this speech appropriate for a {judge_type} judge? What specific changes would better adapt it?
 - top_3_priorities: Exactly 3 items. The most important skills to develop before the next round, ordered by priority.
 - recommendations: 3–5 specific practice drills, exercises, or techniques that directly address the top weaknesses.\

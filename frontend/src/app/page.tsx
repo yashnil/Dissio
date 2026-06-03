@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import {
-  Mic, ArrowRight, Check, GitBranch, FileText, Zap, TrendingUp, BarChart3,
+  Mic, ArrowRight, Check, GitBranch, FileText, Zap, TrendingUp, BarChart3, Sun, Moon,
 } from "lucide-react";
+import { createClient } from "@/lib/supabase";
 import { fadeUp, fadeUpInView, staggerParent, staggerChild, EASE } from "@/lib/motion";
 
 // ── Product workspace preview ──────────────────────────────────────────────────
@@ -129,33 +132,76 @@ function WorkspacePreview() {
 
 // ── Nav ────────────────────────────────────────────────────────────────────────
 
-function MarketingNav() {
+function MarketingNav({ isLoggedIn, theme, onThemeToggle, onSignOut }: {
+  isLoggedIn: boolean;
+  theme: "dark" | "light";
+  onThemeToggle: () => void;
+  onSignOut: () => void;
+}) {
   return (
     <nav className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-hairline bg-canvas/95 px-5 backdrop-blur-md">
-      <div className="flex items-center gap-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-lav">
+      <Link href="/" className="flex items-center gap-2 group">
+        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-lav transition-colors group-hover:bg-lav-hi">
           <Mic size={12} className="text-white" />
         </div>
         <span className="text-sm font-semibold tracking-tight text-ink">RoundLab</span>
-      </div>
+      </Link>
 
-      <div className="hidden items-center gap-5 sm:flex">
-        <a href="#product"  className="text-sm text-ink-subtle transition-colors hover:text-ink">Product</a>
-        <a href="#how"      className="text-sm text-ink-subtle transition-colors hover:text-ink">Workflow</a>
-        <a href="#features" className="text-sm text-ink-subtle transition-colors hover:text-ink">Features</a>
-        <a href="#drills"   className="text-sm text-ink-subtle transition-colors hover:text-ink">Drills</a>
-        <a href="#roadmap"  className="text-sm text-ink-subtle transition-colors hover:text-ink">Roadmap</a>
-      </div>
+      {!isLoggedIn && (
+        <div className="hidden items-center gap-5 sm:flex">
+          <a href="#product"  className="text-sm text-ink-subtle transition-colors hover:text-ink">Product</a>
+          <a href="#how"      className="text-sm text-ink-subtle transition-colors hover:text-ink">Workflow</a>
+          <a href="#features" className="text-sm text-ink-subtle transition-colors hover:text-ink">Features</a>
+          <a href="#drills"   className="text-sm text-ink-subtle transition-colors hover:text-ink">Drills</a>
+          <a href="#roadmap"  className="text-sm text-ink-subtle transition-colors hover:text-ink">Roadmap</a>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
-        <Link href="/login"
-          className="rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
-          Sign in
-        </Link>
-        <Link href="/login"
-          className="rounded-md bg-lav px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lav-hi">
-          Get started
-        </Link>
+        {isLoggedIn && (
+          <>
+            <Link href="/dashboard" className="hidden text-sm text-ink-subtle transition-colors hover:text-ink sm:block">
+              Dashboard
+            </Link>
+            <Link href="/team" className="hidden text-sm text-ink-subtle transition-colors hover:text-ink sm:block">
+              Team
+            </Link>
+          </>
+        )}
+
+        {/* Theme toggle */}
+        <button
+          onClick={onThemeToggle}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink"
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
+
+        {!isLoggedIn ? (
+          <>
+            <Link href="/login"
+              className="rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
+              Sign in
+            </Link>
+            <Link href="/login"
+              className="rounded-md bg-lav px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lav-hi">
+              Get started
+            </Link>
+          </>
+        ) : (
+          <>
+            <Link href="/session"
+              className="rounded-md bg-lav px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lav-hi">
+              New Session
+            </Link>
+            <button
+              onClick={onSignOut}
+              className="rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
+              Sign Out
+            </button>
+          </>
+        )}
       </div>
     </nav>
   );
@@ -179,9 +225,59 @@ const FEATURES = [
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
+  const router = useRouter();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [userLevel, setUserLevel] = useState<number | null>(null);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    // Load theme from localStorage
+    const savedTheme = localStorage.getItem("roundlab-theme") as "dark" | "light" | null;
+    const initialTheme = savedTheme || "dark";
+    setTheme(initialTheme);
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(initialTheme);
+
+    // Check if user is logged in
+    createClient().auth.getUser()
+      .then(({ data }) => {
+        if (data.user) {
+          setIsLoggedIn(true);
+          setUserName(data.user.email || data.user.user_metadata?.name || null);
+
+          // Fetch user progress for level
+          fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/${data.user.id}/progress`)
+            .then(res => res.json())
+            .then(progress => {
+              setUserLevel(progress.level);
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  function toggleTheme() {
+    const newTheme = theme === "dark" ? "light" : "dark";
+    setTheme(newTheme);
+    localStorage.setItem("roundlab-theme", newTheme);
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(newTheme);
+  }
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    setIsLoggedIn(false);
+    setUserName(null);
+    setUserLevel(null);
+    router.push("/");
+  }
+
   return (
     <div className="min-h-screen bg-canvas text-ink">
-      <MarketingNav />
+      <MarketingNav isLoggedIn={isLoggedIn} theme={theme} onThemeToggle={toggleTheme} onSignOut={handleSignOut} />
 
       {/* ── Hero ────────────────────────────────────────────────────────── */}
       <section id="product" className="relative overflow-hidden">
@@ -190,47 +286,88 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-5xl px-6 pb-16 pt-20">
           <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-[1fr_1.2fr]">
 
-            {/* Copy */}
+            {/* Copy - Personalized for logged-in users */}
             <div className="flex flex-col gap-6">
-              <motion.span
-                {...fadeUp(0)}
-                className="inline-block w-fit rounded-full border border-lav/30 bg-lav/10 px-3 py-1 text-eyebrow text-lav"
-              >
-                AI debate coach · Public Forum
-              </motion.span>
+              {isLoggedIn ? (
+                <>
+                  <motion.span
+                    {...fadeUp(0)}
+                    className="inline-block w-fit rounded-full border border-lav/30 bg-lav/10 px-3 py-1 text-eyebrow text-lav"
+                  >
+                    {userLevel ? `Level ${userLevel}` : "Welcome back"}
+                  </motion.span>
 
-              <motion.h1 {...fadeUp(0.07)} className="text-display text-ink">
-                Your AI<br />flow coach
-              </motion.h1>
+                  <motion.h1 {...fadeUp(0.07)} className="text-display text-ink">
+                    Ready for your<br />next round?
+                  </motion.h1>
 
-              <motion.p {...fadeUp(0.14)} className="max-w-sm text-base leading-relaxed text-ink-subtle">
-                Record a speech. Get structured argument analysis and ballot-style feedback in under a minute.
-                Built for novice and JV PF debaters who want to improve faster.
-              </motion.p>
+                  <motion.p {...fadeUp(0.14)} className="max-w-sm text-base leading-relaxed text-ink-subtle">
+                    {userName ? `Welcome back, ${userName.split('@')[0]}.` : "Welcome back."} Continue practicing with AI coaching, personalized drills, and judge-style feedback.
+                  </motion.p>
 
-              <motion.div {...fadeUp(0.2)} className="flex flex-wrap items-center gap-3">
-                <motion.a
-                  href="/login"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  transition={{ duration: 0.12 }}
-                  className="flex items-center gap-2 rounded-md bg-lav px-4 py-2.5 text-sm font-medium text-white hover:bg-lav-hi"
-                >
-                  Start for free <ArrowRight size={14} />
-                </motion.a>
-                <a href="#how"
-                  className="rounded-md border border-hairline px-4 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
-                  How it works
-                </a>
-              </motion.div>
+                  <motion.div {...fadeUp(0.2)} className="flex flex-wrap items-center gap-3">
+                    <motion.a
+                      href="/session"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.12 }}
+                      className="flex items-center gap-2 rounded-md bg-lav px-4 py-2.5 text-sm font-medium text-white hover:bg-lav-hi"
+                    >
+                      New Practice Session <ArrowRight size={14} />
+                    </motion.a>
+                    <a href="/dashboard"
+                      className="rounded-md border border-hairline px-4 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
+                      Dashboard
+                    </a>
+                    <a href="/team"
+                      className="rounded-md border border-hairline px-4 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
+                      Team
+                    </a>
+                  </motion.div>
+                </>
+              ) : (
+                <>
+                  <motion.span
+                    {...fadeUp(0)}
+                    className="inline-block w-fit rounded-full border border-lav/30 bg-lav/10 px-3 py-1 text-eyebrow text-lav"
+                  >
+                    AI debate coach · Public Forum
+                  </motion.span>
 
-              <motion.div {...fadeUp(0.26)} className="flex items-center gap-4 pt-1">
-                {["30-second setup", "Judge-native", "PF-specific"].map((t) => (
-                  <div key={t} className="flex items-center gap-1.5 text-xs text-ink-faint">
-                    <Check size={10} className="text-ok" />{t}
-                  </div>
-                ))}
-              </motion.div>
+                  <motion.h1 {...fadeUp(0.07)} className="text-display text-ink">
+                    Your AI<br />flow coach
+                  </motion.h1>
+
+                  <motion.p {...fadeUp(0.14)} className="max-w-sm text-base leading-relaxed text-ink-subtle">
+                    Record a speech. Get structured argument analysis and ballot-style feedback in under a minute.
+                    Built for novice and JV PF debaters who want to improve faster.
+                  </motion.p>
+
+                  <motion.div {...fadeUp(0.2)} className="flex flex-wrap items-center gap-3">
+                    <motion.a
+                      href="/login"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.12 }}
+                      className="flex items-center gap-2 rounded-md bg-lav px-4 py-2.5 text-sm font-medium text-white hover:bg-lav-hi"
+                    >
+                      Start for free <ArrowRight size={14} />
+                    </motion.a>
+                    <a href="#how"
+                      className="rounded-md border border-hairline px-4 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink">
+                      How it works
+                    </a>
+                  </motion.div>
+
+                  <motion.div {...fadeUp(0.26)} className="flex items-center gap-4 pt-1">
+                    {["30-second setup", "Judge-native", "PF-specific"].map((t) => (
+                      <div key={t} className="flex items-center gap-1.5 text-xs text-ink-faint">
+                        <Check size={10} className="text-ok" />{t}
+                      </div>
+                    ))}
+                  </motion.div>
+                </>
+              )}
             </div>
 
             {/* Product panel */}

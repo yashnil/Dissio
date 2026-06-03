@@ -216,36 +216,30 @@ export default function DrillCard({
                 </div>
               )}
 
-              {/* Actions */}
-              {drill.status === "assigned" && onStatusChange && (
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={isUpdating}
-                    onClick={() => onStatusChange(drill.id, "attempted")}
-                    className="gap-1.5"
-                  >
-                    {isUpdating ? "Saving…" : "Mark as Attempted"}
-                  </Button>
+              {/* Status Control - reversible */}
+              {onStatusChange && (
+                <div className="flex flex-col gap-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <label htmlFor={`status-${drill.id}`} className="text-xs font-medium text-ink-subtle">
+                      Status:
+                    </label>
+                    <select
+                      id={`status-${drill.id}`}
+                      value={drill.status}
+                      onChange={(e) => onStatusChange(drill.id, e.target.value as DrillStatus)}
+                      disabled={isUpdating}
+                      className="rounded-md border border-hairline bg-surface-2 px-2 py-1 text-sm text-ink transition-colors hover:border-hairline-strong focus:border-lav focus:outline-none disabled:opacity-50"
+                    >
+                      <option value="assigned">Not Started</option>
+                      <option value="attempted">Attempted</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                    {isUpdating && <span className="text-xs text-ink-faint">Saving…</span>}
+                  </div>
+                  {drill.status === "completed" && (
+                    <p className="text-xs text-ok">✓ Drill completed - great work!</p>
+                  )}
                 </div>
-              )}
-
-              {drill.status === "attempted" && onStatusChange && (
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    disabled={isUpdating}
-                    onClick={() => onStatusChange(drill.id, "completed")}
-                    className="gap-1.5 bg-ok text-white hover:bg-ok/90"
-                  >
-                    {isUpdating ? "Saving…" : "Mark as Completed"}
-                  </Button>
-                </div>
-              )}
-
-              {drill.status === "completed" && (
-                <p className="text-xs text-ok">✓ Drill completed</p>
               )}
 
               {/* Drill Attempt Recorder */}

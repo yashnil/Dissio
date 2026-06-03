@@ -5,9 +5,33 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   THEME — Tailwind utility generation
+   THEME SYSTEM — Tailwind utility generation
+
    All custom CSS tokens are registered here so they become usable as classes:
    bg-canvas, text-ink, border-hairline, bg-lav, text-ok, etc.
+
+   ── HOW IT WORKS ─────────────────────────────────────────────────────────────
+   1. Theme class (.dark or .light) is applied to <html> element
+   2. Theme class sets --theme-* CSS variables with appropriate values
+   3. @theme inline maps these to --color-* tokens used by Tailwind utilities
+   4. Utilities like bg-canvas compile to use var(--color-canvas)
+   5. Theme toggle updates <html> class, triggering CSS variable cascade
+
+   ── DEVELOPER GUIDE ──────────────────────────────────────────────────────────
+   DO:
+   - Use theme tokens: bg-canvas, bg-surface-1, text-ink, border-hairline
+   - Use semantic colors: bg-lav, text-ok, bg-danger, text-warn
+   - Use shadcn tokens: bg-card, text-foreground, border-border
+
+   DON'T:
+   - Hardcode colors: bg-black, bg-white, bg-zinc-900, text-gray-300
+   - Use fixed colors that won't adapt to theme changes
+   - Mix raw oklch() values in component className strings
+
+   If you need a new color that should adapt to theme:
+   1. Add --theme-yourcolor to :root/.dark and .light sections
+   2. Add --color-yourcolor: var(--theme-yourcolor) to @theme inline
+   3. Use bg-yourcolor or text-yourcolor in components
 ───────────────────────────────────────────────────────────────────────────── */
 
 @theme inline {
@@ -40,39 +64,38 @@
   --radius-xl:  calc(var(--radius) * 2);     /* 16px */
   --radius-2xl: calc(var(--radius) * 3);     /* 24px */
 
-  /* ── Dark canvas surface ladder ─────────────────────────────────────────── */
-  --color-canvas:     oklch(0.065 0.002 264);   /* #010102  page bg    */
-  --color-surface-1:  oklch(0.115 0.003 264);   /* #0f1011  cards      */
-  --color-surface-2:  oklch(0.140 0.003 264);   /* #141516  raised     */
-  --color-surface-3:  oklch(0.160 0.003 264);   /* #18191a  dropdowns  */
+  /* ── Theme-aware color tokens (reference CSS vars set by theme class) ─── */
+  --color-canvas:          var(--theme-canvas);
+  --color-surface-1:       var(--theme-surface-1);
+  --color-surface-2:       var(--theme-surface-2);
+  --color-surface-3:       var(--theme-surface-3);
+  --color-hairline:        var(--theme-hairline);
+  --color-hairline-strong: var(--theme-hairline-strong);
+  --color-ink:             var(--theme-ink);
+  --color-ink-muted:       var(--theme-ink-muted);
+  --color-ink-subtle:      var(--theme-ink-subtle);
+  --color-ink-faint:       var(--theme-ink-faint);
 
-  /* ── Hairline borders ───────────────────────────────────────────────────── */
-  --color-hairline:        oklch(0.210 0.005 264);  /* #23252a  default  */
-  --color-hairline-strong: oklch(0.270 0.006 264);  /* #34343a  heavier  */
-
-  /* ── Ink / text hierarchy ───────────────────────────────────────────────── */
-  --color-ink:        oklch(0.975 0.001 264);   /* #f7f8f8  primary   */
-  --color-ink-muted:  oklch(0.860 0.008 264);   /* #d0d6e0  secondary */
-  --color-ink-subtle: oklch(0.630 0.007 264);   /* #8a8f98  tertiary  */
-  --color-ink-faint:  oklch(0.490 0.006 264);   /* #62666d  disabled  */
-
-  /* ── Brand accent — lavender ────────────────────────────────────────────── */
+  /* ── Brand accent — lavender (consistent across themes) ─────────────────── */
   --color-lav:    oklch(0.510 0.156 278);   /* #5e6ad2 */
   --color-lav-hi: oklch(0.660 0.130 278);   /* #828fff */
   --color-lav-lo: oklch(0.310 0.090 278);   /* deep lavender for rings */
 
-  /* ── Semantic colors ────────────────────────────────────────────────────── */
+  /* ── Semantic colors (consistent across themes) ─────────────────────────── */
   --color-ok:     oklch(0.620 0.170 145);   /* #27a644 success */
   --color-warn:   oklch(0.750 0.155 74);    /* amber   warning */
   --color-danger: oklch(0.640 0.215 25);    /* red     error   */
 
-  /* ── Argument type colors (debate-specific) ─────────────────────────────── */
+  /* ── Argument type colors (debate-specific, consistent) ─────────────────── */
   --color-blue:      oklch(0.560 0.150 250);
   --color-blue-hi:   oklch(0.720 0.120 250);
   --color-violet:    oklch(0.520 0.160 300);
   --color-violet-hi: oklch(0.720 0.120 300);
   --color-orange:    oklch(0.680 0.175 55);
   --color-orange-hi: oklch(0.780 0.140 55);
+  --color-amber:     oklch(0.750 0.155 74);
+  --color-indigo:    oklch(0.490 0.150 265);
+  --color-green:     oklch(0.620 0.170 145);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +104,7 @@
 
 :root,
 .dark {
+  /* Shadcn tokens */
   --background:            oklch(0.065 0.002 264);
   --foreground:            oklch(0.975 0.001 264);
   --card:                  oklch(0.115 0.003 264);
@@ -100,6 +124,18 @@
   --input:                 oklch(0.210 0.005 264);
   --ring:                  oklch(0.510 0.156 278);
   --radius:                0.5rem;
+
+  /* Custom theme tokens — Dark mode values */
+  --theme-canvas:          oklch(0.065 0.002 264);   /* #010102  page bg    */
+  --theme-surface-1:       oklch(0.115 0.003 264);   /* #0f1011  cards      */
+  --theme-surface-2:       oklch(0.140 0.003 264);   /* #141516  raised     */
+  --theme-surface-3:       oklch(0.160 0.003 264);   /* #18191a  dropdowns  */
+  --theme-hairline:        oklch(0.210 0.005 264);   /* #23252a  borders    */
+  --theme-hairline-strong: oklch(0.270 0.006 264);   /* #34343a  heavy      */
+  --theme-ink:             oklch(0.975 0.001 264);   /* #f7f8f8  primary    */
+  --theme-ink-muted:       oklch(0.860 0.008 264);   /* #d0d6e0  secondary  */
+  --theme-ink-subtle:      oklch(0.630 0.007 264);   /* #8a8f98  tertiary   */
+  --theme-ink-faint:       oklch(0.490 0.006 264);   /* #62666d  disabled   */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +143,7 @@
 ───────────────────────────────────────────────────────────────────────────── */
 
 .light {
+  /* Shadcn tokens */
   --background:            oklch(0.985 0.001 264);  /* off-white page bg */
   --foreground:            oklch(0.095 0.002 264);  /* near-black text */
   --card:                  oklch(1.0 0 0);          /* pure white cards */
@@ -125,22 +162,18 @@
   --border:                oklch(0.880 0.003 264);  /* light borders */
   --input:                 oklch(0.880 0.003 264);
   --ring:                  oklch(0.510 0.156 278);
-}
 
-/* Light mode color overrides for custom tokens */
-.light {
-  --color-canvas:     oklch(0.985 0.001 264);
-  --color-surface-1:  oklch(1.0 0 0);
-  --color-surface-2:  oklch(0.965 0.002 264);
-  --color-surface-3:  oklch(0.945 0.002 264);
-
-  --color-hairline:        oklch(0.880 0.003 264);
-  --color-hairline-strong: oklch(0.780 0.004 264);
-
-  --color-ink:        oklch(0.095 0.002 264);
-  --color-ink-muted:  oklch(0.250 0.006 264);
-  --color-ink-subtle: oklch(0.450 0.006 264);
-  --color-ink-faint:  oklch(0.600 0.005 264);
+  /* Custom theme tokens — Light mode values */
+  --theme-canvas:          oklch(0.985 0.001 264);   /* off-white bg    */
+  --theme-surface-1:       oklch(1.0 0 0);           /* pure white      */
+  --theme-surface-2:       oklch(0.965 0.002 264);   /* light gray      */
+  --theme-surface-3:       oklch(0.945 0.002 264);   /* medium gray     */
+  --theme-hairline:        oklch(0.880 0.003 264);   /* light borders   */
+  --theme-hairline-strong: oklch(0.780 0.004 264);   /* medium borders  */
+  --theme-ink:             oklch(0.095 0.002 264);   /* near-black text */
+  --theme-ink-muted:       oklch(0.250 0.006 264);   /* dark gray       */
+  --theme-ink-subtle:      oklch(0.450 0.006 264);   /* medium gray     */
+  --theme-ink-faint:       oklch(0.600 0.005 264);   /* light gray      */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -219,43 +252,44 @@
     font-weight: 600;
   }
 
-  /* ── Grid background for landing sections ───────────────────────────────── */
+  /* ── Grid background for landing sections (theme-aware) ─────────────────── */
   .bg-grid {
     background-image:
-      linear-gradient(oklch(0.210 0.005 264 / 0.5) 1px, transparent 1px),
-      linear-gradient(90deg, oklch(0.210 0.005 264 / 0.5) 1px, transparent 1px);
+      linear-gradient(var(--theme-hairline) 1px, transparent 1px),
+      linear-gradient(90deg, var(--theme-hairline) 1px, transparent 1px);
     background-size: 32px 32px;
+    opacity: 0.5;
   }
 
-  /* ── Dot grid variant ───────────────────────────────────────────────────── */
+  /* ── Dot grid variant (theme-aware) ─────────────────────────────────────── */
   .bg-dots {
     background-image: radial-gradient(
       circle at 1px 1px,
-      oklch(0.210 0.005 264 / 0.7) 1px,
+      var(--theme-hairline) 1px,
       transparent 0
     );
     background-size: 20px 20px;
+    opacity: 0.4;
   }
 
   /* ── Motion timing classes (apply to transition-duration etc.) ──────────── */
   /* Used with motion/react via transition prop — kept here for reference     */
   /* fast: 150ms, base: 300ms, slow: 500ms, spring: stiffness:300/damping:24 */
 
-  /* ── Surface utilities ──────────────────────────────────────────────────── */
-  .bg-app { background-color: oklch(0.065 0.002 264); }
+  /* ── Surface utilities (deprecated - use bg-canvas instead) ─────────────── */
 
   /* ── Lavender glow — used only on primary CTA ───────────────────────────── */
   .glow-lav {
     box-shadow: 0 0 32px -6px oklch(0.510 0.156 278 / 0.4);
   }
 
-  /* ── Shimmer skeleton keyframe ──────────────────────────────────────────── */
+  /* ── Shimmer skeleton keyframe (theme-aware) ────────────────────────────── */
   .shimmer {
     background: linear-gradient(
       90deg,
-      oklch(0.140 0.003 264) 0%,
-      oklch(0.210 0.005 264) 50%,
-      oklch(0.140 0.003 264) 100%
+      var(--theme-surface-2) 0%,
+      var(--theme-hairline) 50%,
+      var(--theme-surface-2) 100%
     );
     background-size: 200% 100%;
     animation: shimmer 1.6s ease-in-out infinite;
@@ -266,12 +300,12 @@
     100% { background-position:  200% 0; }
   }
 
-  /* ── Interactive card — hover lift + border highlight ───────────────────── */
+  /* ── Interactive card — hover lift + border highlight (theme-aware) ──────── */
   .card-interactive {
     transition: border-color 150ms ease, transform 150ms ease;
   }
   .card-interactive:hover {
-    border-color: oklch(0.270 0.006 264);
+    border-color: var(--theme-hairline-strong);
     transform: translateY(-1px);
   }
 

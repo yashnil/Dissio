@@ -24,9 +24,9 @@ export default function ApiStatusCard() {
   }, []);
 
   const dot: Record<Status, string> = {
-    loading: "bg-zinc-400 animate-pulse",
-    online: "bg-green-500",
-    offline: "bg-red-500",
+    loading: "bg-ink-subtle animate-pulse",
+    online: "bg-ok",
+    offline: "bg-danger",
   };
 
   const label: Record<Status, string> = {
@@ -39,11 +39,11 @@ export default function ApiStatusCard() {
     <Card>
       <CardContent className="flex items-center gap-3 py-4">
         <span className={`h-2.5 w-2.5 rounded-full ${dot[status]}`} />
-        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+        <span className="text-sm font-medium text-ink">
           {label[status]}
         </span>
         {detail && (
-          <span className="text-sm text-zinc-400 dark:text-zinc-500">
+          <span className="text-sm text-ink-subtle">
             — {detail}
           </span>
         )}

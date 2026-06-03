@@ -180,13 +180,56 @@ async def get_user_progress(user_id: str) -> ProgressSummary:
         skill_averages = None
 
     # 6. Calculate gamification: XP, level, badges
-    # New XP system: heavily reward drills and attempts, not just speech uploads
+    # Granular XP system rewarding practice loops, not just uploads
     xp = 0
-    xp += speech_count * 5  # +5 XP per speech (reduced from 10)
-    xp += feedback_ready_count * 10  # +10 XP per feedback (reduced from 20)
-    xp += drills_assigned_count * 25  # +25 XP per drill generated (increased from 15)
 
-    # Calculate first-time vs repeat attempts
+    # Count workflow steps for each speech
+    transcript_count = 0
+    flow_count = 0
+    feedback_generated_count = 0
+    feedback_rated_count = 0
+    full_loop_count = 0  # speeches with feedback + drills + attempts
+
+    try:
+        # Get transcripts
+        tx_res = supabase.table("transcripts").select("speech_id").eq("user_id", user_id).execute()
+        transcript_count = len(tx_res.data)
+
+        # Get argument maps (flows)
+        flow_res = supabase.table("argument_maps").select("speech_id").execute()
+        speech_ids_with_flow = {f["speech_id"] for f in flow_res.data}
+        flow_count = len(speech_ids_with_flow)
+
+        # Get feedback reports
+        fb_res = supabase.table("feedback_reports").select("speech_id, helpful_rating, speeches!inner(user_id)").eq("speeches.user_id", user_id).execute()
+        feedback_generated_count = len(fb_res.data)
+        feedback_rated_count = sum(1 for fb in fb_res.data if fb.get("helpful_rating"))
+
+        # Count full loops: speeches with feedback AND drills AND at least one attempt
+        speech_ids_with_feedback = {fb["speech_id"] for fb in fb_res.data}
+        drills_with_attempts_res = supabase.table("drill_attempts").select("drill_id, drills!inner(speech_id, user_id)").eq("drills.user_id", user_id).execute()
+        speech_ids_with_attempts = {att["drills"]["speech_id"] for att in drills_with_attempts_res.data if att.get("drills")}
+
+        drills_by_speech_res = supabase.table("drills").select("speech_id").eq("user_id", user_id).execute()
+        speech_ids_with_drills = {d["speech_id"] for d in drills_by_speech_res.data}
+
+        # Full loop = has feedback AND drills AND attempts
+        full_loop_speeches = speech_ids_with_feedback & speech_ids_with_drills & speech_ids_with_attempts
+        full_loop_count = len(full_loop_speeches)
+    except Exception as exc:
+        logger.error("get_user_progress: workflow step counting failed | %s", type(exc).__name__)
+
+    # Calculate XP from workflow steps
+    # No XP for speech upload/creation - reward practice, not just recording
+    # speech_count * 0
+    # transcript_count * 0
+    xp += flow_count * 5                # +5 XP per flow generated
+    xp += feedback_generated_count * 10 # +10 XP per feedback
+    xp += drills_assigned_count * 15    # +15 XP per drill generated
+    xp += feedback_rated_count * 10     # +10 XP per feedback rating
+    xp += full_loop_count * 25          # +25 XP bonus per complete loop
+
+    # Calculate first-time vs repeat drill attempts
     # First attempt on each drill = 50 XP, repeat attempts = 20 XP
     try:
         attempts_breakdown = (
@@ -254,57 +297,49 @@ async def get_user_progress(user_id: str) -> ProgressSummary:
         has_team = False
         team_joined_at = None
 
-    if speech_count >= 1:
+    # Practice-focused badges: reward effort and improvement loops
+    if feedback_generated_count >= 1:
         badges.append(Badge(
-            id="first_speech",
-            name="First Speech",
-            description="Created your first practice speech",
-            icon="🎤",
-            earned_at=speeches_res.data[0].get("created_at") if speeches_res.data else None
-        ))
-
-    if drills_assigned_count >= 1:
-        badges.append(Badge(
-            id="flow_builder",
-            name="Flow Builder",
-            description="Generated your first argument flow",
-            icon="🗺️",
-            earned_at=drills_res.data[0].get("created_at") if drills_res.data else None
-        ))
-
-    if feedback_ready_count >= 1:
-        badges.append(Badge(
-            id="judge_ready",
-            name="Judge Ready",
+            id="first_feedback",
+            name="First Feedback",
             description="Received your first judge-style feedback",
             icon="⚖️",
-            earned_at=None  # Would need to fetch feedback created_at
+            earned_at=None
         ))
 
     if drill_attempts_count >= 1:
         badges.append(Badge(
-            id="drill_starter",
-            name="Drill Starter",
+            id="first_drill_attempt",
+            name="First Drill Attempt",
             description="Completed your first practice drill",
             icon="🎯",
-            earned_at=None  # Would need to fetch attempt created_at
-        ))
-
-    if speech_count >= 3:
-        badges.append(Badge(
-            id="consistent_speaker",
-            name="Consistent Speaker",
-            description="Created 3 practice speeches",
-            icon="🔥",
             earned_at=None
         ))
 
     if drill_attempts_count >= 3:
         badges.append(Badge(
-            id="practice_streak",
-            name="Practice Streak",
+            id="three_drill_attempts",
+            name="Practice Habit",
             description="Completed 3 drill attempts",
             icon="⚡",
+            earned_at=None
+        ))
+
+    if full_loop_count >= 1:
+        badges.append(Badge(
+            id="full_practice_loop",
+            name="Full Practice Loop",
+            description="Completed feedback → drill → attempt for one speech",
+            icon="🔄",
+            earned_at=None
+        ))
+
+    if feedback_generated_count >= 3:
+        badges.append(Badge(
+            id="three_feedback_reports",
+            name="Feedback Analyst",
+            description="Received 3 feedback reports",
+            icon="📊",
             earned_at=None
         ))
 

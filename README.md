@@ -40,25 +40,50 @@ RoundLab helps debaters practice and improve through AI-powered coaching. Record
 - ✅ Personalized drill generation (3 drills per speech, skill-targeted)
 - ✅ Drill attempts with re-recording and progress tracking
 
-### Gamification
-- ✅ XP system: +5 XP/speech, +10 XP/feedback, +25 XP/drill generated, +50 XP/first drill attempt, +20 XP/repeat attempt
-- ✅ Level progression (Level 1: 0-99 XP, Level 2: 100-249, Level 3: 250-499, Level 4: 500-899, Level 5: 900-1399, Level 6+: 1400+)
-- ✅ Badges: First Speech, Flow Builder, Judge Ready, Drill Starter, Consistent Speaker, Practice Streak, Team Player
-- ✅ Skill averages dashboard (averaged across all feedback reports)
+### Gamification (Practice-Focused)
+- ✅ **Granular XP System**: Rewards every workflow step, not just uploads
+  - +2 XP per speech upload
+  - +3 XP per transcript
+  - +5 XP per flow generated
+  - +10 XP per feedback report
+  - +15 XP per drill assigned
+  - +10 XP per feedback rating
+  - +50 XP per first drill attempt (biggest reward!)
+  - +20 XP per repeat drill attempt
+  - +25 XP bonus for completing full practice loop (feedback + drills + attempts)
+- ✅ Level progression (Level 1: 0-99 XP, Level 2: 100-249, Level 3: 250-499, Level 4: 500-899, Level 5: 900-1399, Level 6+: 1400+ [+300 per level])
+- ✅ **Practice-Focused Badges**: First Feedback, First Drill Attempt, Practice Habit (3 attempts), Full Practice Loop, Feedback Analyst (3 reports), Team Player
+- ✅ Skill averages dashboard (clash, weighing, extensions, drops, judge adaptation)
+
+### Authentication
+- ✅ Supabase Auth with PKCE OAuth flow
+- ✅ Google sign-in
+- ✅ Session persistence and automatic token refresh
 
 ### Team Features
-- ✅ Create team (generates 6-character invite code)
-- ✅ Join team (enter invite code)
-- ✅ Coach dashboard (view student progress, speeches, drills, attempts, last practice date)
-- ✅ Privacy: coaches see progress metadata, not audio or transcripts
+- ✅ **Multi-Team Hub**: Users can join multiple teams (student or coach role)
+- ✅ Create team (auto-generates 6-character invite code)
+- ✅ Join team (enter invite code from coach)
+- ✅ **Coach Dashboard**: View all students' progress in one place
+  - Speech count, drills assigned, drill attempts
+  - Last practice date for each student
+  - Aggregate team stats (total members, speeches, drills, attempts)
+- ✅ **Invite Workflow**: Copy invite code or full invite message to share with students
+- ✅ **Privacy**: Coaches see progress metadata, not audio recordings or full transcripts
 
 ### UI/UX
-- ✅ Dark mode (default) and light mode toggle with localStorage persistence
+- ✅ **Theme System**: Full dark/light mode with CSS custom properties (oklch color space)
+  - Dark mode: `--color-canvas: oklch(0.065 0.002 264)`, `--color-ink: oklch(0.975 0.001 264)`
+  - Light mode: `--color-canvas: oklch(0.985 0.001 264)`, `--color-ink: oklch(0.095 0.002 264)`
+  - Toggle persists via localStorage, transforms entire app
+- ✅ **Personalized Homepage**: Adapts based on login state (shows name, level, quick actions)
+- ✅ **Team Hub**: Multi-team management, coach dashboard, student progress tracking
+- ✅ **Smart Speech Workspace**: Reorders sections when session is complete (Coaching Report → Drills → Flow → Transcript)
 - ✅ Responsive design (mobile-first, tested on phone/tablet/desktop)
-- ✅ Motion animations (stagger, fade-up, card hover)
-- ✅ Coaching report format (summary card, priority cards, judge ballot, coach diagnosis, action checklist)
-- ✅ Flow visualization with argument cards (color-coded by type: offense, defense, weighing, response, unclear)
-- ✅ Improvement examples with disclaimers
+- ✅ Motion animations (stagger, fade-up, card hover, AnimatePresence transitions)
+- ✅ **Coaching Report Format**: Summary hero card, "Fix These First" priority cards, judge ballot, coach diagnosis with before/after examples, action checklist
+- ✅ Flow visualization with color-coded argument cards (offense, defense, weighing, response, unclear)
+- ✅ Coach diagnosis cards with targeted examples, disclaimers, and expandable before/after comparisons
 - ✅ Accessible buttons (size-sm: h-8, size-default: h-9, size-lg: h-10)
 
 ---
@@ -269,6 +294,80 @@ RoundLab/
 │           └── prompts/
 └── docs/                         # Product requirements, rubric, samples
 ```
+
+---
+
+## Testing
+
+### Backend Tests
+```bash
+cd backend
+source .venv/bin/activate
+pytest
+```
+
+71/71 tests passing (as of 2026-06-03).
+
+### Frontend Build Check
+```bash
+cd frontend
+npm run build
+```
+
+All pages compile successfully.
+
+---
+
+## Deployment Safety
+
+### Pre-Deployment Checklist
+- [ ] Backend tests pass (`pytest`)
+- [ ] Frontend builds without errors (`npm run build`)
+- [ ] Environment variables configured in production
+- [ ] Supabase migrations applied
+- [ ] Audio storage bucket configured (`audio` bucket with public read)
+- [ ] CORS origins updated for production domain
+
+### Known Deployment Considerations
+- **Audio uploads**: Ensure Supabase storage `audio` bucket has public read access for playback
+- **OpenAI API**: Monitor usage and set billing alerts (Whisper + GPT-4o calls)
+- **Session persistence**: Supabase Auth tokens persist via localStorage and cookies
+- **Theme toggle**: Persists in localStorage, safe for SSR (checked on mount)
+
+---
+
+## Limitations & Known Issues
+
+### Current Limitations
+- **Audio formats**: Limited to MP3, WAV, M4A, WebM, OGG, MP4 (max 50MB)
+- **Speech length**: Optimized for 45-90 second speeches (PF format)
+- **AI accuracy**: Flow extraction and feedback quality depend on audio clarity and speech structure
+- **Team management**: No leave team or remove member functionality yet (coaches must manually manage)
+- **Drill attempts**: Currently manual status tracking (no automated verification)
+- **Mobile recording**: Browser MediaRecorder support varies (upload recommended for iOS Safari)
+
+### Roadmap Considerations
+- Real-time collaboration (live team practice sessions)
+- Case library and opponent research tracking
+- Tournament prep mode (bracket simulation, judge adaptation profiles)
+- Advanced analytics (trend analysis, peer comparison)
+- Integration with Tabroom.com for tournament results
+- Drill verification (AI checks if drill attempt matches prompt)
+- Video upload support (for crossfire and body language feedback)
+
+---
+
+## Product Philosophy
+
+**Make the app feel like coaching, not cheating.**
+
+RoundLab is built for **practice**, not case generation. The core loop is:
+1. Record a speech you're already prepared to give
+2. Get judge-style feedback on delivery and argumentation
+3. Complete targeted drills to fix specific weaknesses
+4. Re-record to track improvement
+
+This is **not** an AI case writer. It's a **practice partner** that gives you feedback and drills, just like a coach would.
 
 ---
 

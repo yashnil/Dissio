@@ -333,6 +333,61 @@ function WorkspaceCard({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── Flow Summary Helper ────────────────────────────────────────────────────────
+
+function FlowSummary({ argMap }: { argMap: ArgumentMap }) {
+  const offenseArgs = argMap.arguments.filter(a => a.argument_type === "offense");
+  const allIssues = argMap.arguments.flatMap(a => a.issues);
+  const warrantIssues = allIssues.filter(i => i.toLowerCase().includes("warrant")).length;
+  const impactIssues = allIssues.filter(i => i.toLowerCase().includes("impact")).length;
+  const evidenceIssues = allIssues.filter(i => i.toLowerCase().includes("evidence") || i.toLowerCase().includes("unsupported")).length;
+
+  // Find strongest argument (highest confidence, offense type preferred)
+  const strongestArg = argMap.arguments.reduce((best, curr) => {
+    if (!best) return curr;
+    const currScore = (curr.confidence ?? 0) + (curr.argument_type === "offense" ? 0.1 : 0);
+    const bestScore = (best.confidence ?? 0) + (best.argument_type === "offense" ? 0.1 : 0);
+    return currScore > bestScore ? curr : best;
+  }, argMap.arguments[0]);
+
+  // Determine most common weakness
+  let commonWeakness = "";
+  if (warrantIssues > Math.max(impactIssues, evidenceIssues)) {
+    commonWeakness = "Warranting";
+  } else if (impactIssues > Math.max(warrantIssues, evidenceIssues)) {
+    commonWeakness = "Impact development";
+  } else if (evidenceIssues > 0) {
+    commonWeakness = "Evidence connection";
+  } else if (allIssues.length > 0) {
+    commonWeakness = "Argument structure";
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="flex flex-col gap-1 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+        <p className="text-xs text-ink-faint">Total Arguments</p>
+        <p className="text-2xl font-bold text-ink">{argMap.arguments.length}</p>
+        <p className="text-xs text-ink-subtle">{offenseArgs.length} offense</p>
+      </div>
+
+      {strongestArg && (
+        <div className="flex flex-col gap-1 rounded-lg border border-ok/20 bg-ok/5 px-4 py-3">
+          <p className="text-xs text-ok">Strongest Argument</p>
+          <p className="text-sm font-semibold text-ink line-clamp-2">{strongestArg.label}</p>
+        </div>
+      )}
+
+      {commonWeakness && (
+        <div className="flex flex-col gap-1 rounded-lg border border-amber/20 bg-amber/5 px-4 py-3">
+          <p className="text-xs text-amber">Most Common Issue</p>
+          <p className="text-sm font-semibold text-ink">{commonWeakness}</p>
+          <p className="text-xs text-ink-subtle">{allIssues.length} total issues</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 export default function SpeechPage() {
@@ -373,6 +428,8 @@ export default function SpeechPage() {
 
   const [ratingFeedback, setRatingFeedback] = useState(false);
   const [feedbackRated, setFeedbackRated] = useState(false);
+
+  const [flowViewMode, setFlowViewMode] = useState<"coach" | "technical">("coach");
 
   const [delOpen,  setDelOpen]  = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -677,6 +734,8 @@ export default function SpeechPage() {
     { label: "Drills",     done: drills.length > 0        },
   ];
 
+  const isComplete = speech.status === "done";
+
   const deleteBtn = (
     <button
       type="button"
@@ -720,10 +779,56 @@ export default function SpeechPage() {
             <WorkflowStepper steps={steps} />
           </motion.div>
 
-          {/* Workspace cards — each animates in when it first appears */}
+          {/* What to do next — only show when complete */}
+          {isComplete && (
+            <motion.div variants={staggerChild}>
+              <Card className="border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10">
+                <CardContent className="flex flex-col gap-3 px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <span className="h-1 w-1 rounded-full bg-lav" />
+                    <p className="text-eyebrow text-lav">What to do next</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {drills.filter((d) => d.status === "assigned").length > 0 ? (
+                      <>
+                        <p className="text-sm font-semibold text-ink">Practice your drills</p>
+                        <p className="text-xs leading-relaxed text-ink-subtle">
+                          You have {drills.filter((d) => d.status === "assigned").length} drill{drills.filter((d) => d.status === "assigned").length > 1 ? "s" : ""} waiting. Complete them to target your weaknesses, then re-record to track improvement.
+                        </p>
+                      </>
+                    ) : drills.length > 0 && drills.every((d) => d.status !== "assigned") ? (
+                      <>
+                        <p className="text-sm font-semibold text-ink">Ready to re-record</p>
+                        <p className="text-xs leading-relaxed text-ink-subtle">
+                          You've practiced all your drills. Start a new attempt to apply what you learned.
+                        </p>
+                        <Button
+                          onClick={startNewAttempt}
+                          size="sm"
+                          className="mt-1 w-fit gap-1.5"
+                        >
+                          <RefreshCw size={11} />
+                          New Attempt
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-ink">Review your feedback</p>
+                        <p className="text-xs leading-relaxed text-ink-subtle">
+                          Look through your coaching report and flow. When you're ready, start a new attempt.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Workspace cards — order changes based on completion status */}
           <AnimatePresence mode="popLayout">
 
-            {/* ── Step 1: Audio ─────────────────────────────────────────── */}
+            {/* ── Always First: Audio ──────────────────────────────────── */}
             <WorkspaceCard key="audio">
               <CardContent className="flex flex-col gap-4 px-5 py-5">
                 <StepHeader n={1} title="Audio" done={!!speech.audio_url} />
@@ -799,105 +904,318 @@ export default function SpeechPage() {
               </CardContent>
             </WorkspaceCard>
 
-            {/* ── Step 2: Transcript ────────────────────────────────────── */}
-            {speech.audio_url && (
-              transcribing ? (
-                <motion.div key="tx-loading" {...fadeUp(0)}>
-                  <LoadingCard title="Transcribing audio" messages={MSG_TRANSCRIBE} />
-                </motion.div>
-              ) : transcript ? (
-                <WorkspaceCard key="tx-done">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={2} title="Transcript" done />
-                    <TranscriptPanel transcript={transcript} onReRecord={resetAudio} />
+            {/* ── For Complete Sessions: Feedback → Drills → Flow → Transcript ── */}
+            {isComplete ? (
+              <>
+                {/* Feedback (Coaching Report) */}
+                {feedback && (
+                  <WorkspaceCard key="fb-done">
+                    <CardContent className="flex flex-col gap-5 px-5 py-5">
+                      <StepHeader n={4} title="Coaching Report" done />
 
-                    {/* Next step CTA */}
-                    {!argMap && (
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
-                          3
+                      {/* Summary Card */}
+                      <div className="rounded-xl border border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10 p-5">
+                        <ScoreCard score={feedback.overall_score} summary={feedback.summary} />
+                      </div>
+
+                      {/* Priority Cards - Top 3 Issues */}
+                      {feedback.raw_feedback?.top_3_priorities?.length ? (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-1 w-1 rounded-full bg-danger" />
+                            <p className="text-eyebrow text-ink-subtle">Fix These First</p>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3">
+                            {feedback.raw_feedback.top_3_priorities.map((p, i) => (
+                              <div key={i} className="flex items-start gap-3 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-xs font-bold text-white">
+                                  {i + 1}
+                                </span>
+                                <p className="text-sm leading-relaxed text-ink">{p}</p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Next: Build your flow</p>
-                          <p className="text-xs text-ink-subtle">Extract every claim, warrant, evidence, and impact from your speech.</p>
+                      ) : null}
+
+                      {/* Judge Ballot */}
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1 w-1 rounded-full bg-lav" />
+                          <p className="text-eyebrow text-ink-subtle">Judge Ballot</p>
+                        </div>
+                        <div className="rounded-lg border border-hairline bg-surface-2 p-4">
+                          <ScoreBreakdown scores={feedback.scores} speechType={speech?.speech_type} />
                         </div>
                       </div>
-                    )}
-                  </CardContent>
-                </WorkspaceCard>
-              ) : (
-                <WorkspaceCard key="tx-empty">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={2} title="Transcript" done={false} />
-                    <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-ink">Transcribe first</p>
-                        <p className="text-xs text-ink-subtle">
-                          RoundLab uses AI to transcribe your speech so it can understand what you said. Takes 10–30 seconds.
-                        </p>
-                      </div>
-                    </div>
-                    {txErr && <InlineAlert variant="danger">{txErr}</InlineAlert>}
-                    <Button onClick={transcribe} disabled={transcribing} size="sm" className="w-full">
-                      {transcribing ? "Transcribing…" : "Transcribe My Speech"}
-                    </Button>
-                  </CardContent>
-                </WorkspaceCard>
-              )
-            )}
 
-            {/* ── Step 3: Flow ──────────────────────────────────────────── */}
-            {transcript && (
-              genFlow ? (
-                <motion.div key="flow-loading" {...fadeUp(0)}>
-                  <LoadingCard title="Generating flow" messages={MSG_FLOW} />
-                </motion.div>
-              ) : argMap ? (
-                <WorkspaceCard key="flow-done">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={3} title="Flow" done aside={
-                      <Badge variant="indigo">
-                        {argMap.arguments.length} arg{argMap.arguments.length !== 1 ? "s" : ""}
-                      </Badge>
-                    } />
-
-                    {/* Flow Explanation */}
-                    <div className="flex flex-col gap-3 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
-                      <p className="text-sm leading-relaxed text-ink">
-                        <span className="font-semibold">This is your flow:</span> Each card shows one argument RoundLab heard in your speech. Green arguments are usable offense. Coach notes show what a judge may find missing.
-                      </p>
-                      {/* Quick Legend */}
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                        <span className="text-ink-subtle"><span className="font-semibold text-ink">Claim</span> = what you argue</span>
-                        <span className="text-ink-subtle"><span className="font-semibold text-ink">Warrant</span> = why it's true</span>
-                        <span className="text-ink-subtle"><span className="font-semibold text-ink">Evidence</span> = support</span>
-                        <span className="text-ink-subtle"><span className="font-semibold text-ink">Impact</span> = why it matters</span>
-                      </div>
-                    </div>
-
-                    {argMap.arguments.length === 0 ? (
-                      <p className="text-sm text-ink-faint">No arguments extracted.</p>
-                    ) : (
-                      <>
-                        {/* Common Issues Summary */}
-                        {(() => {
-                          const allIssues = argMap.arguments.flatMap(a => a.issues);
-                          const warrantIssues = allIssues.filter(i => i.toLowerCase().includes("warrant")).length;
-                          const impactIssues = allIssues.filter(i => i.toLowerCase().includes("impact")).length;
-                          const hasCommonIssue = warrantIssues > argMap.arguments.length / 2 || impactIssues > argMap.arguments.length / 2;
-
-                          return hasCommonIssue ? (
-                            <div className="rounded-lg border border-amber/20 bg-amber/5 px-4 py-3">
-                              <p className="text-xs font-semibold text-amber">Common Pattern</p>
-                              <p className="text-sm text-ink">
-                                {warrantIssues > impactIssues
-                                  ? "Most of your arguments need stronger warranting. Add 'because' sentences explaining why your claims are true."
-                                  : "Most of your arguments need stronger impact explanation. Tell the judge why these impacts matter in the real world."}
-                              </p>
+                      {/* Strengths & Weaknesses as Cards */}
+                      {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {feedback.strengths.length > 0 && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-ok/20 bg-ok/5 p-4">
+                              <p className="text-sm font-semibold text-ok">✓ What Worked</p>
+                              <ul className="flex flex-col gap-1.5">
+                                {feedback.strengths.map((s, i) => (
+                                  <li key={i} className="text-sm leading-relaxed text-ink-muted">· {s}</li>
+                                ))}
+                              </ul>
                             </div>
-                          ) : null;
-                        })()}
+                          )}
+                          {feedback.weaknesses.length > 0 && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-amber/20 bg-amber/5 p-4">
+                              <p className="text-sm font-semibold text-amber">⚠ Needs Improvement</p>
+                              <ul className="flex flex-col gap-1.5">
+                                {feedback.weaknesses.map((w, i) => (
+                                  <li key={i} className="text-sm leading-relaxed text-ink-muted">· {w}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
+                      {/* Coach Diagnosis Cards */}
+                      {(feedback.raw_feedback?.dropped_or_undercovered_arguments?.length ||
+                        feedback.raw_feedback?.warranting_diagnostics?.length ||
+                        feedback.raw_feedback?.weighing_diagnostics?.length ||
+                        feedback.raw_feedback?.evidence_diagnostics?.length) ? (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-1 w-1 rounded-full bg-ink-subtle" />
+                            <p className="text-eyebrow text-ink-subtle">Coach Diagnosis</p>
+                          </div>
+
+                          {/* Dropped arguments */}
+                          {feedback.raw_feedback?.dropped_or_undercovered_arguments && feedback.raw_feedback.dropped_or_undercovered_arguments.length > 0 && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
+                              <p className="text-sm font-semibold text-danger">Dropped / Undercovered</p>
+                              <ul className="flex flex-col gap-1">
+                                {feedback.raw_feedback.dropped_or_undercovered_arguments.map((item, i) => (
+                                  <li key={i} className="text-sm leading-relaxed text-ink-muted">· {item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          <CoachDiagnosis
+                            category="warranting"
+                            label="Warranting"
+                            items={feedback.raw_feedback?.warranting_diagnostics ?? []}
+                          />
+                          <CoachDiagnosis
+                            category="weighing"
+                            label="Impact Weighing"
+                            items={feedback.raw_feedback?.weighing_diagnostics ?? []}
+                          />
+                          <CoachDiagnosis
+                            category="evidence"
+                            label="Evidence Use"
+                            items={feedback.raw_feedback?.evidence_diagnostics ?? []}
+                          />
+                        </div>
+                      ) : null}
+
+                      {/* Judge Adaptation Notes */}
+                      {feedback.raw_feedback?.judge_adaptation_notes && (
+                        <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                          <p className="text-sm font-semibold text-ink">Judge Adaptation</p>
+                          <p className="text-sm leading-relaxed text-ink-muted">
+                            {feedback.raw_feedback.judge_adaptation_notes}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Decision Logic (RFD) */}
+                      {feedback.raw_feedback?.decision_logic && (
+                        <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
+                          <p className="text-sm font-semibold text-lav">Reason For Decision (RFD)</p>
+                          <p className="text-sm leading-relaxed text-ink-muted">
+                            {feedback.raw_feedback.decision_logic}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Checklist */}
+                      {feedback.raw_feedback?.recommendations?.length ? (
+                        <div className="flex flex-col gap-3 rounded-lg border border-lav/20 bg-lav/5 p-4">
+                          <p className="text-sm font-semibold text-lav">Before You Re-Record</p>
+                          <ul className="flex flex-col gap-2">
+                            {feedback.raw_feedback.recommendations.map((r, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink">
+                                <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-lav/30 bg-surface-1" />
+                                {r}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {/* Feedback Rating */}
+                      {!feedback.helpful_rating && !feedbackRated ? (
+                        <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                          <p className="text-xs font-medium text-ink-subtle">Was this feedback useful?</p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => rateFeedback("helpful")}
+                              disabled={ratingFeedback}
+                              className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-ok/40 hover:bg-ok/5 hover:text-ok disabled:opacity-50"
+                            >
+                              <ThumbsUp size={12} />
+                              Helpful
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => rateFeedback("not_helpful")}
+                              disabled={ratingFeedback}
+                              className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
+                            >
+                              <ThumbsDown size={12} />
+                              Not helpful
+                            </button>
+                          </div>
+                          <p className="text-xs text-ink-faint">Your rating helps improve RoundLab for students.</p>
+                        </div>
+                      ) : (feedback.helpful_rating || feedbackRated) && (
+                        <div className="flex items-center gap-2 rounded-lg border border-ok/20 bg-ok/5 px-4 py-2">
+                          <Check size={12} className="text-ok" />
+                          <p className="text-xs text-ok">Thanks for the feedback!</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
+
+                {/* Drills */}
+                {drills.length > 0 && (
+                  <WorkspaceCard key="drills-done">
+                    <CardContent className="flex flex-col gap-4 px-5 py-5">
+                      <StepHeader
+                        n={5}
+                        title="Practice Drills"
+                        done
+                        aside={
+                          <Badge variant="indigo">
+                            {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
+                          </Badge>
+                        }
+                      />
+                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-ink">Practice these drills</p>
+                          <p className="text-xs text-ink-subtle">
+                            Each drill targets a specific weakness from your feedback. Record yourself doing the exercise, then re-record your speech to see improvement.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {drills.map((drill, i) => (
+                          <DrillCard
+                            key={drill.id}
+                            drill={drill}
+                            index={i}
+                            onStatusChange={updateDrillStatus}
+                            updatingId={updatingDrill}
+                            userId={userId ?? undefined}
+                          />
+                        ))}
+                      </div>
+
+                      {/* Re-record CTA after drills */}
+                      <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
+                          <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={startNewAttempt}
+                          className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
+                        >
+                          <RefreshCw size={11} />
+                          New Attempt
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
+
+                {/* Flow */}
+                {argMap && (
+                  <WorkspaceCard key="flow-done">
+                    <CardContent className="flex flex-col gap-4 px-5 py-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <StepHeader n={3} title="Flow" done aside={
+                          <Badge variant="indigo">
+                            {argMap.arguments.length} arg{argMap.arguments.length !== 1 ? "s" : ""}
+                          </Badge>
+                        } />
+
+                        {/* View Mode Toggle */}
+                        <div className="flex gap-0.5 rounded-lg border border-hairline bg-surface-2 p-0.5">
+                          <button
+                            onClick={() => setFlowViewMode("coach")}
+                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              flowViewMode === "coach"
+                                ? "bg-lav text-white"
+                                : "text-ink-subtle hover:text-ink"
+                            }`}
+                          >
+                            Coach View
+                          </button>
+                          <button
+                            onClick={() => setFlowViewMode("technical")}
+                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              flowViewMode === "technical"
+                                ? "bg-lav text-white"
+                                : "text-ink-subtle hover:text-ink"
+                            }`}
+                          >
+                            Technical
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Flow Summary */}
+                      <FlowSummary argMap={argMap} />
+
+                      {/* Flow Explanation */}
+                      <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
+                        <p className="text-sm leading-relaxed text-ink">
+                          {flowViewMode === "coach" ? (
+                            <><span className="font-semibold">Coach View:</span> Focus on what needs fixing. Click "Show full details" on any card to see the complete argument structure.</>
+                          ) : (
+                            <><span className="font-semibold">Technical Flow:</span> Complete argument breakdown. This is what a judge would flow during your speech.</>
+                          )}
+                        </p>
+                        {/* Badge Legend */}
+                        <div className="flex flex-col gap-1.5 border-t border-lav/10 pt-2 text-xs">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">High</span> = strong argument</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Med</span> = developing</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Low</span> = needs work</span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Offense</span> = winning argument</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Defense</span> = answers opponent</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Weighing</span> = impact comparison</span>
+                          </div>
+                        </div>
+                        {flowViewMode === "technical" && (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-lav/10 pt-2 text-xs">
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Claim</span> = what you argue</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Warrant</span> = why it's true</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Evidence</span> = support</span>
+                            <span className="text-ink-subtle"><span className="font-semibold text-ink">Impact</span> = why it matters</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {argMap.arguments.length === 0 ? (
+                        <p className="text-sm text-ink-faint">No arguments extracted.</p>
+                      ) : (
                         <motion.div
                           className="grid grid-cols-1 gap-3 md:grid-cols-2"
                           variants={staggerParent(0.06)}
@@ -905,349 +1223,505 @@ export default function SpeechPage() {
                           animate="show"
                         >
                           {argMap.arguments.map((a, i) => (
-                            <ArgumentCard key={i} arg={a} index={i} />
+                            <ArgumentCard key={i} arg={a} index={i} viewMode={flowViewMode} />
                           ))}
                         </motion.div>
-                      </>
-                    )}
+                      )}
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
 
-                    {/* Next step CTA */}
-                    {!feedback && (
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
-                          4
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Next: Get judge feedback</p>
-                          <p className="text-xs text-ink-subtle">See what a judge would notice: clash, weighing, drops, and adaptation.</p>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </WorkspaceCard>
-              ) : (
-                <WorkspaceCard key="flow-empty">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={3} title="Flow" done={false} />
-                    {!canAnalyze ? (
-                      <InlineAlert variant="danger">Transcript too short. Record at least 30 seconds.</InlineAlert>
-                    ) : (
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Build your debate flow</p>
-                          <p className="text-xs text-ink-subtle">
-                            RoundLab maps out every claim, warrant, evidence, and impact. This is what a judge would flow during your speech.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                    {flowErr && <InlineAlert variant="danger">{flowErr}</InlineAlert>}
-                    <Button disabled={!canAnalyze || genFlow} onClick={generateFlow} size="sm" className="w-full">
-                      {genFlow ? "Building Flow…" : "Build My Flow"}
-                    </Button>
-                  </CardContent>
-                </WorkspaceCard>
-              )
-            )}
+                {/* Transcript */}
+                {transcript && (
+                  <WorkspaceCard key="tx-done">
+                    <CardContent className="flex flex-col gap-4 px-5 py-5">
+                      <StepHeader n={2} title="Transcript" done />
+                      <TranscriptPanel transcript={transcript} onReRecord={resetAudio} />
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
+              </>
+            ) : (
+              <>
+                {/* ── For Incomplete Sessions: Guided Order (Transcript → Flow → Feedback → Drills) ── */}
 
-            {/* ── Step 4: Feedback ──────────────────────────────────────── */}
-            {argMap && (
-              genFb ? (
-                <motion.div key="fb-loading" {...fadeUp(0)}>
-                  <LoadingCard title="Generating feedback" messages={MSG_FEEDBACK} />
-                </motion.div>
-              ) : feedback ? (
-                <WorkspaceCard key="fb-done">
-                  <CardContent className="flex flex-col gap-5 px-5 py-5">
-                    <StepHeader n={4} title="Coaching Report" done />
+                {/* Step 2: Transcript */}
+                {speech.audio_url && (
+                  transcribing ? (
+                    <motion.div key="tx-loading" {...fadeUp(0)}>
+                      <LoadingCard title="Transcribing audio" messages={MSG_TRANSCRIBE} />
+                    </motion.div>
+                  ) : transcript ? (
+                    <WorkspaceCard key="tx-done">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader n={2} title="Transcript" done />
+                        <TranscriptPanel transcript={transcript} onReRecord={resetAudio} />
 
-                    {/* Summary Card */}
-                    <div className="rounded-xl border border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10 p-5">
-                      <ScoreCard score={feedback.overall_score} summary={feedback.summary} />
-                    </div>
-
-                    {/* Priority Cards - Top 3 Issues */}
-                    {feedback.raw_feedback?.top_3_priorities?.length ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="h-1 w-1 rounded-full bg-danger" />
-                          <p className="text-eyebrow text-ink-subtle">Fix These First</p>
-                        </div>
-                        <div className="grid grid-cols-1 gap-3">
-                          {feedback.raw_feedback.top_3_priorities.map((p, i) => (
-                            <div key={i} className="flex items-start gap-3 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
-                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-xs font-bold text-white">
-                                {i + 1}
-                              </span>
-                              <p className="text-sm leading-relaxed text-ink">{p}</p>
+                        {/* Next step CTA */}
+                        {!argMap && (
+                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
+                              3
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {/* Judge Ballot */}
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="h-1 w-1 rounded-full bg-lav" />
-                        <p className="text-eyebrow text-ink-subtle">Judge Ballot</p>
-                      </div>
-                      <div className="rounded-lg border border-hairline bg-surface-2 p-4">
-                        <ScoreBreakdown scores={feedback.scores} />
-                      </div>
-                    </div>
-
-                    {/* Strengths & Weaknesses as Cards */}
-                    {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {feedback.strengths.length > 0 && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-ok/20 bg-ok/5 p-4">
-                            <p className="text-sm font-semibold text-ok">✓ What Worked</p>
-                            <ul className="flex flex-col gap-1.5">
-                              {feedback.strengths.map((s, i) => (
-                                <li key={i} className="text-sm leading-relaxed text-ink-muted">· {s}</li>
-                              ))}
-                            </ul>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-ink">Next: Build your flow</p>
+                              <p className="text-xs text-ink-subtle">Extract every claim, warrant, evidence, and impact from your speech.</p>
+                            </div>
                           </div>
                         )}
-                        {feedback.weaknesses.length > 0 && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-amber/20 bg-amber/5 p-4">
-                            <p className="text-sm font-semibold text-amber">⚠ Needs Improvement</p>
-                            <ul className="flex flex-col gap-1.5">
-                              {feedback.weaknesses.map((w, i) => (
-                                <li key={i} className="text-sm leading-relaxed text-ink-muted">· {w}</li>
-                              ))}
-                            </ul>
+                      </CardContent>
+                    </WorkspaceCard>
+                  ) : (
+                    <WorkspaceCard key="tx-empty">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader n={2} title="Transcript" done={false} />
+                        <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-ink">Transcribe first</p>
+                            <p className="text-xs text-ink-subtle">
+                              RoundLab uses AI to transcribe your speech so it can understand what you said. Takes 10–30 seconds.
+                            </p>
                           </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Coach Diagnosis Cards */}
-                    {(feedback.raw_feedback?.dropped_or_undercovered_arguments?.length ||
-                      feedback.raw_feedback?.warranting_diagnostics?.length ||
-                      feedback.raw_feedback?.weighing_diagnostics?.length ||
-                      feedback.raw_feedback?.evidence_diagnostics?.length) ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="h-1 w-1 rounded-full bg-ink-subtle" />
-                          <p className="text-eyebrow text-ink-subtle">Coach Diagnosis</p>
                         </div>
+                        {txErr && <InlineAlert variant="danger">{txErr}</InlineAlert>}
+                        <Button onClick={transcribe} disabled={transcribing} size="sm" className="w-full">
+                          {transcribing ? "Transcribing…" : "Transcribe My Speech"}
+                        </Button>
+                      </CardContent>
+                    </WorkspaceCard>
+                  )
+                )}
 
-                        {/* Dropped arguments */}
-                        {feedback.raw_feedback?.dropped_or_undercovered_arguments && feedback.raw_feedback.dropped_or_undercovered_arguments.length > 0 && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
-                            <p className="text-sm font-semibold text-danger">Dropped / Undercovered</p>
-                            <ul className="flex flex-col gap-1">
-                              {feedback.raw_feedback.dropped_or_undercovered_arguments.map((item, i) => (
-                                <li key={i} className="text-sm leading-relaxed text-ink-muted">· {item}</li>
-                              ))}
-                            </ul>
+                {/* Step 3: Flow */}
+                {transcript && (
+                  genFlow ? (
+                    <motion.div key="flow-loading" {...fadeUp(0)}>
+                      <LoadingCard title="Generating flow" messages={MSG_FLOW} />
+                    </motion.div>
+                  ) : argMap ? (
+                    <WorkspaceCard key="flow-done">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <div className="flex items-center justify-between gap-3">
+                          <StepHeader n={3} title="Flow" done aside={
+                            <Badge variant="indigo">
+                              {argMap.arguments.length} arg{argMap.arguments.length !== 1 ? "s" : ""}
+                            </Badge>
+                          } />
+
+                          {/* View Mode Toggle */}
+                          <div className="flex gap-0.5 rounded-lg border border-hairline bg-surface-2 p-0.5">
+                            <button
+                              onClick={() => setFlowViewMode("coach")}
+                              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                                flowViewMode === "coach"
+                                  ? "bg-lav text-white"
+                                  : "text-ink-subtle hover:text-ink"
+                              }`}
+                            >
+                              Coach View
+                            </button>
+                            <button
+                              onClick={() => setFlowViewMode("technical")}
+                              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                                flowViewMode === "technical"
+                                  ? "bg-lav text-white"
+                                  : "text-ink-subtle hover:text-ink"
+                              }`}
+                            >
+                              Technical
+                            </button>
                           </div>
-                        )}
-
-                        <CoachDiagnosis
-                          category="warranting"
-                          label="Warranting"
-                          items={feedback.raw_feedback?.warranting_diagnostics ?? []}
-                        />
-                        <CoachDiagnosis
-                          category="weighing"
-                          label="Impact Weighing"
-                          items={feedback.raw_feedback?.weighing_diagnostics ?? []}
-                        />
-                        <CoachDiagnosis
-                          category="evidence"
-                          label="Evidence Use"
-                          items={feedback.raw_feedback?.evidence_diagnostics ?? []}
-                        />
-                      </div>
-                    ) : null}
-
-                    {/* Judge Adaptation Notes */}
-                    {feedback.raw_feedback?.judge_adaptation_notes && (
-                      <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-                        <p className="text-sm font-semibold text-ink">Judge Adaptation</p>
-                        <p className="text-sm leading-relaxed text-ink-muted">
-                          {feedback.raw_feedback.judge_adaptation_notes}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Decision Logic (RFD) */}
-                    {feedback.raw_feedback?.decision_logic && (
-                      <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
-                        <p className="text-sm font-semibold text-lav">Reason For Decision (RFD)</p>
-                        <p className="text-sm leading-relaxed text-ink-muted">
-                          {feedback.raw_feedback.decision_logic}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Action Checklist */}
-                    {feedback.raw_feedback?.recommendations?.length ? (
-                      <div className="flex flex-col gap-3 rounded-lg border border-lav/20 bg-lav/5 p-4">
-                        <p className="text-sm font-semibold text-lav">Before You Re-Record</p>
-                        <ul className="flex flex-col gap-2">
-                          {feedback.raw_feedback.recommendations.map((r, i) => (
-                            <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink">
-                              <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-lav/30 bg-surface-1" />
-                              {r}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-
-                    {/* Feedback Rating */}
-                    {!feedback.helpful_rating && !feedbackRated ? (
-                      <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-                        <p className="text-xs font-medium text-ink-subtle">Was this feedback useful?</p>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => rateFeedback("helpful")}
-                            disabled={ratingFeedback}
-                            className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-ok/40 hover:bg-ok/5 hover:text-ok disabled:opacity-50"
-                          >
-                            <ThumbsUp size={12} />
-                            Helpful
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => rateFeedback("not_helpful")}
-                            disabled={ratingFeedback}
-                            className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
-                          >
-                            <ThumbsDown size={12} />
-                            Not helpful
-                          </button>
                         </div>
-                        <p className="text-xs text-ink-faint">Your rating helps improve RoundLab for students.</p>
-                      </div>
-                    ) : (feedback.helpful_rating || feedbackRated) && (
-                      <div className="flex items-center gap-2 rounded-lg border border-ok/20 bg-ok/5 px-4 py-2">
-                        <Check size={12} className="text-ok" />
-                        <p className="text-xs text-ok">Thanks for the feedback!</p>
-                      </div>
-                    )}
 
-                    {/* Next step CTA - Generate Drills */}
-                    {drills.length === 0 && (
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
-                          5
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Next: Generate practice drills</p>
-                          <p className="text-xs text-ink-subtle">Get 3 personalized drills targeting your weakest skills. Practice them before re-recording.</p>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </WorkspaceCard>
-              ) : (
-                <WorkspaceCard key="fb-empty">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={4} title="Feedback" done={false} />
-                    {!canAnalyze ? (
-                      <InlineAlert variant="danger">Transcript too short for meaningful feedback.</InlineAlert>
-                    ) : (
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Get judge-style feedback</p>
-                          <p className="text-xs text-ink-subtle">
-                            RoundLab scores your speech like a debate judge: clash, weighing, extensions, drops, and judge adaptation.
+                        {/* Flow Summary */}
+                        <FlowSummary argMap={argMap} />
+
+                        {/* Flow Explanation */}
+                        <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
+                          <p className="text-sm leading-relaxed text-ink">
+                            {flowViewMode === "coach" ? (
+                              <><span className="font-semibold">Coach View:</span> Focus on what needs fixing. Click "Show full details" on any card to see the complete argument structure.</>
+                            ) : (
+                              <><span className="font-semibold">Technical Flow:</span> Complete argument breakdown. This is what a judge would flow during your speech.</>
+                            )}
                           </p>
+                          {/* Badge Legend */}
+                          <div className="flex flex-col gap-1.5 border-t border-lav/10 pt-2 text-xs">
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">High</span> = strong argument</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Med</span> = developing</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Low</span> = needs work</span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Offense</span> = winning argument</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Defense</span> = answers opponent</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Weighing</span> = impact comparison</span>
+                            </div>
+                          </div>
+                          {flowViewMode === "technical" && (
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-lav/10 pt-2 text-xs">
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Claim</span> = what you argue</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Warrant</span> = why it's true</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Evidence</span> = support</span>
+                              <span className="text-ink-subtle"><span className="font-semibold text-ink">Impact</span> = why it matters</span>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
-                    {fbErr && <InlineAlert variant="danger">{fbErr}</InlineAlert>}
-                    <Button disabled={!canAnalyze || genFb} onClick={generateFeedback} size="sm" className="w-full">
-                      {genFb ? "Generating Feedback…" : "Get Judge Feedback"}
-                    </Button>
-                  </CardContent>
-                </WorkspaceCard>
-              )
-            )}
 
-            {/* ── Step 5: Drills ────────────────────────────────────────── */}
-            {feedback && (
-              genDrills ? (
-                <motion.div key="drills-loading" {...fadeUp(0)}>
-                  <LoadingCard title="Generating drills" messages={MSG_DRILLS} />
-                </motion.div>
-              ) : drills.length > 0 ? (
-                <WorkspaceCard key="drills-done">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader
-                      n={5}
-                      title="Practice Drills"
-                      done
-                      aside={
-                        <Badge variant="indigo">
-                          {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
-                        </Badge>
-                      }
-                    />
-                    <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-ink">Practice these drills</p>
-                        <p className="text-xs text-ink-subtle">
-                          Each drill targets a specific weakness from your feedback. Record yourself doing the exercise, then re-record your speech to see improvement.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {drills.map((drill, i) => (
-                        <DrillCard
-                          key={drill.id}
-                          drill={drill}
-                          index={i}
-                          onStatusChange={updateDrillStatus}
-                          updatingId={updatingDrill}
-                          userId={userId ?? undefined}
+                        {argMap.arguments.length === 0 ? (
+                          <p className="text-sm text-ink-faint">No arguments extracted.</p>
+                        ) : (
+                          <motion.div
+                            className="grid grid-cols-1 gap-3 md:grid-cols-2"
+                            variants={staggerParent(0.06)}
+                            initial="hidden"
+                            animate="show"
+                          >
+                            {argMap.arguments.map((a, i) => (
+                              <ArgumentCard key={i} arg={a} index={i} viewMode={flowViewMode} />
+                            ))}
+                          </motion.div>
+                        )}
+
+                        {/* Next step CTA */}
+                        {!feedback && (
+                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
+                              4
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-ink">Next: Get judge feedback</p>
+                              <p className="text-xs text-ink-subtle">See what a judge would notice: clash, weighing, drops, and adaptation.</p>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </WorkspaceCard>
+                  ) : (
+                    <WorkspaceCard key="flow-empty">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader n={3} title="Flow" done={false} />
+                        {!canAnalyze ? (
+                          <InlineAlert variant="danger">Transcript too short. Record at least 30 seconds.</InlineAlert>
+                        ) : (
+                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-ink">Build your debate flow</p>
+                              <p className="text-xs text-ink-subtle">
+                                RoundLab maps out every claim, warrant, evidence, and impact. This is what a judge would flow during your speech.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {flowErr && <InlineAlert variant="danger">{flowErr}</InlineAlert>}
+                        <Button disabled={!canAnalyze || genFlow} onClick={generateFlow} size="sm" className="w-full">
+                          {genFlow ? "Building Flow…" : "Build My Flow"}
+                        </Button>
+                      </CardContent>
+                    </WorkspaceCard>
+                  )
+                )}
+
+                {/* Step 4: Feedback */}
+                {argMap && (
+                  genFb ? (
+                    <motion.div key="fb-loading" {...fadeUp(0)}>
+                      <LoadingCard title="Generating feedback" messages={MSG_FEEDBACK} />
+                    </motion.div>
+                  ) : feedback ? (
+                    <WorkspaceCard key="fb-done">
+                      <CardContent className="flex flex-col gap-5 px-5 py-5">
+                        <StepHeader n={4} title="Coaching Report" done />
+
+                        {/* Summary Card */}
+                        <div className="rounded-xl border border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10 p-5">
+                          <ScoreCard score={feedback.overall_score} summary={feedback.summary} />
+                        </div>
+
+                        {/* Priority Cards - Top 3 Issues */}
+                        {feedback.raw_feedback?.top_3_priorities?.length ? (
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className="h-1 w-1 rounded-full bg-danger" />
+                              <p className="text-eyebrow text-ink-subtle">Fix These First</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3">
+                              {feedback.raw_feedback.top_3_priorities.map((p, i) => (
+                                <div key={i} className="flex items-start gap-3 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
+                                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-xs font-bold text-white">
+                                    {i + 1}
+                                  </span>
+                                  <p className="text-sm leading-relaxed text-ink">{p}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* Judge Ballot */}
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-1 w-1 rounded-full bg-lav" />
+                            <p className="text-eyebrow text-ink-subtle">Judge Ballot</p>
+                          </div>
+                          <div className="rounded-lg border border-hairline bg-surface-2 p-4">
+                            <ScoreBreakdown scores={feedback.scores} />
+                          </div>
+                        </div>
+
+                        {/* Strengths & Weaknesses as Cards */}
+                        {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {feedback.strengths.length > 0 && (
+                              <div className="flex flex-col gap-2 rounded-lg border border-ok/20 bg-ok/5 p-4">
+                                <p className="text-sm font-semibold text-ok">✓ What Worked</p>
+                                <ul className="flex flex-col gap-1.5">
+                                  {feedback.strengths.map((s, i) => (
+                                    <li key={i} className="text-sm leading-relaxed text-ink-muted">· {s}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {feedback.weaknesses.length > 0 && (
+                              <div className="flex flex-col gap-2 rounded-lg border border-amber/20 bg-amber/5 p-4">
+                                <p className="text-sm font-semibold text-amber">⚠ Needs Improvement</p>
+                                <ul className="flex flex-col gap-1.5">
+                                  {feedback.weaknesses.map((w, i) => (
+                                    <li key={i} className="text-sm leading-relaxed text-ink-muted">· {w}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Coach Diagnosis Cards */}
+                        {(feedback.raw_feedback?.dropped_or_undercovered_arguments?.length ||
+                          feedback.raw_feedback?.warranting_diagnostics?.length ||
+                          feedback.raw_feedback?.weighing_diagnostics?.length ||
+                          feedback.raw_feedback?.evidence_diagnostics?.length) ? (
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className="h-1 w-1 rounded-full bg-ink-subtle" />
+                              <p className="text-eyebrow text-ink-subtle">Coach Diagnosis</p>
+                            </div>
+
+                            {/* Dropped arguments */}
+                            {feedback.raw_feedback?.dropped_or_undercovered_arguments && feedback.raw_feedback.dropped_or_undercovered_arguments.length > 0 && (
+                              <div className="flex flex-col gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3">
+                                <p className="text-sm font-semibold text-danger">Dropped / Undercovered</p>
+                                <ul className="flex flex-col gap-1">
+                                  {feedback.raw_feedback.dropped_or_undercovered_arguments.map((item, i) => (
+                                    <li key={i} className="text-sm leading-relaxed text-ink-muted">· {item}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            <CoachDiagnosis
+                              category="warranting"
+                              label="Warranting"
+                              items={feedback.raw_feedback?.warranting_diagnostics ?? []}
+                            />
+                            <CoachDiagnosis
+                              category="weighing"
+                              label="Impact Weighing"
+                              items={feedback.raw_feedback?.weighing_diagnostics ?? []}
+                            />
+                            <CoachDiagnosis
+                              category="evidence"
+                              label="Evidence Use"
+                              items={feedback.raw_feedback?.evidence_diagnostics ?? []}
+                            />
+                          </div>
+                        ) : null}
+
+                        {/* Judge Adaptation Notes */}
+                        {feedback.raw_feedback?.judge_adaptation_notes && (
+                          <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                            <p className="text-sm font-semibold text-ink">Judge Adaptation</p>
+                            <p className="text-sm leading-relaxed text-ink-muted">
+                              {feedback.raw_feedback.judge_adaptation_notes}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Decision Logic (RFD) */}
+                        {feedback.raw_feedback?.decision_logic && (
+                          <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3">
+                            <p className="text-sm font-semibold text-lav">Reason For Decision (RFD)</p>
+                            <p className="text-sm leading-relaxed text-ink-muted">
+                              {feedback.raw_feedback.decision_logic}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Action Checklist */}
+                        {feedback.raw_feedback?.recommendations?.length ? (
+                          <div className="flex flex-col gap-3 rounded-lg border border-lav/20 bg-lav/5 p-4">
+                            <p className="text-sm font-semibold text-lav">Before You Re-Record</p>
+                            <ul className="flex flex-col gap-2">
+                              {feedback.raw_feedback.recommendations.map((r, i) => (
+                                <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink">
+                                  <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-lav/30 bg-surface-1" />
+                                  {r}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {/* Feedback Rating */}
+                        {!feedback.helpful_rating && !feedbackRated ? (
+                          <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                            <p className="text-xs font-medium text-ink-subtle">Was this feedback useful?</p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => rateFeedback("helpful")}
+                                disabled={ratingFeedback}
+                                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-ok/40 hover:bg-ok/5 hover:text-ok disabled:opacity-50"
+                              >
+                                <ThumbsUp size={12} />
+                                Helpful
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => rateFeedback("not_helpful")}
+                                disabled={ratingFeedback}
+                                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
+                              >
+                                <ThumbsDown size={12} />
+                                Not helpful
+                              </button>
+                            </div>
+                            <p className="text-xs text-ink-faint">Your rating helps improve RoundLab for students.</p>
+                          </div>
+                        ) : (feedback.helpful_rating || feedbackRated) && (
+                          <div className="flex items-center gap-2 rounded-lg border border-ok/20 bg-ok/5 px-4 py-2">
+                            <Check size={12} className="text-ok" />
+                            <p className="text-xs text-ok">Thanks for the feedback!</p>
+                          </div>
+                        )}
+
+                        {/* Next step CTA - Generate Drills */}
+                        {drills.length === 0 && (
+                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
+                              5
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-ink">Next: Generate practice drills</p>
+                              <p className="text-xs text-ink-subtle">Get 3 personalized drills targeting your weakest skills. Practice them before re-recording.</p>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </WorkspaceCard>
+                  ) : (
+                    <WorkspaceCard key="fb-empty">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader n={4} title="Feedback" done={false} />
+                        {!canAnalyze ? (
+                          <InlineAlert variant="danger">Transcript too short for meaningful feedback.</InlineAlert>
+                        ) : (
+                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-ink">Get judge-style feedback</p>
+                              <p className="text-xs text-ink-subtle">
+                                RoundLab scores your speech like a debate judge: clash, weighing, extensions, drops, and judge adaptation.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {fbErr && <InlineAlert variant="danger">{fbErr}</InlineAlert>}
+                        <Button disabled={!canAnalyze || genFb} onClick={generateFeedback} size="sm" className="w-full">
+                          {genFb ? "Generating Feedback…" : "Get Judge Feedback"}
+                        </Button>
+                      </CardContent>
+                    </WorkspaceCard>
+                  )
+                )}
+
+                {/* Step 5: Drills */}
+                {feedback && (
+                  genDrills ? (
+                    <motion.div key="drills-loading" {...fadeUp(0)}>
+                      <LoadingCard title="Generating drills" messages={MSG_DRILLS} />
+                    </motion.div>
+                  ) : drills.length > 0 ? (
+                    <WorkspaceCard key="drills-done">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader
+                          n={5}
+                          title="Practice Drills"
+                          done
+                          aside={
+                            <Badge variant="indigo">
+                              {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
+                            </Badge>
+                          }
                         />
-                      ))}
-                    </div>
+                        <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-ink">Practice these drills</p>
+                            <p className="text-xs text-ink-subtle">
+                              Each drill targets a specific weakness from your feedback. Record yourself doing the exercise, then re-record your speech to see improvement.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          {drills.map((drill, i) => (
+                            <DrillCard
+                              key={drill.id}
+                              drill={drill}
+                              index={i}
+                              onStatusChange={updateDrillStatus}
+                              updatingId={updatingDrill}
+                              userId={userId ?? undefined}
+                            />
+                          ))}
+                        </div>
 
-                    {/* Re-record CTA after drills */}
-                    <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
-                        <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
-                      </div>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={startNewAttempt}
-                        className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
-                      >
-                        <RefreshCw size={11} />
-                        New Attempt
-                      </Button>
-                    </div>
-                  </CardContent>
-                </WorkspaceCard>
-              ) : (
-                <WorkspaceCard key="drills-empty">
-                  <CardContent className="flex flex-col gap-4 px-5 py-5">
-                    <StepHeader n={5} title="Practice Drills" done={false} />
-                    <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-ink">Create personalized drills</p>
-                        <p className="text-xs text-ink-subtle">
-                          RoundLab analyzes your feedback to generate 3 targeted practice exercises. Each drill helps you improve a specific skill.
-                        </p>
-                      </div>
-                    </div>
-                    {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
-                    <Button onClick={generateDrills} disabled={genDrills} size="sm" className="w-full">
-                      {genDrills ? "Creating Drills…" : "Create My Practice Drills"}
-                    </Button>
-                  </CardContent>
-                </WorkspaceCard>
-              )
+                        {/* Re-record CTA after drills */}
+                        <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
+                            <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={startNewAttempt}
+                            className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
+                          >
+                            <RefreshCw size={11} />
+                            New Attempt
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </WorkspaceCard>
+                  ) : (
+                    <WorkspaceCard key="drills-empty">
+                      <CardContent className="flex flex-col gap-4 px-5 py-5">
+                        <StepHeader n={5} title="Practice Drills" done={false} />
+                        <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-ink">Create personalized drills</p>
+                            <p className="text-xs text-ink-subtle">
+                              RoundLab analyzes your feedback to generate 3 targeted practice exercises. Each drill helps you improve a specific skill.
+                            </p>
+                          </div>
+                        </div>
+                        {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
+                        <Button onClick={generateDrills} disabled={genDrills} size="sm" className="w-full">
+                          {genDrills ? "Creating Drills…" : "Create My Practice Drills"}
+                        </Button>
+                      </CardContent>
+                    </WorkspaceCard>
+                  )
+                )}
+              </>
             )}
 
           </AnimatePresence>

@@ -237,41 +237,79 @@ export default function DashboardPage() {
             </p>
           </motion.div>
 
-          {/* Metrics */}
-          {loading ? (
-            <motion.div variants={staggerChild} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl border border-hairline bg-surface-1 px-4 py-4">
-                  <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
-                  <div className="flex flex-col gap-1.5">
-                    <Skeleton className="h-4 w-8" />
-                    <Skeleton className="h-2.5 w-16" />
+          {/* Metrics - Always visible after loading */}
+          <motion.div variants={staggerChild} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {loading ? (
+              <>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 rounded-xl border border-hairline bg-surface-1 px-4 py-4">
+                    <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+                    <div className="flex flex-col gap-1.5">
+                      <Skeleton className="h-4 w-8" />
+                      <Skeleton className="h-2.5 w-16" />
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </>
+            ) : progress ? (
+              <>
+                {[
+                  { label: "Speeches",         value: progress.speech_count,          Icon: Mic,          iconBg: "bg-lav/10 border border-lav/20",    iconColor: "text-lav"        },
+                  { label: "Feedback Ready",   value: progress.feedback_ready_count,  Icon: CheckCircle2, iconBg: "bg-ok/10 border border-ok/20",     iconColor: "text-ok"         },
+                  { label: "Drills Assigned",  value: progress.drills_assigned_count, Icon: Target,       iconBg: "bg-indigo/10 border border-indigo/20", iconColor: "text-indigo" },
+                  { label: "Drill Attempts",   value: progress.drill_attempts_count,  Icon: Headphones,   iconBg: "bg-amber/10 border border-amber/20",   iconColor: "text-amber"  },
+                ].map((m) => (
+                  <MetricCard key={m.label} {...m} />
+                ))}
+              </>
+            ) : null}
+          </motion.div>
+
+          {/* Next Action Card - What to do next */}
+          {!loading && progress && (
+            <motion.div variants={staggerChild}>
+              <Card className="border-lav/20 bg-gradient-to-br from-lav/5 to-lav/10">
+                <CardContent className="px-5 py-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-lav">
+                      <Zap size={18} className="text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-ink">
+                        {progress.drill_attempts_count === 0 ? "Complete your first drill attempt (+50 XP)" :
+                         progress.incomplete_drills.length > 0 ? "Practice your next drill (+20 XP)" :
+                         progress.feedback_ready_count === 0 ? "Generate feedback from a speech (+10 XP)" :
+                         "Start a new practice session"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-ink-subtle">
+                        {progress.drill_attempts_count === 0 ? "Drill attempts are worth 50 XP each — the fastest way to level up." :
+                         progress.incomplete_drills.length > 0 ? "You have unfinished drills waiting. Each attempt earns XP." :
+                         "Record a new speech to get personalized coaching and drills."}
+                      </p>
+                    </div>
+                    {progress.incomplete_drills.length > 0 ? (
+                      <Button asChild size="sm" className="shrink-0">
+                        <Link href={`/speech/${progress.incomplete_drills[0].speech_id}`}>
+                          Practice Now
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button asChild size="sm" className="shrink-0">
+                        <Link href="/session">
+                          New Session
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </motion.div>
-          ) : !err && progress ? (
-            <motion.div
-              variants={staggerParent(0.06)}
-              className="grid grid-cols-2 gap-3 sm:grid-cols-4"
-            >
-              {[
-                { label: "Speeches",         value: progress.speech_count,          Icon: Mic,          iconBg: "bg-lav/10 border border-lav/20",    iconColor: "text-lav"        },
-                { label: "Feedback Ready",   value: progress.feedback_ready_count,  Icon: CheckCircle2, iconBg: "bg-ok/10 border border-ok/20",     iconColor: "text-ok"         },
-                { label: "Drills Assigned",  value: progress.drills_assigned_count, Icon: Target,       iconBg: "bg-indigo/10 border border-indigo/20", iconColor: "text-indigo" },
-                { label: "Drill Attempts",   value: progress.drill_attempts_count,  Icon: Headphones,   iconBg: "bg-amber/10 border border-amber/20",   iconColor: "text-amber"  },
-              ].map((m) => (
-                <motion.div key={m.label} variants={staggerChild}>
-                  <MetricCard {...m} />
-                </motion.div>
-              ))}
-            </motion.div>
-          ) : null}
+          )}
 
           {/* Gamification: XP, Level, Badges */}
-          {!loading && !err && progress && (
+          {!loading && progress && (
             <motion.div variants={staggerChild}>
-              <Card className="border-lav/10">
+              <Card className="border-hairline">
                 <CardContent className="px-5 py-4">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     {/* Level & XP */}
@@ -303,7 +341,7 @@ export default function DashboardPage() {
                             </div>
                             <span className="text-xs text-ink-faint">{progress.xp_to_next_level} to Lv{progress.level + 1}</span>
                           </div>
-                          <p className="text-xs text-ink-faint">Drill attempts earn the most XP</p>
+                          <p className="text-xs text-amber">Level up by completing drills and practice attempts</p>
                         </div>
                       </div>
                     </div>
@@ -337,7 +375,7 @@ export default function DashboardPage() {
           )}
 
           {/* Onboarding Checklist - show only if user hasn't completed any drill attempts */}
-          {!loading && !err && progress && progress.drill_attempts_count === 0 && (
+          {!loading && progress && progress.drill_attempts_count === 0 && (
             <motion.div variants={staggerChild}>
               <Card className="border-lav/20 bg-lav/5">
                 <CardContent className="px-6 py-6">
@@ -401,7 +439,7 @@ export default function DashboardPage() {
           )}
 
           {/* Empty state - only show if no onboarding card */}
-          {!loading && !err && speeches.length === 0 && progress && progress.drill_attempts_count > 0 && (
+          {!loading && speeches.length === 0 && progress && progress.drill_attempts_count > 0 && (
             <motion.div variants={staggerChild}>
               <EmptyState
                 Icon={Mic}
@@ -413,7 +451,7 @@ export default function DashboardPage() {
           )}
 
           {/* Recommended Next Practice card */}
-          {!loading && !err && progress && progress.incomplete_drills.length > 0 && (
+          {!loading && progress && progress.incomplete_drills.length > 0 && (
             <motion.div variants={staggerChild}>
               <Card className="border-lav/20 bg-lav/5">
                 <CardContent className="flex flex-col gap-4 px-5 py-5">
@@ -451,7 +489,7 @@ export default function DashboardPage() {
           )}
 
           {/* Skill breakdown */}
-          {!loading && !err && progress && progress.skill_averages && (
+          {!loading && progress && progress.skill_averages && (
             <motion.div variants={staggerChild} className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <p className="text-eyebrow text-ink-subtle">Skill Breakdown</p>
@@ -505,7 +543,7 @@ export default function DashboardPage() {
           )}
 
           {/* Help state for drills */}
-          {!loading && !err && progress && progress.drills_assigned_count === 0 && progress.feedback_ready_count > 0 && (
+          {!loading && progress && progress.drills_assigned_count === 0 && progress.feedback_ready_count > 0 && (
             <motion.div variants={staggerChild}>
               <Card className="border-amber/20 bg-amber/5">
                 <CardContent className="flex items-start gap-3 px-5 py-4">
@@ -529,7 +567,7 @@ export default function DashboardPage() {
           )}
 
           {/* Speech list */}
-          {!loading && !err && speeches.length > 0 && (
+          {!loading && speeches.length > 0 && (
             <motion.section variants={staggerChild} className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <p className="text-eyebrow text-ink-subtle">Recent Sessions</p>

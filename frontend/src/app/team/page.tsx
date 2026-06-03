@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Users, Copy, Check, TrendingUp, Mic, Target, Headphones,
-  UserPlus, Plus, MessageSquare,
+  UserPlus, Plus, MessageSquare, ChevronRight,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import EmptyState from "@/components/EmptyState";
@@ -55,28 +55,36 @@ export default function TeamPage() {
         if (!data.user) { router.replace("/login"); return; }
         setUserId(data.user.id);
 
-        // Fetch user teams
+        // Fetch user teams (do NOT auto-select)
         const userTeams = await apiFetch<UserTeam[]>(`/teams/users/${data.user.id}`);
         setTeams(userTeams);
-
-        // If user has teams, select first coach team or first team
-        if (userTeams.length > 0) {
-          const coachTeam = userTeams.find((t) => t.role === "coach");
-          const teamToSelect = coachTeam || userTeams[0];
-          setSelectedTeam(teamToSelect);
-
-          // Fetch dashboard if coach
-          if (teamToSelect.role === "coach") {
-            const dash = await apiFetch<TeamDashboard>(
-              `/teams/${teamToSelect.team_id}/dashboard?user_id=${data.user.id}`
-            );
-            setDashboard(dash);
-          }
-        }
       })
       .catch(() => setErr("Could not load team data. Please refresh or try again."))
       .finally(() => setLoading(false));
   }, [router]);
+
+  // Handle team selection - toggle on/off
+  async function selectTeam(team: UserTeam) {
+    // If clicking already selected team, deselect it
+    if (selectedTeam?.team_id === team.team_id) {
+      setSelectedTeam(null);
+      setDashboard(null);
+      return;
+    }
+
+    setSelectedTeam(team);
+    setDashboard(null); // Clear previous dashboard
+
+    // Fetch dashboard if coach
+    if (team.role === "coach" && userId) {
+      try {
+        const dash = await apiFetch<TeamDashboard>(
+          `/teams/${team.team_id}/dashboard?user_id=${userId}`
+        );
+        setDashboard(dash);
+      } catch {}
+    }
+  }
 
   async function handleCreateTeam() {
     if (!userId || !newTeamName.trim()) return;
@@ -97,15 +105,10 @@ export default function TeamPage() {
       const userTeams = await apiFetch<UserTeam[]>(`/teams/users/${userId}`);
       setTeams(userTeams);
 
+      // Auto-select the new team
       const newTeam = userTeams.find((t) => t.team_id === team.id);
       if (newTeam) {
-        setSelectedTeam(newTeam);
-
-        // Fetch dashboard
-        const dash = await apiFetch<TeamDashboard>(
-          `/teams/${newTeam.team_id}/dashboard?user_id=${userId}`
-        );
-        setDashboard(dash);
+        await selectTeam(newTeam);
       }
 
       setNewTeamName("");
@@ -132,9 +135,10 @@ export default function TeamPage() {
       const userTeams = await apiFetch<UserTeam[]>(`/teams/users/${userId}`);
       setTeams(userTeams);
 
+      // Auto-select the new team
       const newTeam = userTeams.find((t) => t.invite_code === joinCode.trim().toUpperCase());
       if (newTeam) {
-        setSelectedTeam(newTeam);
+        await selectTeam(newTeam);
       }
 
       setJoinCode("");
@@ -300,7 +304,7 @@ export default function TeamPage() {
     );
   }
 
-  // Has teams - show dashboard
+  // Has teams - show team hub
   return (
     <>
       <AppNav />
@@ -311,222 +315,121 @@ export default function TeamPage() {
           initial="hidden"
           animate="show"
         >
-          {/* Header with Team Switcher */}
-          <motion.div variants={staggerChild} className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-title text-ink">Team</h1>
-              <p className="text-sm text-ink-subtle">
-                {selectedTeam?.role === "coach"
-                  ? "Manage your team and track student progress"
-                  : "Practice with your team and track your growth"}
-              </p>
-            </div>
-
-            {/* Team Selector & Actions */}
-            <Card>
-              <CardContent className="px-5 py-4">
-                <div className="flex flex-col gap-4">
-                  {/* Current Team Display */}
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <Users size={16} className="text-lav" />
-                        <p className="text-sm font-semibold text-ink">{selectedTeam?.team_name}</p>
-                        <Badge variant={selectedTeam?.role === "coach" ? "indigo" : "default"} className="capitalize">
-                          {selectedTeam?.role}
-                        </Badge>
-                      </div>
-                      {teams.length > 1 && (
-                        <p className="text-xs text-ink-subtle">You belong to {teams.length} teams</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Team Switcher (if multiple teams) */}
-                  {teams.length > 1 && (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-xs font-medium text-ink-subtle">Switch Team</p>
-                      <div className="flex flex-wrap gap-2">
-                        {teams.map((team) => (
-                          <button
-                            key={team.team_id}
-                            onClick={async () => {
-                              setSelectedTeam(team);
-                              if (team.role === "coach") {
-                                const dash = await apiFetch<TeamDashboard>(
-                                  `/teams/${team.team_id}/dashboard?user_id=${userId}`
-                                );
-                                setDashboard(dash);
-                              } else {
-                                setDashboard(null);
-                              }
-                            }}
-                            className={[
-                              "rounded-lg border px-3 py-2 text-left text-xs transition-colors",
-                              selectedTeam?.team_id === team.team_id
-                                ? "border-lav/30 bg-lav/10 text-ink"
-                                : "border-hairline bg-surface-2 text-ink-subtle hover:border-lav/20 hover:bg-lav/5",
-                            ].join(" ")}
-                          >
-                            <div className="font-medium">{team.team_name}</div>
-                            <div className="text-ink-faint capitalize">{team.role}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Quick Actions */}
-                  <div className="flex flex-wrap gap-2 border-t border-hairline pt-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 w-full">
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          onClick={() => {
-                            // Scroll to create section or show create modal
-                            const createCard = document.getElementById("create-team-section");
-                            createCard?.scrollIntoView({ behavior: "smooth" });
-                          }}
-                          size="sm"
-                          variant="secondary"
-                          className="gap-1.5"
-                        >
-                          <Plus size={12} />
-                          Create New Team
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            const joinCard = document.getElementById("join-team-section");
-                            joinCard?.scrollIntoView({ behavior: "smooth" });
-                          }}
-                          size="sm"
-                          variant="secondary"
-                          className="gap-1.5"
-                        >
-                          <UserPlus size={12} />
-                          Join Another Team
-                        </Button>
-                      </div>
-                      {selectedTeam?.role === "coach" && (
-                        <Button
-                          onClick={copyInviteCode}
-                          size="sm"
-                          className="gap-1.5"
-                        >
-                          {copied ? (
-                            <>
-                              <Check size={12} />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy size={12} />
-                              Copy Invite Code
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Header */}
+          <motion.div variants={staggerChild} className="flex flex-col gap-1">
+            <h1 className="text-title text-ink">Your Teams</h1>
+            <p className="text-sm text-ink-subtle">
+              Manage your teams, track practice activity, and share invite codes with students.
+            </p>
           </motion.div>
 
-          {/* Invite Code Card */}
-          {selectedTeam && (
-            <motion.div variants={staggerChild}>
-              <Card className="border-lav/20 bg-lav/5">
-                <CardContent className="flex items-center justify-between gap-4 px-5 py-4">
-                  <div className="flex flex-col gap-0.5">
-                    <p className="text-xs font-medium text-lav">Invite Code</p>
-                    <p className="font-mono text-lg font-bold tracking-wide text-ink">{selectedTeam.invite_code}</p>
-                  </div>
-                  <Button
-                    onClick={copyInviteCode}
-                    size="sm"
-                    variant="secondary"
-                    className="gap-1.5"
-                  >
-                    {copied ? (
-                      <>
-                        <Check size={12} />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy size={12} />
-                        Copy
-                      </>
-                    )}
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
+          {/* Create / Join Actions */}
+          <motion.div variants={staggerChild} className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                const createInput = document.querySelector('input[placeholder="Team name"]') as HTMLInputElement;
+                createInput?.focus();
+                createInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+              size="sm"
+              className="gap-1.5"
+            >
+              <Plus size={12} />
+              Create New Team
+            </Button>
+            <Button
+              onClick={() => {
+                const joinInput = document.querySelector('input[placeholder="Invite code"]') as HTMLInputElement;
+                joinInput?.focus();
+                joinInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+              size="sm"
+              variant="secondary"
+              className="gap-1.5"
+            >
+              <UserPlus size={12} />
+              Join Team
+            </Button>
+          </motion.div>
 
-          {/* Coach Pilot Setup Card */}
-          {selectedTeam?.role === "coach" && (
-            <motion.div variants={staggerChild}>
-              <Card>
-                <CardContent className="px-5 py-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <MessageSquare size={14} className="text-lav" />
-                    <p className="text-eyebrow text-ink-subtle">Pilot Setup</p>
-                  </div>
-                  <div className="mb-4 flex flex-col gap-3">
-                    <div>
-                      <p className="text-xs font-medium text-ink-subtle">Team Name</p>
-                      <p className="text-sm text-ink">{selectedTeam.team_name}</p>
+          {/* Team Cards */}
+          <motion.div variants={staggerChild} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {teams.map((team) => (
+              <Card
+                key={team.team_id}
+                className={[
+                  "cursor-pointer transition-all",
+                  selectedTeam?.team_id === team.team_id
+                    ? "border-lav/40 bg-lav/5 ring-2 ring-lav/20"
+                    : "border-hairline hover:border-hairline-strong",
+                ].join(" ")}
+                onClick={() => selectTeam(team)}
+              >
+                <CardContent className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-lav/20 bg-lav/10">
+                        <Users size={18} className="text-lav" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-ink">{team.team_name}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <Badge
+                            variant={team.role === "coach" ? "indigo" : "default"}
+                            className="capitalize"
+                          >
+                            {team.role}
+                          </Badge>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-xs font-medium text-ink-subtle">Invite Code</p>
-                      <p className="font-mono text-sm font-bold tracking-wide text-ink">{selectedTeam.invite_code}</p>
-                    </div>
+                    {selectedTeam?.team_id === team.team_id && (
+                      <Check size={16} className="shrink-0 text-lav" />
+                    )}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      onClick={copyInviteCode}
-                      size="sm"
-                      variant="secondary"
-                      className="gap-1.5"
-                    >
-                      {copied ? (
-                        <>
-                          <Check size={12} />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <Copy size={12} />
-                          Copy Code
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      onClick={copyInviteMessage}
-                      size="sm"
-                      className="gap-1.5"
-                    >
-                      {copiedMessage ? (
-                        <>
-                          <Check size={12} />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <MessageSquare size={12} />
-                          Copy Invite Message
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  <p className="mt-3 text-xs text-ink-faint">
-                    Share the invite code or full message with your students to get started.
-                  </p>
                 </CardContent>
               </Card>
-            </motion.div>
-          )}
+            ))}
+          </motion.div>
+
+          {/* Selected Team Details */}
+          <AnimatePresence mode="wait">
+            {selectedTeam && (
+              <motion.div
+                key={selectedTeam.team_id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+                className="flex flex-col gap-5"
+              >
+
+                {/* Invite Code & Actions */}
+                <Card className="border-lav/20 bg-lav/5">
+                  <CardContent className="px-5 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-medium text-lav">Team Invite Code</p>
+                        <p className="font-mono text-lg font-bold tracking-wide text-ink">{selectedTeam.invite_code}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={copyInviteCode} size="sm" variant="secondary" className="gap-1.5">
+                        {copied ? <><Check size={12} />Copied</> : <><Copy size={12} />Copy Code</>}
+                      </Button>
+                      {selectedTeam.role === "coach" && (
+                        <Button onClick={copyInviteMessage} size="sm" className="gap-1.5">
+                          {copiedMessage ? <><Check size={12} />Copied</> : <><MessageSquare size={12} />Copy Invite Message</>}
+                        </Button>
+                      )}
+                    </div>
+                    {selectedTeam.role === "coach" && (
+                      <p className="mt-3 text-xs text-ink-faint">
+                        Share the invite code or full message with your students.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
 
           {/* Coach Dashboard */}
           {selectedTeam?.role === "coach" && dashboard && (
@@ -655,6 +558,10 @@ export default function TeamPage() {
               </Card>
             </motion.div>
           )}
+
+              </motion.div>
+              )}
+            </AnimatePresence>
 
           {/* Create/Join Additional Teams */}
           <motion.div variants={staggerChild} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
