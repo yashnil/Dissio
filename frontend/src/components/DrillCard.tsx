@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ChevronDown, ChevronUp, CheckSquare, Square,
-  Target, BookOpen, Zap,
+  Target, BookOpen, Zap, Headphones,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { T } from "@/lib/motion";
-import type { Drill, DrillStatus } from "@/types";
+import { apiFetch } from "@/lib/api";
+import DrillAttemptRecorder from "@/components/DrillAttemptRecorder";
+import type { Drill, DrillAttempt, DrillStatus } from "@/types";
 
 // ── Skill target → display label + badge variant ──────────────────────────────
 
@@ -60,12 +62,15 @@ interface DrillCardProps {
   index: number;
   onStatusChange?: (drillId: string, status: DrillStatus) => void;
   updatingId?: string | null;
+  userId?: string;
 }
 
 export default function DrillCard({
-  drill, index, onStatusChange, updatingId,
+  drill, index, onStatusChange, updatingId, userId,
 }: DrillCardProps) {
   const [expanded, setExpanded] = useState(index === 0);
+  const [attempts, setAttempts] = useState<DrillAttempt[]>([]);
+  const [loadingAttempts, setLoadingAttempts] = useState(false);
 
   const skill  = SKILL_LABELS[drill.skill_target] ?? { label: drill.skill_target, variant: "default" as const };
   const diff   = DIFFICULTY_BADGE[drill.difficulty] ?? DIFFICULTY_BADGE.beginner;
@@ -73,6 +78,24 @@ export default function DrillCard({
 
   const steps  = drill.instructions?.split("\n").filter(Boolean) ?? [];
   const isUpdating = updatingId === drill.id;
+
+  // Fetch attempts when expanded
+  useEffect(() => {
+    if (expanded && attempts.length === 0 && !loadingAttempts) {
+      setLoadingAttempts(true);
+      apiFetch<DrillAttempt[]>(`/drills/${drill.id}/attempts`)
+        .then(setAttempts)
+        .catch(() => {})
+        .finally(() => setLoadingAttempts(false));
+    }
+  }, [expanded, drill.id, attempts.length, loadingAttempts]);
+
+  function handleAttemptSaved() {
+    // Refresh attempts list
+    apiFetch<DrillAttempt[]>(`/drills/${drill.id}/attempts`)
+      .then(setAttempts)
+      .catch(() => {});
+  }
 
   return (
     <motion.div
@@ -94,6 +117,12 @@ export default function DrillCard({
             <span className="text-sm font-semibold text-ink">{drill.title}</span>
             <Badge variant={skill.variant as "indigo"}>{skill.label}</Badge>
             <Badge variant={diff.variant}>{diff.label}</Badge>
+            {attempts.length > 0 && (
+              <Badge variant="default" className="gap-1">
+                <Headphones size={10} />
+                {attempts.length}
+              </Badge>
+            )}
           </div>
           {drill.source_weakness && (
             <p className="text-xs text-ink-faint">
@@ -217,6 +246,28 @@ export default function DrillCard({
 
               {drill.status === "completed" && (
                 <p className="text-xs text-ok">✓ Drill completed</p>
+              )}
+
+              {/* Drill Attempt Recorder */}
+              {userId && (
+                <div className="flex flex-col gap-2 pt-2">
+                  <DrillAttemptRecorder
+                    drillId={drill.id}
+                    userId={userId}
+                    speechId={drill.speech_id}
+                    onAttemptSaved={handleAttemptSaved}
+                  />
+                  {loadingAttempts && (
+                    <p className="text-xs text-ink-faint">Loading attempts…</p>
+                  )}
+                  {attempts.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-xs font-medium text-ink-subtle">
+                        {attempts.length} attempt{attempts.length !== 1 ? "s" : ""} recorded
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </motion.div>

@@ -25,3 +25,18 @@ class DrillRow(BaseModel):
 class DrillStatusUpdate(BaseModel):
     status: Optional[str] = None
     response: Optional[str] = None
+
+
+class DrillAttemptRow(BaseModel):
+    id: str
+    drill_id: str
+    user_id: str
+    response: Optional[str] = None
+    audio_url: Optional[str] = None
+    feedback: Optional[dict] = None
+    score: Optional[int] = None
+    created_at: datetime
+
+
+class DrillAttemptCreate(BaseModel):
+    audio_url: str

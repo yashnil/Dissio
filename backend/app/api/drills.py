@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.models.drill import DrillRow, DrillStatusUpdate
+from app.models.drill import DrillAttemptCreate, DrillAttemptRow, DrillRow, DrillStatusUpdate
 from app.services.drill_generation import DrillGenerationError, generate_drills
 from app.services.supabase_client import get_supabase
 
@@ -156,10 +156,19 @@ async def generate_drills_for_speech(speech_id: str) -> list[DrillRow]:
         logger.info("generate_drills: inserted %d drills | speech_id=%s", len(rows), speech_id)
         return result.data
     except Exception as exc:
-        logger.error("generate_drills: insert failed | exc_type=%s", type(exc).__name__)
-        raise HTTPException(
-            status_code=500, detail="Failed to save drills"
-        ) from exc
+        logger.error(
+            "generate_drills: insert failed | exc_type=%s | exc=%s | speech_id=%s | row_count=%d",
+            type(exc).__name__,
+            str(exc),
+            speech_id,
+            len(rows),
+        )
+        # Log first row for debugging
+        if rows:
+            logger.error("generate_drills: sample row=%s", rows[0])
+
+        error_detail = f"Failed to save drills: {str(exc)}"
+        raise HTTPException(status_code=500, detail=error_detail) from exc
 
 
 # ── GET /speeches/{speech_id}/drills ─────────────────────────────────────────
@@ -217,3 +226,82 @@ async def update_drill(drill_id: str, body: DrillStatusUpdate) -> DrillRow:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to update drill") from exc
+
+
+# ── GET /drills/{drill_id}/attempts ───────────────────────────────────────────
+
+@drills_router.get("/{drill_id}/attempts", response_model=list[DrillAttemptRow])
+async def get_drill_attempts(drill_id: str) -> list[DrillAttemptRow]:
+    """Return all attempts for a given drill, newest first."""
+    supabase = get_supabase()
+
+    # First verify drill exists
+    try:
+        drill_res = (
+            supabase.table("drills")
+            .select("id")
+            .eq("id", drill_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_drill_attempts: drill fetch failed | %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to fetch drill") from exc
+
+    if not drill_res.data:
+        raise HTTPException(status_code=404, detail="Drill not found")
+
+    # Fetch attempts
+    try:
+        result = (
+            supabase.table("drill_attempts")
+            .select("*")
+            .eq("drill_id", drill_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        logger.error("get_drill_attempts: fetch failed | %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to fetch drill attempts") from exc
+
+
+# ── POST /drills/{drill_id}/attempts ──────────────────────────────────────────
+
+@drills_router.post("/{drill_id}/attempts", response_model=DrillAttemptRow)
+async def create_drill_attempt(drill_id: str, body: DrillAttemptCreate) -> DrillAttemptRow:
+    """Create a new drill attempt with audio."""
+    supabase = get_supabase()
+
+    # 1. Fetch drill to verify it exists and get user_id
+    try:
+        drill_res = (
+            supabase.table("drills")
+            .select("id, user_id")
+            .eq("id", drill_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("create_drill_attempt: drill fetch failed | %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to fetch drill") from exc
+
+    if not drill_res.data:
+        raise HTTPException(status_code=404, detail="Drill not found")
+
+    drill = drill_res.data[0]
+
+    # 2. Create attempt record
+    attempt_row = {
+        "drill_id": drill_id,
+        "user_id": drill["user_id"],
+        "audio_url": body.audio_url,
+    }
+
+    try:
+        result = supabase.table("drill_attempts").insert(attempt_row).execute()
+        logger.info("create_drill_attempt: created | drill_id=%s", drill_id)
+        return result.data[0]
+    except Exception as exc:
+        logger.error("create_drill_attempt: insert failed | %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to save drill attempt") from exc

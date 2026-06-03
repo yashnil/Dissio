@@ -118,3 +118,43 @@ export interface Drill {
   status: DrillStatus;
   created_at: string;
 }
+
+export interface DrillAttempt {
+  id: string;
+  drill_id: string;
+  user_id: string;
+  response: string | null;
+  audio_url: string | null;
+  feedback: Record<string, unknown> | null;
+  score: number | null;
+  created_at: string;
+}
+
+export interface IncompleteDrill {
+  id: string;
+  speech_id: string;
+  title: string;
+  skill_target: string;
+  difficulty: string;
+  status: string;
+  speech_title: string;
+}
+
+export interface SkillAverages {
+  clash: number;
+  weighing: number;
+  extensions: number;
+  drops: number;
+  judge_adaptation: number;
+}
+
+export interface ProgressSummary {
+  speech_count: number;
+  feedback_ready_count: number;
+  drills_assigned_count: number;
+  drill_attempts_count: number;
+  drills_completed_count: number;
+  drill_completion_rate: number | null;
+  incomplete_drills: IncompleteDrill[];
+  skill_averages: SkillAverages | null;
+}

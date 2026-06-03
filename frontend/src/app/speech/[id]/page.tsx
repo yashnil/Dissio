@@ -182,10 +182,9 @@ function DiagList({ label, items, warn }: { label: string; items: string[]; warn
 }
 
 /** Wraps a workspace section card — animates in when it first appears */
-function WorkspaceCard({ children, motionKey }: { children: React.ReactNode; motionKey: string }) {
+function WorkspaceCard({ children }: { children: React.ReactNode }) {
   return (
     <motion.div
-      key={motionKey}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: EASE }}
@@ -549,7 +548,7 @@ export default function SpeechPage() {
           <AnimatePresence mode="popLayout">
 
             {/* ── Step 1: Audio ─────────────────────────────────────────── */}
-            <WorkspaceCard motionKey="audio">
+            <WorkspaceCard key="audio">
               <CardContent className="flex flex-col gap-4 px-5 py-5">
                 <StepHeader n={1} title="Audio" done={!!speech.audio_url} />
 
@@ -631,14 +630,14 @@ export default function SpeechPage() {
                   <LoadingCard title="Transcribing audio" messages={MSG_TRANSCRIBE} />
                 </motion.div>
               ) : transcript ? (
-                <WorkspaceCard motionKey="tx-done">
+                <WorkspaceCard key="tx-done">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={2} title="Transcript" done />
                     <TranscriptPanel transcript={transcript} onReRecord={resetAudio} />
                   </CardContent>
                 </WorkspaceCard>
               ) : (
-                <WorkspaceCard motionKey="tx-empty">
+                <WorkspaceCard key="tx-empty">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={2} title="Transcript" done={false} />
                     <p className="text-sm text-ink-subtle">
@@ -658,7 +657,7 @@ export default function SpeechPage() {
                   <LoadingCard title="Generating flow" messages={MSG_FLOW} />
                 </motion.div>
               ) : argMap ? (
-                <WorkspaceCard motionKey="flow-done">
+                <WorkspaceCard key="flow-done">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={3} title="Flow" done aside={
                       <Badge variant="indigo">
@@ -682,7 +681,7 @@ export default function SpeechPage() {
                   </CardContent>
                 </WorkspaceCard>
               ) : (
-                <WorkspaceCard motionKey="flow-empty">
+                <WorkspaceCard key="flow-empty">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={3} title="Flow" done={false} />
                     {!canAnalyze
@@ -704,7 +703,7 @@ export default function SpeechPage() {
                   <LoadingCard title="Generating feedback" messages={MSG_FEEDBACK} />
                 </motion.div>
               ) : feedback ? (
-                <WorkspaceCard motionKey="fb-done">
+                <WorkspaceCard key="fb-done">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={4} title="Feedback" done />
 
@@ -820,7 +819,7 @@ export default function SpeechPage() {
                   </CardContent>
                 </WorkspaceCard>
               ) : (
-                <WorkspaceCard motionKey="fb-empty">
+                <WorkspaceCard key="fb-empty">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={4} title="Feedback" done={false} />
                     {!canAnalyze
@@ -842,7 +841,7 @@ export default function SpeechPage() {
                   <LoadingCard title="Generating drills" messages={MSG_DRILLS} />
                 </motion.div>
               ) : drills.length > 0 ? (
-                <WorkspaceCard motionKey="drills-done">
+                <WorkspaceCard key="drills-done">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader
                       n={5}
@@ -865,13 +864,14 @@ export default function SpeechPage() {
                           index={i}
                           onStatusChange={updateDrillStatus}
                           updatingId={updatingDrill}
+                          userId={userId ?? undefined}
                         />
                       ))}
                     </div>
                   </CardContent>
                 </WorkspaceCard>
               ) : (
-                <WorkspaceCard motionKey="drills-empty">
+                <WorkspaceCard key="drills-empty">
                   <CardContent className="flex flex-col gap-4 px-5 py-5">
                     <StepHeader n={5} title="Practice Drills" done={false} />
                     <p className="text-sm text-ink-subtle">

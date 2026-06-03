@@ -272,3 +272,81 @@ def test_patch_drill_no_fields():
     with patch("app.api.drills.get_supabase", return_value=MagicMock()):
         response = client.patch(f"/drills/{DRILL_ID}", json={})
     assert response.status_code == 400
+
+
+# ── drill attempts tests ──────────────────────────────────────────────────────
+
+ATTEMPT_ID = "aaaaaaaa-0000-0000-0000-000000000004"
+FAKE_DRILL_ATTEMPT = {
+    "id": ATTEMPT_ID,
+    "drill_id": DRILL_ID,
+    "user_id": USER_ID,
+    "audio_url": f"{USER_ID}/{SPEECH_ID}/drills/{DRILL_ID}/attempt-1234567890.webm",
+    "response": None,
+    "feedback": None,
+    "score": None,
+    "created_at": "2026-05-25T00:00:00+00:00",
+}
+
+
+def test_get_drill_attempts_success():
+    """Returns all attempts for a drill."""
+    mock_client = MagicMock()
+    # Drill exists check
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": DRILL_ID}]
+    # Attempts fetch
+    mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [FAKE_DRILL_ATTEMPT]
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.get(f"/drills/{DRILL_ID}/attempts")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["drill_id"] == DRILL_ID
+
+
+def test_get_drill_attempts_drill_not_found():
+    """Returns 404 if drill doesn't exist."""
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.get(f"/drills/{DRILL_ID}/attempts")
+
+    assert response.status_code == 404
+
+
+def test_create_drill_attempt_success():
+    """Successfully creates a drill attempt."""
+    audio_url = f"{USER_ID}/{SPEECH_ID}/drills/{DRILL_ID}/attempt-1234567890.webm"
+    mock_client = MagicMock()
+    # Drill fetch
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"id": DRILL_ID, "user_id": USER_ID}
+    ]
+    # Insert
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = [FAKE_DRILL_ATTEMPT]
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.post(f"/drills/{DRILL_ID}/attempts", json={"audio_url": audio_url})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["drill_id"] == DRILL_ID
+    assert data["audio_url"] == audio_url
+
+
+def test_create_drill_attempt_drill_not_found():
+    """Returns 404 if drill doesn't exist."""
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.post(
+            f"/drills/{DRILL_ID}/attempts",
+            json={"audio_url": "user/speech/drills/drill1/attempt.webm"}
+        )
+
+    assert response.status_code == 404

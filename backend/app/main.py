@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import argument_maps, drills, feedback_reports, health, speeches, transcripts
+from app.api import argument_maps, drills, feedback_reports, health, speeches, transcripts, users
 
 app = FastAPI(title="RoundLab API", version="0.1.0")
 
@@ -20,3 +20,4 @@ app.include_router(argument_maps.router)
 app.include_router(feedback_reports.router)
 app.include_router(drills.speech_drills_router)
 app.include_router(drills.drills_router)
+app.include_router(users.router)
