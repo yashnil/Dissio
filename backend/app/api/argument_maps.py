@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.argument_map import ArgumentMapRow
 from app.services.argument_extraction import ArgumentExtractionError, extract_arguments
@@ -12,16 +12,17 @@ router = APIRouter(prefix="/speeches", tags=["argument_maps"])
 
 
 @router.post("/{speech_id}/extract-arguments", response_model=ArgumentMapRow)
-async def extract(speech_id: str) -> ArgumentMapRow:
+async def extract(speech_id: str, user_id: str = Query(...)) -> ArgumentMapRow:
     supabase = get_supabase()
     logger.info("extract_arguments: speech_id=%s", speech_id)
 
-    # 1. Fetch speech
+    # 1. Fetch speech and verify ownership
     try:
         speech_result = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -133,11 +134,30 @@ async def extract(speech_id: str) -> ArgumentMapRow:
 
 
 @router.get("/{speech_id}/argument-map", response_model=ArgumentMapRow)
-async def get_argument_map(speech_id: str) -> ArgumentMapRow:
+async def get_argument_map(speech_id: str, user_id: str = Query(...)) -> ArgumentMapRow:
+    supabase = get_supabase()
+
+    # Verify speech ownership
+    try:
+        speech_check = (
+            supabase.table("speeches")
+            .select("id")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not speech_check.data:
+            raise HTTPException(status_code=404, detail="Speech not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
+
+    # Fetch argument map
     try:
         result = (
-            get_supabase()
-            .table("argument_maps")
+            supabase.table("argument_maps")
             .select("*")
             .eq("speech_id", speech_id)
             .limit(1)

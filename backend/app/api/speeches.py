@@ -51,13 +51,14 @@ async def list_speeches(user_id: str = Query(...)) -> list[SpeechRow]:
 
 
 @router.get("/{speech_id}", response_model=SpeechRow)
-async def get_speech(speech_id: str) -> SpeechRow:
+async def get_speech(speech_id: str, user_id: str = Query(...)) -> SpeechRow:
     try:
         result = (
             get_supabase()
             .table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -71,13 +72,14 @@ async def get_speech(speech_id: str) -> SpeechRow:
 
 
 @router.patch("/{speech_id}", response_model=SpeechRow)
-async def update_speech_audio(speech_id: str, body: SpeechUpdateRequest) -> SpeechRow:
+async def update_speech_audio(speech_id: str, body: SpeechUpdateRequest, user_id: str = Query(...)) -> SpeechRow:
     try:
         result = (
             get_supabase()
             .table("speeches")
             .update({"audio_url": body.audio_url})
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .execute()
         )
         if not result.data:
@@ -90,15 +92,16 @@ async def update_speech_audio(speech_id: str, body: SpeechUpdateRequest) -> Spee
 
 
 @router.delete("/{speech_id}", status_code=200)
-async def delete_speech(speech_id: str) -> dict:
+async def delete_speech(speech_id: str, user_id: str = Query(...)) -> dict:
     supabase = get_supabase()
 
-    # 1. Fetch speech to verify it exists and get audio_url
+    # 1. Fetch speech to verify ownership and get audio_url
     try:
         result = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -131,15 +134,16 @@ async def delete_speech(speech_id: str) -> dict:
 
 
 @router.post("/{speech_id}/reset-audio", response_model=SpeechRow)
-async def reset_audio(speech_id: str) -> SpeechRow:
+async def reset_audio(speech_id: str, user_id: str = Query(...)) -> SpeechRow:
     supabase = get_supabase()
 
-    # 1. Fetch speech
+    # 1. Fetch speech and verify ownership
     try:
         result = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )

@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.transcript import TranscriptRow
 from app.services.supabase_client import get_supabase
@@ -17,16 +17,17 @@ router = APIRouter(prefix="/speeches", tags=["transcripts"])
 
 
 @router.post("/{speech_id}/transcribe", response_model=TranscriptRow)
-async def transcribe(speech_id: str) -> TranscriptRow:
+async def transcribe(speech_id: str, user_id: str = Query(...)) -> TranscriptRow:
     supabase = get_supabase()
     logger.info("transcribe: speech_id=%s", speech_id)
 
-    # 1. Fetch speech
+    # 1. Fetch speech and verify ownership
     try:
         speech_result = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -111,11 +112,30 @@ async def transcribe(speech_id: str) -> TranscriptRow:
 
 
 @router.get("/{speech_id}/transcript", response_model=TranscriptRow)
-async def get_transcript(speech_id: str) -> TranscriptRow:
+async def get_transcript(speech_id: str, user_id: str = Query(...)) -> TranscriptRow:
+    supabase = get_supabase()
+
+    # Verify speech ownership
+    try:
+        speech_check = (
+            supabase.table("speeches")
+            .select("id")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not speech_check.data:
+            raise HTTPException(status_code=404, detail="Speech not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
+
+    # Fetch transcript
     try:
         result = (
-            get_supabase()
-            .table("transcripts")
+            supabase.table("transcripts")
             .select("*")
             .eq("speech_id", speech_id)
             .limit(1)

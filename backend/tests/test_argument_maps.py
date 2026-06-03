@@ -7,6 +7,7 @@ from app.main import app
 client = TestClient(app)
 
 SPEECH_ID = "aaaaaaaa-0000-0000-0000-000000000001"
+USER_ID = "bbbbbbbb-0000-0000-0000-000000000002"
 
 FAKE_SPEECH = {
     "id": SPEECH_ID,
@@ -68,10 +69,20 @@ FAKE_ARGUMENT_MAP_ROW = {
 def _make_mock_client(speech_data, transcript_data):
     """Build a mock supabase client that returns different data for speech vs transcript selects."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=speech_data),
-        MagicMock(data=transcript_data),
-    ]
+
+    # Speech mock with ownership check (double .eq())
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = speech_data
+
+    # Transcript mock (single .eq())
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = transcript_data
+
+    # Update mocks for status changes
+    update_mock = MagicMock()
+    update_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    mock_client.table.side_effect = [speech_mock, update_mock, transcript_mock]
     return mock_client
 
 
@@ -81,7 +92,7 @@ def test_extract_no_transcript():
         transcript_data=[],
     )
     with patch("app.api.argument_maps.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments")
+        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments?user_id={USER_ID}")
     assert response.status_code == 400
     assert "transcript" in response.json()["detail"].lower()
 
@@ -89,20 +100,36 @@ def test_extract_no_transcript():
 def test_extract_success():
     from app.models.argument_map import ArgumentItem
 
-    mock_client = _make_mock_client(
-        speech_data=[FAKE_SPEECH],
-        transcript_data=[FAKE_TRANSCRIPT],
-    )
-    mock_client.table.return_value.upsert.return_value.execute.return_value.data = [
-        FAKE_ARGUMENT_MAP_ROW
-    ]
+    mock_client = MagicMock()
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock (comes BEFORE the update)
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    # Update mock for "analyzing" status
+    update_analyzing = MagicMock()
+    update_analyzing.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    # Upsert mock
+    upsert_mock = MagicMock()
+    upsert_mock.upsert.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP_ROW]
+
+    # Update mock for "done" status
+    update_done = MagicMock()
+    update_done.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock, update_analyzing, upsert_mock, update_done]
 
     fake_items = [ArgumentItem(**FAKE_ARGUMENT_ITEM)]
 
     with patch("app.api.argument_maps.get_supabase", return_value=mock_client), patch(
         "app.api.argument_maps.extract_arguments", return_value=fake_items
     ):
-        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments")
+        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments?user_id={USER_ID}")
 
     assert response.status_code == 200
     body = response.json()
@@ -114,11 +141,19 @@ def test_extract_success():
 
 def test_get_argument_map_success():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-        FAKE_ARGUMENT_MAP_ROW
-    ]
+
+    # Speech ownership check mock
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": SPEECH_ID}]
+
+    # Argument map fetch mock
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP_ROW]
+
+    mock_client.table.side_effect = [speech_mock, argmap_mock]
+
     with patch("app.api.argument_maps.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/argument-map")
+        response = client.get(f"/speeches/{SPEECH_ID}/argument-map?user_id={USER_ID}")
     assert response.status_code == 200
     body = response.json()
     assert body["speech_id"] == SPEECH_ID
@@ -131,14 +166,14 @@ def test_extract_short_transcript():
         transcript_data=[FAKE_TRANSCRIPT_SHORT],
     )
     with patch("app.api.argument_maps.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments")
+        response = client.post(f"/speeches/{SPEECH_ID}/extract-arguments?user_id={USER_ID}")
     assert response.status_code == 400
     assert "too short" in response.json()["detail"].lower()
 
 
 def test_get_argument_map_not_found():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
     with patch("app.api.argument_maps.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/argument-map")
+        response = client.get(f"/speeches/{SPEECH_ID}/argument-map?user_id={USER_ID}")
     assert response.status_code == 404

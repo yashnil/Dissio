@@ -7,6 +7,7 @@ from app.main import app
 client = TestClient(app)
 
 SPEECH_ID = "aaaaaaaa-0000-0000-0000-000000000001"
+USER_ID = "bbbbbbbb-0000-0000-0000-000000000002"
 
 FAKE_SPEECH = {
     "id": SPEECH_ID,
@@ -101,25 +102,42 @@ FAKE_FEEDBACK_ROW = {
 
 def test_generate_no_transcript():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[]),  # no transcript
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock (empty)
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock]
+
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
     assert response.status_code == 400
     assert "transcript" in response.json()["detail"].lower()
 
 
 def test_generate_no_argument_map():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-        MagicMock(data=[]),  # no argument map
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    # Argument map mock (empty)
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock, argmap_mock]
+
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
     assert response.status_code == 400
     assert "argument map" in response.json()["detail"].lower()
 
@@ -129,14 +147,32 @@ def test_generate_success():
     from app.services.feedback_generation import _FeedbackOutput
 
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-        MagicMock(data=[FAKE_ARGUMENT_MAP_ROW]),
-    ]
-    mock_client.table.return_value.upsert.return_value.execute.return_value.data = [
-        FAKE_FEEDBACK_ROW
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    # Argument map mock
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP_ROW]
+
+    # Update mock for "analyzing"
+    update_analyzing = MagicMock()
+    update_analyzing.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    # Upsert mock
+    upsert_mock = MagicMock()
+    upsert_mock.upsert.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    # Update mock for "done"
+    update_done = MagicMock()
+    update_done.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock, argmap_mock, update_analyzing, upsert_mock, update_done]
 
     fake_output = _FeedbackOutput(
         overall_score=72,
@@ -157,7 +193,7 @@ def test_generate_success():
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client), patch(
         "app.api.feedback_reports.generate_feedback", return_value=fake_output
     ):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
 
     assert response.status_code == 200
     body = response.json()
@@ -170,11 +206,19 @@ def test_generate_success():
 
 def test_get_feedback_success():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-        FAKE_FEEDBACK_ROW
-    ]
+
+    # Speech ownership check mock
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": SPEECH_ID}]
+
+    # Feedback fetch mock
+    feedback_mock = MagicMock()
+    feedback_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    mock_client.table.side_effect = [speech_mock, feedback_mock]
+
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/feedback")
+        response = client.get(f"/speeches/{SPEECH_ID}/feedback?user_id={USER_ID}")
     assert response.status_code == 200
     body = response.json()
     assert body["speech_id"] == SPEECH_ID
@@ -184,20 +228,27 @@ def test_get_feedback_success():
 
 def test_get_feedback_not_found():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/feedback")
+        response = client.get(f"/speeches/{SPEECH_ID}/feedback?user_id={USER_ID}")
     assert response.status_code == 404
 
 
 def test_generate_short_transcript():
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_TRANSCRIPT_SHORT]),  # < 50 words
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock (short)
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT_SHORT]
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock]
+
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
     assert response.status_code == 400
     assert "too short" in response.json()["detail"].lower()
 
@@ -208,14 +259,32 @@ def test_generate_score_derived_from_categories():
     from app.services.feedback_generation import _FeedbackOutput
 
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-        MagicMock(data=[FAKE_ARGUMENT_MAP_ROW]),
-    ]
-    mock_client.table.return_value.upsert.return_value.execute.return_value.data = [
-        FAKE_FEEDBACK_ROW
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    # Argument map mock
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP_ROW]
+
+    # Update mock for "analyzing"
+    update_analyzing = MagicMock()
+    update_analyzing.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    # Upsert mock
+    upsert_mock = MagicMock()
+    upsert_mock.upsert.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    # Update mock for "done"
+    update_done = MagicMock()
+    update_done.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock, argmap_mock, update_analyzing, upsert_mock, update_done]
 
     # LLM reports overall_score=99 but the sum of FAKE_SCORES is 72 — handler must ignore 99.
     fake_output = _FeedbackOutput(
@@ -237,9 +306,9 @@ def test_generate_score_derived_from_categories():
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client), patch(
         "app.api.feedback_reports.generate_feedback", return_value=fake_output
     ):
-        client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
 
-    upserted = mock_client.table.return_value.upsert.call_args.args[0]
+    upserted = upsert_mock.upsert.call_args.args[0]
     expected = FAKE_SCORES["clash"] + FAKE_SCORES["weighing"] + FAKE_SCORES["extensions"] + FAKE_SCORES["drops"] + FAKE_SCORES["judge_adaptation"]
     assert upserted["overall_score"] == expected
     assert upserted["overall_score"] != 99
@@ -249,17 +318,30 @@ def test_generate_llm_error():
     from app.services.feedback_generation import FeedbackGenerationError
 
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-        MagicMock(data=[FAKE_ARGUMENT_MAP_ROW]),
-    ]
+
+    # Speech mock with ownership check
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Transcript mock
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    # Argument map mock
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP_ROW]
+
+    # Update mock for "analyzing"
+    update_analyzing = MagicMock()
+    update_analyzing.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    mock_client.table.side_effect = [speech_mock, transcript_mock, argmap_mock, update_analyzing]
 
     with patch("app.api.feedback_reports.get_supabase", return_value=mock_client), patch(
         "app.api.feedback_reports.generate_feedback",
         side_effect=FeedbackGenerationError("OpenAI unavailable"),
     ):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-feedback?user_id={USER_ID}")
 
     assert response.status_code == 500
     assert "openai" in response.json()["detail"].lower()

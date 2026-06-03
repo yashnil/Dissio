@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.feedback_report import FeedbackReportRow
 from app.services.feedback_generation import FeedbackGenerationError, generate_feedback
@@ -12,16 +12,17 @@ router = APIRouter(prefix="/speeches", tags=["feedback_reports"])
 
 
 @router.post("/{speech_id}/generate-feedback", response_model=FeedbackReportRow)
-async def generate_feedback_report(speech_id: str) -> FeedbackReportRow:
+async def generate_feedback_report(speech_id: str, user_id: str = Query(...)) -> FeedbackReportRow:
     supabase = get_supabase()
     logger.info("generate_feedback: speech_id=%s", speech_id)
 
-    # 1. Fetch speech
+    # 1. Fetch speech and verify ownership
     try:
         speech_result = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -175,11 +176,30 @@ async def generate_feedback_report(speech_id: str) -> FeedbackReportRow:
 
 
 @router.get("/{speech_id}/feedback", response_model=FeedbackReportRow)
-async def get_feedback(speech_id: str) -> FeedbackReportRow:
+async def get_feedback(speech_id: str, user_id: str = Query(...)) -> FeedbackReportRow:
+    supabase = get_supabase()
+
+    # Verify speech ownership
+    try:
+        speech_check = (
+            supabase.table("speeches")
+            .select("id")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not speech_check.data:
+            raise HTTPException(status_code=404, detail="Speech not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
+
+    # Fetch feedback report
     try:
         result = (
-            get_supabase()
-            .table("feedback_reports")
+            supabase.table("feedback_reports")
             .select("*")
             .eq("speech_id", speech_id)
             .limit(1)

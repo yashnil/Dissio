@@ -107,12 +107,19 @@ FAKE_DRILLS = [
 def test_generate_drills_no_feedback():
     """Returns 400 if no feedback report exists."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),    # speech
-        MagicMock(data=[]),               # no feedback
-    ]
+
+    # Mock for speech table (with double .eq() for ownership)
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    # Mock for feedback_reports table (single .eq())
+    feedback_mock = MagicMock()
+    feedback_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    mock_client.table.side_effect = [speech_mock, feedback_mock]
+
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={USER_ID}")
     assert response.status_code == 400
     assert "feedback" in response.json()["detail"].lower()
 
@@ -120,13 +127,23 @@ def test_generate_drills_no_feedback():
 def test_generate_drills_short_transcript():
     """Returns 400 if transcript is too short."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_FEEDBACK_ROW]),
-        MagicMock(data=[{"text": "Too short.", "word_count": 5}]),  # short transcript
+
+    # Separate mocks for each table
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    feedback_mock = MagicMock()
+    feedback_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"text": "Too short.", "word_count": 5}
     ]
+
+    mock_client.table.side_effect = [speech_mock, feedback_mock, transcript_mock]
+
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={USER_ID}")
     assert response.status_code == 400
     assert "short" in response.json()["detail"].lower()
 
@@ -134,9 +151,9 @@ def test_generate_drills_short_transcript():
 def test_generate_drills_not_found():
     """Returns 404 if speech does not exist."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={USER_ID}")
     assert response.status_code == 404
 
 
@@ -178,21 +195,35 @@ def test_generate_drills_success():
     ]
 
     mock_client = MagicMock()
-    # speech, feedback, transcript, argmap fetches — all use .limit(1).execute()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_FEEDBACK_ROW]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-        MagicMock(data=[FAKE_ARGUMENT_MAP]),
-    ]
-    mock_client.table.return_value.delete.return_value.eq.return_value.execute.return_value = MagicMock()
-    mock_client.table.return_value.insert.return_value.execute.return_value.data = FAKE_DRILLS
+
+    # Separate mocks for each table fetch
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    feedback_mock = MagicMock()
+    feedback_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP]
+
+    # Delete mock
+    delete_mock = MagicMock()
+    delete_mock.delete.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    # Insert mock
+    insert_mock = MagicMock()
+    insert_mock.insert.return_value.execute.return_value.data = FAKE_DRILLS
+
+    mock_client.table.side_effect = [speech_mock, feedback_mock, transcript_mock, argmap_mock, delete_mock, insert_mock]
 
     with (
         patch("app.api.drills.get_supabase", return_value=mock_client),
         patch("app.api.drills.generate_drills", return_value=fake_drill_items),
     ):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={USER_ID}")
 
     assert response.status_code == 200
     data = response.json()
@@ -205,18 +236,27 @@ def test_generate_drills_llm_error():
     from app.services.drill_generation import DrillGenerationError
 
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
-        MagicMock(data=[FAKE_SPEECH]),
-        MagicMock(data=[FAKE_FEEDBACK_ROW]),
-        MagicMock(data=[FAKE_TRANSCRIPT]),
-    ]
-    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP]
+
+    # Separate mocks for each table fetch
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_SPEECH]
+
+    feedback_mock = MagicMock()
+    feedback_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_FEEDBACK_ROW]
+
+    transcript_mock = MagicMock()
+    transcript_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_TRANSCRIPT]
+
+    argmap_mock = MagicMock()
+    argmap_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [FAKE_ARGUMENT_MAP]
+
+    mock_client.table.side_effect = [speech_mock, feedback_mock, transcript_mock, argmap_mock]
 
     with (
         patch("app.api.drills.get_supabase", return_value=mock_client),
         patch("app.api.drills.generate_drills", side_effect=DrillGenerationError("LLM failed")),
     ):
-        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills")
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={USER_ID}")
 
     assert response.status_code == 500
 
@@ -227,7 +267,7 @@ def test_get_drills_success():
     mock_client = MagicMock()
     mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = FAKE_DRILLS
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/drills")
+        response = client.get(f"/speeches/{SPEECH_ID}/drills?user_id={USER_ID}")
     assert response.status_code == 200
     assert len(response.json()) == 3
 
@@ -236,7 +276,7 @@ def test_get_drills_empty():
     mock_client = MagicMock()
     mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = []
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.get(f"/speeches/{SPEECH_ID}/drills")
+        response = client.get(f"/speeches/{SPEECH_ID}/drills?user_id={USER_ID}")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -248,14 +288,14 @@ def test_patch_drill_status():
     mock_client = MagicMock()
     mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [updated]
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.patch(f"/drills/{DRILL_ID}", json={"status": "attempted"})
+        response = client.patch(f"/drills/{DRILL_ID}?user_id={USER_ID}", json={"status": "attempted"})
     assert response.status_code == 200
     assert response.json()["status"] == "attempted"
 
 
 def test_patch_drill_invalid_status():
     with patch("app.api.drills.get_supabase", return_value=MagicMock()):
-        response = client.patch(f"/drills/{DRILL_ID}", json={"status": "invalid_status"})
+        response = client.patch(f"/drills/{DRILL_ID}?user_id={USER_ID}", json={"status": "invalid_status"})
     assert response.status_code == 400
 
 
@@ -263,14 +303,14 @@ def test_patch_drill_not_found():
     mock_client = MagicMock()
     mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = []
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.patch(f"/drills/{DRILL_ID}", json={"status": "completed"})
+        response = client.patch(f"/drills/{DRILL_ID}?user_id={USER_ID}", json={"status": "completed"})
     assert response.status_code == 404
 
 
 def test_patch_drill_no_fields():
     """Returns 400 if body has no updatable fields."""
     with patch("app.api.drills.get_supabase", return_value=MagicMock()):
-        response = client.patch(f"/drills/{DRILL_ID}", json={})
+        response = client.patch(f"/drills/{DRILL_ID}?user_id={USER_ID}", json={})
     assert response.status_code == 400
 
 
@@ -293,12 +333,12 @@ def test_get_drill_attempts_success():
     """Returns all attempts for a drill."""
     mock_client = MagicMock()
     # Drill exists check
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": DRILL_ID}]
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": DRILL_ID}]
     # Attempts fetch
     mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [FAKE_DRILL_ATTEMPT]
 
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.get(f"/drills/{DRILL_ID}/attempts")
+        response = client.get(f"/drills/{DRILL_ID}/attempts?user_id={USER_ID}")
 
     assert response.status_code == 200
     data = response.json()
@@ -310,10 +350,10 @@ def test_get_drill_attempts_success():
 def test_get_drill_attempts_drill_not_found():
     """Returns 404 if drill doesn't exist."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
 
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.get(f"/drills/{DRILL_ID}/attempts")
+        response = client.get(f"/drills/{DRILL_ID}/attempts?user_id={USER_ID}")
 
     assert response.status_code == 404
 
@@ -323,14 +363,14 @@ def test_create_drill_attempt_success():
     audio_url = f"{USER_ID}/{SPEECH_ID}/drills/{DRILL_ID}/attempt-1234567890.webm"
     mock_client = MagicMock()
     # Drill fetch
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
         {"id": DRILL_ID, "user_id": USER_ID}
     ]
     # Insert
     mock_client.table.return_value.insert.return_value.execute.return_value.data = [FAKE_DRILL_ATTEMPT]
 
     with patch("app.api.drills.get_supabase", return_value=mock_client):
-        response = client.post(f"/drills/{DRILL_ID}/attempts", json={"audio_url": audio_url})
+        response = client.post(f"/drills/{DRILL_ID}/attempts?user_id={USER_ID}", json={"audio_url": audio_url})
 
     assert response.status_code == 200
     data = response.json()
@@ -341,12 +381,95 @@ def test_create_drill_attempt_success():
 def test_create_drill_attempt_drill_not_found():
     """Returns 404 if drill doesn't exist."""
     mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
 
     with patch("app.api.drills.get_supabase", return_value=mock_client):
         response = client.post(
-            f"/drills/{DRILL_ID}/attempts",
+            f"/drills/{DRILL_ID}/attempts?user_id={USER_ID}",
             json={"audio_url": "user/speech/drills/drill1/attempt.webm"}
         )
 
     assert response.status_code == 404
+
+
+# ── Access Control Tests ──────────────────────────────────────────────────────
+
+
+def test_cannot_generate_drills_for_another_users_speech():
+    """Verify users cannot generate drills for speeches they don't own."""
+    other_user_id = "dddddddd-0000-0000-0000-000000000004"
+    mock_client = MagicMock()
+    # Return empty when querying speech with wrong user_id
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.post(f"/speeches/{SPEECH_ID}/generate-drills?user_id={other_user_id}")
+
+    assert response.status_code == 404
+
+
+def test_cannot_get_drills_for_another_users_speech():
+    """Verify users cannot get drills for speeches they don't own."""
+    other_user_id = "dddddddd-0000-0000-0000-000000000004"
+    mock_client = MagicMock()
+    # Return empty when checking speech ownership
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.get(f"/speeches/{SPEECH_ID}/drills?user_id={other_user_id}")
+
+    assert response.status_code == 404
+
+
+def test_cannot_update_another_users_drill():
+    """Verify users cannot update drills they don't own."""
+    other_user_id = "dddddddd-0000-0000-0000-000000000004"
+    mock_client = MagicMock()
+    # Return empty when checking drill ownership
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.patch(
+            f"/drills/{DRILL_ID}?user_id={other_user_id}",
+            json={"status": "completed"}
+        )
+
+    assert response.status_code == 404
+
+
+def test_cannot_create_attempt_for_another_users_drill():
+    """Verify users cannot create drill attempts for drills they don't own."""
+    other_user_id = "dddddddd-0000-0000-0000-000000000004"
+    mock_client = MagicMock()
+    # Return empty when checking drill ownership
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.post(
+            f"/drills/{DRILL_ID}/attempts?user_id={other_user_id}",
+            json={"audio_url": "path/to/audio.webm"}
+        )
+
+    assert response.status_code == 404
+
+
+def test_can_access_own_drills():
+    """Verify users CAN access their own drills."""
+    mock_client = MagicMock()
+
+    # Speech ownership check mock
+    speech_mock = MagicMock()
+    speech_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": SPEECH_ID}]
+
+    # Drills fetch mock
+    drills_mock = MagicMock()
+    drills_mock.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [FAKE_DRILL_ROW]
+
+    mock_client.table.side_effect = [speech_mock, drills_mock]
+
+    with patch("app.api.drills.get_supabase", return_value=mock_client):
+        response = client.get(f"/speeches/{SPEECH_ID}/drills?user_id={USER_ID}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) > 0

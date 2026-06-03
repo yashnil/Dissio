@@ -196,7 +196,7 @@ export default function DashboardPage() {
         setSpeeches(speechesData);
         setProgress(progressData);
       })
-      .catch(() => setErr("Could not load dashboard data. Is the backend running?"))
+      .catch(() => setErr("Could not load your data. Please refresh and try again."))
       .finally(() => setLoading(false));
   }, [router]);
 

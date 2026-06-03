@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.drill import DrillAttemptCreate, DrillAttemptRow, DrillRow, DrillStatusUpdate
 from app.services.drill_generation import DrillGenerationError, generate_drills
@@ -18,17 +18,18 @@ drills_router = APIRouter(prefix="/drills", tags=["drills"])
 # ── POST /speeches/{speech_id}/generate-drills ────────────────────────────────
 
 @speech_drills_router.post("/{speech_id}/generate-drills", response_model=list[DrillRow])
-async def generate_drills_for_speech(speech_id: str) -> list[DrillRow]:
+async def generate_drills_for_speech(speech_id: str, user_id: str = Query(...)) -> list[DrillRow]:
     """Generate 3 personalized drills from the speech's feedback report."""
     supabase = get_supabase()
     logger.info("generate_drills: speech_id=%s", speech_id)
 
-    # 1. Fetch speech
+    # 1. Fetch speech and verify ownership
     try:
         speech_res = (
             supabase.table("speeches")
             .select("*")
             .eq("id", speech_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -174,12 +175,31 @@ async def generate_drills_for_speech(speech_id: str) -> list[DrillRow]:
 # ── GET /speeches/{speech_id}/drills ─────────────────────────────────────────
 
 @speech_drills_router.get("/{speech_id}/drills", response_model=list[DrillRow])
-async def get_drills(speech_id: str) -> list[DrillRow]:
+async def get_drills(speech_id: str, user_id: str = Query(...)) -> list[DrillRow]:
     """Return saved drills for a speech, ordered by drill order."""
+    supabase = get_supabase()
+
+    # Verify speech ownership
+    try:
+        speech_res = (
+            supabase.table("speeches")
+            .select("id")
+            .eq("id", speech_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not speech_res.data:
+            raise HTTPException(status_code=404, detail="Speech not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
+
+    # Fetch drills
     try:
         result = (
-            get_supabase()
-            .table("drills")
+            supabase.table("drills")
             .select("*")
             .eq("speech_id", speech_id)
             .order("order")
@@ -193,9 +213,26 @@ async def get_drills(speech_id: str) -> list[DrillRow]:
 # ── PATCH /drills/{drill_id} ──────────────────────────────────────────────────
 
 @drills_router.patch("/{drill_id}", response_model=DrillRow)
-async def update_drill(drill_id: str, body: DrillStatusUpdate) -> DrillRow:
+async def update_drill(drill_id: str, body: DrillStatusUpdate, user_id: str = Query(...)) -> DrillRow:
     """Update a drill's status or save a text response/attempt."""
     supabase = get_supabase()
+
+    # Verify drill ownership
+    try:
+        drill_check = (
+            supabase.table("drills")
+            .select("id")
+            .eq("id", drill_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not drill_check.data:
+            raise HTTPException(status_code=404, detail="Drill not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify drill ownership") from exc
 
     update_data: dict = {}
     if body.status is not None:
@@ -231,16 +268,17 @@ async def update_drill(drill_id: str, body: DrillStatusUpdate) -> DrillRow:
 # ── GET /drills/{drill_id}/attempts ───────────────────────────────────────────
 
 @drills_router.get("/{drill_id}/attempts", response_model=list[DrillAttemptRow])
-async def get_drill_attempts(drill_id: str) -> list[DrillAttemptRow]:
+async def get_drill_attempts(drill_id: str, user_id: str = Query(...)) -> list[DrillAttemptRow]:
     """Return all attempts for a given drill, newest first."""
     supabase = get_supabase()
 
-    # First verify drill exists
+    # Verify drill ownership
     try:
         drill_res = (
             supabase.table("drills")
             .select("id")
             .eq("id", drill_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -269,16 +307,17 @@ async def get_drill_attempts(drill_id: str) -> list[DrillAttemptRow]:
 # ── POST /drills/{drill_id}/attempts ──────────────────────────────────────────
 
 @drills_router.post("/{drill_id}/attempts", response_model=DrillAttemptRow)
-async def create_drill_attempt(drill_id: str, body: DrillAttemptCreate) -> DrillAttemptRow:
+async def create_drill_attempt(drill_id: str, body: DrillAttemptCreate, user_id: str = Query(...)) -> DrillAttemptRow:
     """Create a new drill attempt with audio."""
     supabase = get_supabase()
 
-    # 1. Fetch drill to verify it exists and get user_id
+    # 1. Fetch drill and verify ownership
     try:
         drill_res = (
             supabase.table("drills")
             .select("id, user_id")
             .eq("id", drill_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )

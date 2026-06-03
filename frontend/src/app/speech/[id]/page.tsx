@@ -252,18 +252,20 @@ export default function SpeechPage() {
     createClient().auth.getUser()
       .then(({ data }) => {
         if (!data.user) { router.replace("/login"); return null; }
-        setUserId(data.user.id);
-        return apiFetch<Speech>(`/speeches/${speechId}`);
+        const uid = data.user.id;
+        setUserId(uid);
+        return apiFetch<Speech>(`/speeches/${speechId}?user_id=${uid}`).then((s) => ({ s, uid }));
       })
-      .then(async (s) => {
-        if (!s) return;
+      .then(async (result) => {
+        if (!result) return;
+        const { s, uid } = result;
         setSpeech(s);
-        try { setTranscript(await apiFetch<Transcript>(`/speeches/${speechId}/transcript`)); }    catch {}
-        try { setArgMap(await apiFetch<ArgumentMap>(`/speeches/${speechId}/argument-map`)); }     catch {}
-        try { setFeedback(await apiFetch<FeedbackReport>(`/speeches/${speechId}/feedback`)); }    catch {}
-        try { setDrills(await apiFetch<Drill[]>(`/speeches/${speechId}/drills`)); }               catch {}
+        try { setTranscript(await apiFetch<Transcript>(`/speeches/${speechId}/transcript?user_id=${uid}`)); }    catch {}
+        try { setArgMap(await apiFetch<ArgumentMap>(`/speeches/${speechId}/argument-map?user_id=${uid}`)); }     catch {}
+        try { setFeedback(await apiFetch<FeedbackReport>(`/speeches/${speechId}/feedback?user_id=${uid}`)); }    catch {}
+        try { setDrills(await apiFetch<Drill[]>(`/speeches/${speechId}/drills?user_id=${uid}`)); }               catch {}
       })
-      .catch(() => setPageErr("Could not load speech. Is the backend running?"))
+      .catch(() => setPageErr("Could not load your data. Please refresh and try again."))
       .finally(() => setPageLoad(false));
   }, [speechId, router]);
 
@@ -317,7 +319,7 @@ export default function SpeechPage() {
         upsert: true, contentType: recBlob.type || "audio/webm",
       });
       if (se) { setRecState("error"); setRecErr(`Upload failed: ${se.message}`); return; }
-      const upd = await apiFetch<Speech>(`/speeches/${speechId}`, {
+      const upd = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_url: path }),
       });
@@ -350,7 +352,7 @@ export default function SpeechPage() {
       const sb = createClient();
       const { error: se } = await sb.storage.from("audio").upload(path, selFile, { upsert: true });
       if (se) { setUpErr(`Upload failed: ${se.message}`); return; }
-      const upd = await apiFetch<Speech>(`/speeches/${speechId}`, {
+      const upd = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_url: path }),
       });
@@ -365,9 +367,10 @@ export default function SpeechPage() {
   // ── Reset audio ────────────────────────────────────────────────────────────
 
   async function resetAudio() {
+    if (!userId) return;
     setResetting(true);
     try {
-      const upd = await apiFetch<Speech>(`/speeches/${speechId}/reset-audio`, { method: "POST" });
+      const upd = await apiFetch<Speech>(`/speeches/${speechId}/reset-audio?user_id=${userId}`, { method: "POST" });
       setSpeech(upd);
       setTranscript(null); setArgMap(null); setFeedback(null);
       setRecState("idle"); setRecUrl(null); setRecBlob(null); setRecErr("");
@@ -378,29 +381,33 @@ export default function SpeechPage() {
   // ── AI operations ──────────────────────────────────────────────────────────
 
   async function transcribe() {
+    if (!userId) return;
     setTxErr(""); setTranscribing(true);
-    try { setTranscript(await apiFetch<Transcript>(`/speeches/${speechId}/transcribe`, { method: "POST" })); }
+    try { setTranscript(await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" })); }
     catch (e: unknown) { setTxErr(e instanceof Error ? e.message : "Transcription failed."); }
     finally { setTranscribing(false); }
   }
 
   async function generateFlow() {
+    if (!userId) return;
     setFlowErr(""); setGenFlow(true);
-    try { setArgMap(await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments`, { method: "POST" })); }
+    try { setArgMap(await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments?user_id=${userId}`, { method: "POST" })); }
     catch (e: unknown) { setFlowErr(e instanceof Error ? e.message : "Flow generation failed."); }
     finally { setGenFlow(false); }
   }
 
   async function generateFeedback() {
+    if (!userId) return;
     setFbErr(""); setGenFb(true);
-    try { setFeedback(await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback`, { method: "POST" })); }
+    try { setFeedback(await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback?user_id=${userId}`, { method: "POST" })); }
     catch (e: unknown) { setFbErr(e instanceof Error ? e.message : "Feedback generation failed."); }
     finally { setGenFb(false); }
   }
 
   async function deleteSession() {
+    if (!userId) return;
     setDeleting(true);
-    try { await apiFetch(`/speeches/${speechId}`, { method: "DELETE" }); router.replace("/dashboard"); }
+    try { await apiFetch(`/speeches/${speechId}?user_id=${userId}`, { method: "DELETE" }); router.replace("/dashboard"); }
     catch {}
     finally { setDeleting(false); }
   }
@@ -408,9 +415,10 @@ export default function SpeechPage() {
   // ── Drills ─────────────────────────────────────────────────────────────────
 
   async function generateDrills() {
+    if (!userId) return;
     setDrillErr(""); setGenDrills(true);
     try {
-      const result = await apiFetch<Drill[]>(`/speeches/${speechId}/generate-drills`, { method: "POST" });
+      const result = await apiFetch<Drill[]>(`/speeches/${speechId}/generate-drills?user_id=${userId}`, { method: "POST" });
       setDrills(result);
     } catch (e: unknown) {
       setDrillErr(e instanceof Error ? e.message : "Drill generation failed.");
@@ -418,9 +426,10 @@ export default function SpeechPage() {
   }
 
   async function updateDrillStatus(drillId: string, status: DrillStatus) {
+    if (!userId) return;
     setUpdatingDrill(drillId);
     try {
-      const updated = await apiFetch<Drill>(`/drills/${drillId}`, {
+      const updated = await apiFetch<Drill>(`/drills/${drillId}?user_id=${userId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
