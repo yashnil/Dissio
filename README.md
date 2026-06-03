@@ -52,16 +52,22 @@ Health check: `GET http://localhost:8000/health`
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` in the repo root and fill in values:
+### Backend
+
+Copy the example file and fill in your values:
 
 ```bash
+cd backend
 cp .env.example .env
 ```
 
-The backend reads `.env` from `backend/`. Copy or symlink as needed:
+### Frontend
+
+Copy the example file and fill in your values:
 
 ```bash
-cp .env backend/.env
+cd frontend
+cp .env.example .env.local
 ```
 
 ---

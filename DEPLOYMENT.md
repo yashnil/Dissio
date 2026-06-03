@@ -4,6 +4,37 @@ This guide walks through deploying RoundLab for production use.
 
 ---
 
+## Quick Deployment Checklist
+
+For a first-time staging deployment:
+
+1. **Supabase Setup**
+   - [ ] Create Supabase project
+   - [ ] Apply all 3 migrations in order (see [Supabase Setup](#supabase-setup))
+   - [ ] Create `audio` storage bucket
+   - [ ] Configure auth providers and redirect URLs
+
+2. **Backend Deployment (Render/Railway)**
+   - [ ] Deploy from GitHub repository
+   - [ ] Set root directory to `backend`
+   - [ ] Set start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - [ ] Add environment variables (see [backend/.env.example](../backend/.env.example))
+   - [ ] Verify health endpoint: `https://your-backend-url/health`
+
+3. **Frontend Deployment (Vercel)**
+   - [ ] Deploy from GitHub repository
+   - [ ] Set root directory to `frontend`
+   - [ ] Set build command: `npm run build` (default)
+   - [ ] Add environment variables (see [frontend/.env.example](../frontend/.env.example))
+   - [ ] Set `NEXT_PUBLIC_API_URL` to your backend URL
+
+4. **Verify Deployment**
+   - [ ] Run [STAGING_SMOKE_TEST.md](../STAGING_SMOKE_TEST.md) checklist
+   - [ ] Test all core flows (speech → feedback → drills)
+   - [ ] Test team creation and joining
+
+---
+
 ## Required Environment Variables
 
 ### Frontend (Next.js)
@@ -210,7 +241,7 @@ Backend runs at `http://localhost:8000`.
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local  # Then fill in your keys
+cp .env.example .env.local  # Then fill in your keys
 npm run dev
 ```
 
@@ -220,7 +251,9 @@ Frontend runs at `http://localhost:3000`.
 
 ## Production Smoke Test Checklist
 
-After deploying, test these flows manually:
+After deploying to production, test these flows manually.
+
+For staging deployments, see **[STAGING_SMOKE_TEST.md](./STAGING_SMOKE_TEST.md)** for a detailed step-by-step checklist.
 
 ### Student Flow
 - ✅ Sign up with email
