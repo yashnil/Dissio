@@ -534,14 +534,20 @@ export default function SpeechPage() {
     setAnalyzingUnified(true);
 
     try {
+      // Track current state with local variables to avoid stale state bugs
+      let currentTranscript = transcript;
+      let currentArgMap = argMap;
+      let currentFeedback = feedback;
+
       // Step 1: Ensure transcript/text exists
-      if (!transcript) {
+      if (!currentTranscript) {
         if (speech.audio_url) {
           setAnalysisStage("transcript");
           setTxErr("");
           try {
             const txResult = await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" });
             setTranscript(txResult);
+            currentTranscript = txResult;  // Update local variable
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : "Transcription failed.";
             setTxErr(msg);
@@ -553,12 +559,13 @@ export default function SpeechPage() {
       }
 
       // Step 2: Generate flow if missing
-      if (!argMap) {
+      if (!currentArgMap) {
         setAnalysisStage("flow");
         setFlowErr("");
         try {
           const flowResult = await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments?user_id=${userId}`, { method: "POST" });
           setArgMap(flowResult);
+          currentArgMap = flowResult;  // Update local variable
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Flow generation failed.";
           setFlowErr(msg);
@@ -567,12 +574,13 @@ export default function SpeechPage() {
       }
 
       // Step 3: Generate feedback if missing
-      if (!feedback) {
+      if (!currentFeedback) {
         setAnalysisStage("feedback");
         setFbErr("");
         try {
           const fbResult = await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback?user_id=${userId}`, { method: "POST" });
           setFeedback(fbResult);
+          currentFeedback = fbResult;  // Update local variable
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Feedback generation failed.";
           setFbErr(msg);
@@ -1355,8 +1363,8 @@ export default function SpeechPage() {
                         </div>
                       )}
                       {unifiedAnalysisErr && <InlineAlert variant="danger">{unifiedAnalysisErr}</InlineAlert>}
-                      <Button disabled={!canAnalyze} onClick={analyzeMySpeech} size="sm" className="w-full">
-                        Analyze My Speech
+                      <Button disabled={!canAnalyze || analyzingUnified} onClick={analyzeMySpeech} size="sm" className="w-full">
+                        {analyzingUnified ? "Analyzing..." : "Analyze My Speech"}
                       </Button>
                     </CardContent>
                   </WorkspaceCard>
@@ -1373,12 +1381,12 @@ export default function SpeechPage() {
                 )}
 
                 {/* Step 3: Flow */}
-                {transcript && !analyzingUnified && (
+                {argMap && !analyzingUnified && (
                   genFlow ? (
                     <motion.div key="flow-loading" {...fadeUp(0)}>
                       <LoadingCard title="Building your flow" messages={MSG_FLOW} />
                     </motion.div>
-                  ) : argMap ? (
+                  ) : (
                     <WorkspaceCard key="flow-done">
                       <CardContent className="flex flex-col gap-4 px-5 py-5">
                         <div className="flex items-center justify-between gap-3">
@@ -1477,38 +1485,16 @@ export default function SpeechPage() {
                         )}
                       </CardContent>
                     </WorkspaceCard>
-                  ) : (
-                    <WorkspaceCard key="flow-empty">
-                      <CardContent className="flex flex-col gap-4 px-5 py-5">
-                        <StepHeader n={3} title="Flow" done={false} />
-                        {!canAnalyze ? (
-                          <InlineAlert variant="danger">Transcript too short. Record at least 30 seconds.</InlineAlert>
-                        ) : (
-                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                            <div className="flex-1">
-                              <p className="text-sm font-semibold text-ink">Build your debate flow</p>
-                              <p className="text-xs text-ink-subtle">
-                                RoundLab maps out every claim, warrant, evidence, and impact. This is what a judge would flow during your speech.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                        {flowErr && <InlineAlert variant="danger">{flowErr}</InlineAlert>}
-                        <Button disabled={!canAnalyze || genFlow} onClick={generateFlow} size="sm" className="w-full">
-                          {genFlow ? "Building Flow…" : "Build My Flow"}
-                        </Button>
-                      </CardContent>
-                    </WorkspaceCard>
                   )
                 )}
 
                 {/* Step 4: Feedback */}
-                {argMap && !analyzingUnified && (
+                {feedback && !analyzingUnified && (
                   genFb ? (
                     <motion.div key="fb-loading" {...fadeUp(0)}>
                       <LoadingCard title="Analyzing your speech" messages={MSG_FEEDBACK} />
                     </motion.div>
-                  ) : feedback ? (
+                  ) : (
                     <WorkspaceCard key="fb-done">
                       <CardContent className="flex flex-col gap-5 px-5 py-5">
                         <StepHeader n={4} title="Coaching Report" done />
@@ -1715,28 +1701,6 @@ export default function SpeechPage() {
                             </div>
                           </div>
                         )}
-                      </CardContent>
-                    </WorkspaceCard>
-                  ) : (
-                    <WorkspaceCard key="fb-empty">
-                      <CardContent className="flex flex-col gap-4 px-5 py-5">
-                        <StepHeader n={4} title="Feedback" done={false} />
-                        {!canAnalyze ? (
-                          <InlineAlert variant="danger">Transcript too short for meaningful feedback.</InlineAlert>
-                        ) : (
-                          <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                            <div className="flex-1">
-                              <p className="text-sm font-semibold text-ink">Get judge-style feedback</p>
-                              <p className="text-xs text-ink-subtle">
-                                RoundLab scores your speech like a debate judge: clash, weighing, extensions, drops, and judge adaptation.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                        {fbErr && <InlineAlert variant="danger">{fbErr}</InlineAlert>}
-                        <Button disabled={!canAnalyze || genFb} onClick={generateFeedback} size="sm" className="w-full">
-                          {genFb ? "Generating Feedback…" : "Get Judge Feedback"}
-                        </Button>
                       </CardContent>
                     </WorkspaceCard>
                   )
