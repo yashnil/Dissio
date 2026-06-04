@@ -431,7 +431,8 @@ export default function SpeechPage() {
       setRecUrl(null); setRecBlob(null); setRecState("idle");
 
       // Auto-start analysis after recording upload completes
-      await maybeStartAutoAnalysis();
+      // Pass the fresh upd object to avoid stale state race conditions
+      await maybeStartAutoAnalysis(upd);
     } catch (err: unknown) {
       setRecState("error");
       setRecErr(err instanceof Error ? err.message : "Upload failed.");
@@ -465,7 +466,8 @@ export default function SpeechPage() {
       setSpeech(upd); setSelFile(null);
 
       // Auto-start analysis after file upload completes
-      await maybeStartAutoAnalysis();
+      // Pass the fresh upd object to avoid stale state race conditions
+      await maybeStartAutoAnalysis(upd);
     } catch (err: unknown) {
       setUpErr(err instanceof Error ? err.message : "Upload failed.");
     } finally { setUploading(false); }
@@ -535,9 +537,18 @@ export default function SpeechPage() {
 
   // ── Unified Analysis Workflow ──────────────────────────────────────────────
 
-  async function analyzeMySpeech() {
-    if (!userId || !speech) return;
+  async function analyzeMySpeech(options?: {
+    speechOverride?: Speech;
+    transcriptOverride?: Transcript | null;
+    autoStartedFromUpload?: boolean;
+  }) {
+    // Use fresh data if provided, otherwise fall back to React state
+    const activeSpeech = options?.speechOverride ?? speech;
+    if (!userId || !activeSpeech) return;
     if (analyzingUnified) return; // Prevent double-clicks
+
+    const autoStarted = options?.autoStartedFromUpload ?? false;
+    console.log(`[Analyze] ${autoStarted ? 'Auto-started after upload' : 'Manual trigger'}, audio_url=${activeSpeech.audio_url ? 'exists' : 'missing'}`);
 
     setUnifiedAnalysisErr("");
     setAnalyzingUnified(true);
@@ -545,15 +556,15 @@ export default function SpeechPage() {
 
     try {
       // Track current state with local variables to avoid stale state bugs
-      let currentTranscript = transcript;
+      let currentTranscript = options?.transcriptOverride ?? transcript;
       let currentArgMap = argMap;
       let currentFeedback = feedback;
 
       // Step 1: Ensure transcript/text exists
       if (!currentTranscript) {
-        if (speech.audio_url) {
+        if (activeSpeech.audio_url) {
           setTxErr("");
-          console.log("[Analyze] Step 1: Generating transcript...");
+          console.log("[Analyze] Step 1: Generating transcript from audio_url=" + activeSpeech.audio_url);
           try {
             const txResult = await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" });
             if (!txResult || !txResult.text) {
@@ -573,7 +584,7 @@ export default function SpeechPage() {
             throw new Error(msg);
           }
         } else {
-          throw new Error("No speech text or audio available. Please provide your speech first.");
+          throw new Error("Add speech text or upload audio first.");
         }
       }
 
@@ -665,7 +676,7 @@ export default function SpeechPage() {
   }
 
   /** Auto-start analysis after audio upload (called once per audio upload event) */
-  async function maybeStartAutoAnalysis() {
+  async function maybeStartAutoAnalysis(uploadedSpeech: Speech) {
     // Guard against duplicate auto-analysis
     if (autoAnalysisStartedRef.current) {
       console.log("[AutoAnalyze] Already started, skipping");
@@ -684,12 +695,21 @@ export default function SpeechPage() {
       return;
     }
 
+    // Verify the uploaded speech actually has audio
+    if (!uploadedSpeech.audio_url) {
+      console.warn("[AutoAnalyze] Uploaded speech has no audio_url, skipping auto-analysis");
+      return;
+    }
+
     // Mark as started to prevent duplicates
     autoAnalysisStartedRef.current = true;
-    console.log("[AutoAnalyze] Starting automatic analysis after audio upload");
+    console.log("[AutoAnalyze] Starting automatic analysis with fresh speech object, audio_url=" + uploadedSpeech.audio_url);
 
-    // Start the analysis pipeline
-    await analyzeMySpeech();
+    // Start the analysis pipeline with the fresh uploaded speech object
+    await analyzeMySpeech({
+      speechOverride: uploadedSpeech,
+      autoStartedFromUpload: true,
+    });
   }
 
   async function deleteSession() {
@@ -1399,43 +1419,20 @@ export default function SpeechPage() {
                 {/* ── For Incomplete Sessions: Input → Analysis → Coaching → Practice ── */}
 
                 {/* Input Status - Compact */}
-                {speech.audio_url && (
-                  transcribing ? (
-                    <motion.div key="tx-loading" {...fadeUp(0)}>
-                      <LoadingCard title="Analyzing your speech" messages={MSG_TRANSCRIBE} />
-                    </motion.div>
-                  ) : transcript ? (
-                    <WorkspaceCard key="input-ready">
-                      <CardContent className="flex flex-col gap-3 px-5 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ok/10">
-                            <Check size={14} className="text-ok" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-ink">Speech input ready</p>
-                            <p className="text-xs text-ink-faint">{transcript.word_count} words • {speech.speech_type.replace('_', ' ')}</p>
-                          </div>
+                {speech.audio_url && transcript && !analyzingUnified && (
+                  <WorkspaceCard key="input-ready">
+                    <CardContent className="flex flex-col gap-3 px-5 py-5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ok/10">
+                          <Check size={14} className="text-ok" />
                         </div>
-                      </CardContent>
-                    </WorkspaceCard>
-                  ) : (
-                    <WorkspaceCard key="input-waiting">
-                      <CardContent className="flex flex-col gap-4 px-5 py-5">
-                        <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-ink">Preparing your speech</p>
-                            <p className="text-xs text-ink-subtle">
-                              Processing audio so RoundLab can analyze your arguments. Takes 10–30 seconds.
-                            </p>
-                          </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-ink">Speech input ready</p>
+                          <p className="text-xs text-ink-faint">{transcript.word_count} words • {speech.speech_type.replace('_', ' ')}</p>
                         </div>
-                        {txErr && <InlineAlert variant="danger">{txErr}</InlineAlert>}
-                        <Button onClick={transcribe} disabled={transcribing} size="sm" className="w-full">
-                          {transcribing ? "Preparing…" : "Prepare Speech"}
-                        </Button>
-                      </CardContent>
-                    </WorkspaceCard>
-                  )
+                      </div>
+                    </CardContent>
+                  </WorkspaceCard>
                 )}
 
                 {/* Unified Analysis Workflow */}
@@ -1456,7 +1453,7 @@ export default function SpeechPage() {
                         </div>
                       )}
                       {unifiedAnalysisErr && <InlineAlert variant="danger">{unifiedAnalysisErr}</InlineAlert>}
-                      <Button disabled={!canAnalyze || analyzingUnified} onClick={analyzeMySpeech} size="sm" className="w-full">
+                      <Button disabled={!canAnalyze || analyzingUnified} onClick={() => analyzeMySpeech()} size="sm" className="w-full">
                         {analyzingUnified ? "Analyzing..." : "Analyze My Speech"}
                       </Button>
                     </CardContent>
