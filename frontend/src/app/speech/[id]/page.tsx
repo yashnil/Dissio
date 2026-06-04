@@ -529,9 +529,11 @@ export default function SpeechPage() {
 
   async function analyzeMySpeech() {
     if (!userId || !speech) return;
+    if (analyzingUnified) return; // Prevent double-clicks
 
     setUnifiedAnalysisErr("");
     setAnalyzingUnified(true);
+    setAnalysisStage("transcript");
 
     try {
       // Track current state with local variables to avoid stale state bugs
@@ -542,14 +544,23 @@ export default function SpeechPage() {
       // Step 1: Ensure transcript/text exists
       if (!currentTranscript) {
         if (speech.audio_url) {
-          setAnalysisStage("transcript");
           setTxErr("");
+          console.log("[Analyze] Step 1: Generating transcript...");
           try {
             const txResult = await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" });
-            setTranscript(txResult);
-            currentTranscript = txResult;  // Update local variable
+            if (!txResult || !txResult.text) {
+              // If POST didn't return data, try GET
+              const fetchedTx = await apiFetch<Transcript>(`/speeches/${speechId}/transcript?user_id=${userId}`);
+              currentTranscript = fetchedTx;
+              setTranscript(fetchedTx);
+            } else {
+              currentTranscript = txResult;
+              setTranscript(txResult);
+            }
+            console.log("[Analyze] Step 1: Transcript ready, word_count=" + currentTranscript?.word_count);
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : "Transcription failed.";
+            console.error("[Analyze] Step 1 failed:", msg);
             setTxErr(msg);
             throw new Error(msg);
           }
@@ -558,40 +569,86 @@ export default function SpeechPage() {
         }
       }
 
+      // Verify we have transcript before continuing
+      if (!currentTranscript || !currentTranscript.text) {
+        throw new Error("Could not prepare speech text. Please try again.");
+      }
+
       // Step 2: Generate flow if missing
       if (!currentArgMap) {
         setAnalysisStage("flow");
         setFlowErr("");
+        console.log("[Analyze] Step 2: Generating argument map...");
         try {
           const flowResult = await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments?user_id=${userId}`, { method: "POST" });
-          setArgMap(flowResult);
-          currentArgMap = flowResult;  // Update local variable
+          if (!flowResult || !flowResult.arguments) {
+            // If POST didn't return data, try GET
+            const fetchedFlow = await apiFetch<ArgumentMap>(`/speeches/${speechId}/argument-map?user_id=${userId}`);
+            currentArgMap = fetchedFlow;
+            setArgMap(fetchedFlow);
+          } else {
+            currentArgMap = flowResult;
+            setArgMap(flowResult);
+          }
+          console.log("[Analyze] Step 2: Flow ready, arguments=" + currentArgMap?.arguments?.length);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Flow generation failed.";
+          console.error("[Analyze] Step 2 failed:", msg);
           setFlowErr(msg);
           throw new Error(msg);
         }
+      }
+
+      // Verify we have argument map before continuing
+      if (!currentArgMap) {
+        throw new Error("Could not generate argument flow. Please try again.");
       }
 
       // Step 3: Generate feedback if missing
       if (!currentFeedback) {
         setAnalysisStage("feedback");
         setFbErr("");
+        console.log("[Analyze] Step 3: Generating feedback...");
         try {
           const fbResult = await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback?user_id=${userId}`, { method: "POST" });
-          setFeedback(fbResult);
-          currentFeedback = fbResult;  // Update local variable
+          if (!fbResult || typeof fbResult.overall_score !== 'number') {
+            // If POST didn't return data, try GET
+            const fetchedFb = await apiFetch<FeedbackReport>(`/speeches/${speechId}/feedback?user_id=${userId}`);
+            currentFeedback = fetchedFb;
+            setFeedback(fetchedFb);
+          } else {
+            currentFeedback = fbResult;
+            setFeedback(fbResult);
+          }
+          console.log("[Analyze] Step 3: Feedback ready, score=" + currentFeedback?.overall_score);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Feedback generation failed.";
+          console.error("[Analyze] Step 3 failed:", msg);
           setFbErr(msg);
           throw new Error(msg);
         }
       }
 
+      // Verify we have feedback
+      if (!currentFeedback) {
+        throw new Error("Could not generate coaching report. Please try again.");
+      }
+
       // Success - all steps completed
+      console.log("[Analyze] ✓ All steps completed successfully");
       setAnalysisStage(null);
+
+      // Refresh speech data to ensure UI is in sync
+      try {
+        const refreshedSpeech = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`);
+        setSpeech(refreshedSpeech);
+      } catch {
+        // Non-critical, just log
+        console.warn("[Analyze] Could not refresh speech data");
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Analysis failed. Please try again.";
+      console.error("[Analyze] Pipeline failed:", msg);
       setUnifiedAnalysisErr(msg);
     } finally {
       setAnalyzingUnified(false);

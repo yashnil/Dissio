@@ -16,6 +16,8 @@ function LoginContent() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +45,24 @@ function LoginContent() {
         if (error) setError(error.message);
         else { router.push("/dashboard"); router.refresh(); }
       } else {
-        const { error } = await sb.auth.signUp({ email, password });
+        // Validate first and last name for signup
+        if (!firstName.trim() || !lastName.trim()) {
+          setError("First name and last name are required.");
+          setLoading(false);
+          return;
+        }
+
+        const { error } = await sb.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              first_name: firstName.trim(),
+              last_name: lastName.trim(),
+              full_name: `${firstName.trim()} ${lastName.trim()}`,
+            },
+          },
+        });
         if (error) setError(error.message);
         else setNotice("Check your email for a confirmation link, then sign in.");
       }
@@ -57,6 +76,7 @@ function LoginContent() {
   function toggleMode() {
     setMode((m) => (m === "signin" ? "signup" : "signin"));
     setError(""); setNotice("");
+    setFirstName(""); setLastName("");
   }
 
   async function handleGoogleSignIn() {
@@ -137,6 +157,32 @@ function LoginContent() {
             </div>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              {mode === "signup" && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="firstName" className="text-xs font-medium text-ink-subtle">
+                      First Name
+                    </label>
+                    <Input
+                      id="firstName" type="text" autoComplete="given-name" required
+                      value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="Alex" disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="lastName" className="text-xs font-medium text-ink-subtle">
+                      Last Name
+                    </label>
+                    <Input
+                      id="lastName" type="text" autoComplete="family-name" required
+                      value={lastName} onChange={(e) => setLastName(e.target.value)}
+                      placeholder="Johnson" disabled={loading}
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="email" className="text-xs font-medium text-ink-subtle">
                   Email

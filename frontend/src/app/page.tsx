@@ -226,11 +226,40 @@ const FEATURES = [
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+// Practice-focused greetings for logged-in users
+const GREETINGS_WITH_NAME = [
+  (name: string) => `Ready for your next round, ${name}?`,
+  (name: string) => `Pick up where you left off, ${name}.`,
+  (name: string) => `Let's sharpen your skills, ${name}.`,
+];
+
+const GREETINGS_WITHOUT_NAME = [
+  "What are we sharpening today?",
+  "Let's make this speech cleaner.",
+  "Back for another practice rep?",
+  "Want to turn feedback into points?",
+  "Let's build a stronger ballot story.",
+  "Ready to level up your next speech?",
+];
+
+function pickGreeting(firstName: string | null): string {
+  if (firstName) {
+    // 50% chance to use name-based greeting
+    if (Math.random() < 0.5) {
+      const greeting = GREETINGS_WITH_NAME[Math.floor(Math.random() * GREETINGS_WITH_NAME.length)];
+      return greeting(firstName);
+    }
+  }
+  // Fall back to generic greeting
+  return GREETINGS_WITHOUT_NAME[Math.floor(Math.random() * GREETINGS_WITHOUT_NAME.length)];
+}
+
 export default function LandingPage() {
   const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userName, setUserName] = useState<string | null>(null);
+  const [firstName, setFirstName] = useState<string | null>(null);
   const [userLevel, setUserLevel] = useState<number | null>(null);
+  const [greeting, setGreeting] = useState<string>("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
@@ -246,7 +275,14 @@ export default function LandingPage() {
       .then(({ data }) => {
         if (data.user) {
           setIsLoggedIn(true);
-          setUserName(data.user.email || data.user.user_metadata?.name || null);
+
+          // Extract first name from metadata
+          const metadata = data.user.user_metadata || {};
+          const name = metadata.first_name || metadata.name?.split(' ')[0] || null;
+          setFirstName(name);
+
+          // Pick a greeting once per page load
+          setGreeting(pickGreeting(name));
 
           // Fetch user progress for level
           fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/${data.user.id}/progress`)
@@ -272,8 +308,9 @@ export default function LandingPage() {
     const supabase = createClient();
     await supabase.auth.signOut();
     setIsLoggedIn(false);
-    setUserName(null);
+    setFirstName(null);
     setUserLevel(null);
+    setGreeting("");
     router.push("/");
   }
 
@@ -300,11 +337,11 @@ export default function LandingPage() {
                   </motion.span>
 
                   <motion.h1 {...fadeUp(0.07)} className="text-display text-ink">
-                    Ready for your<br />next round?
+                    {greeting}
                   </motion.h1>
 
                   <motion.p {...fadeUp(0.14)} className="max-w-sm text-base leading-relaxed text-ink-subtle">
-                    {userName ? `Welcome back, ${userName.split('@')[0]}.` : "Welcome back."} Choose how you want to practice today.
+                    Choose how you want to practice today.
                   </motion.p>
 
                   <motion.div {...fadeUp(0.2)} className="flex flex-wrap items-center gap-3">
