@@ -104,6 +104,7 @@ export default function AppNav({ rightSlot }: AppNavProps) {
             <NavLink href="/learn" label="Learn" isActive={pathname === "/learn"} />
             <NavLink href="/dashboard" label="Individual" isActive={pathname === "/dashboard"} />
             <NavLink href="/team" label="Team" isActive={pathname?.startsWith("/team") || false} />
+            <NavLink href="/evidence" label="Evidence" isActive={pathname?.startsWith("/evidence") || false} />
           </div>
         )}
       </div>

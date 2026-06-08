@@ -15,6 +15,7 @@ RoundLab helps debaters practice and improve through AI-powered coaching. Record
 5. **Create Drills** — Three personalized practice exercises targeting your skill gaps (warranting, weighing, drops, clash, judge adaptation)
 6. **Track Progress** — Dashboard with XP, levels, badges, skill averages, and drill completion
 7. **Team Mode** — Coaches can create teams, invite students, and monitor practice progress
+8. **Evidence Library** *(Phase 1)* — Upload case files, extract evidence cards, and verify whether speech claims are supported by your own uploaded evidence
 
 ---
 
@@ -64,6 +65,27 @@ RoundLab helps debaters practice and improve through AI-powered coaching. Record
 - ✅ **Calibrated Scoring**: 90-100 = Tournament-Ready · 80-89 = Strong · 70-79 = Solid · 60-69 = Developing · 50-59 = Flawed but Complete · 40-49 = Major Issues · 30-39 = Severely Underdeveloped · <30 = Incomplete
 - ✅ **Novice/JV Calibration**: Complete constructives with evidence and clear advocacy score 50-60 even with weak warrants (not 30); 30-39 reserved for severely underdeveloped or incoherent speeches
 - ✅ **Topic-Aware Examples**: Coach Diagnosis uses the student's actual speech topic and claims in before/after improvement examples (e.g., Section 230 examples for tech policy speeches)
+
+### Evidence Library (Phase 1)
+- ✅ **Document upload** — Upload PDF, DOCX, TXT, or MD case files (max 20 MB)
+- ✅ **Automatic text extraction** — PDF via PyMuPDF; DOCX via python-docx; TXT/MD native
+- ✅ **Evidence card extraction** — Heuristic detection of tag, author, year, source, and card text
+- ✅ **No invented citations** — Missing author/year/source fields are stored as `null` and flagged (`attribution_complete: false`); RoundLab never fabricates citations
+- ✅ **Full-text search** — PostgreSQL `tsvector` FTS index with `ilike` fallback searches your evidence library by keyword
+- ✅ **Claim support checking** — For any speech argument, RoundLab searches your library and uses the LLM to classify evidence support as `supported`, `partially_supported`, `unsupported`, or `unverifiable`
+- ✅ **Evidence Library page** — Upload, browse, search, and delete documents at `/evidence`
+- ✅ **EvidenceSupportPanel** — Standalone React component ready to drop into the speech report page
+
+**Safety rules:**
+- Evidence checking requires documents to be uploaded — it is never run on speeches without a library
+- The LLM is instructed to use only provided card text and must return `unverifiable` if no card matches
+- No case generation — RoundLab checks existing evidence, it does not write new cards
+
+**Current limitations (Phase 1):**
+- Scanned image PDFs (no embedded text layer) are not supported — text extraction requires a searchable PDF
+- `.doc` (legacy Word) is not supported; convert to `.docx` or `.txt`
+- pgvector semantic search is not yet enabled — search uses full-text and keyword overlap
+- Evidence checking is not wired into the live speech report pipeline yet (Phase 2)
 
 ### Authentication
 - ✅ Supabase Auth with PKCE OAuth flow
@@ -181,15 +203,19 @@ supabase db push
 
 **Manual migration order:**
 ```
-supabase/migrations/20260524000000_initial_schema.sql      # Core tables
-supabase/migrations/20260601000000_add_drill_fields.sql    # Drill metadata
-supabase/migrations/20260602000000_add_teams.sql           # Team features
-supabase/migrations/20260602100000_add_feedback_rating.sql # Feedback ratings
-supabase/migrations/20260604000000_add_xp_ledger.sql       # XP + scoring version
+supabase/migrations/20260524000000_initial_schema.sql       # Core tables
+supabase/migrations/20260601000000_add_drill_fields.sql     # Drill metadata
+supabase/migrations/20260602000000_add_teams.sql            # Team features
+supabase/migrations/20260602100000_add_feedback_rating.sql  # Feedback ratings
+supabase/migrations/20260604000000_add_xp_ledger.sql        # XP + scoring version
 supabase/migrations/20260606000000_add_drill_time_limit.sql # Drill time_limit_seconds
+supabase/migrations/20260607000000_add_rerecord_fields.sql  # Re-record tracking
+supabase/migrations/20260608100000_add_evidence_tables.sql  # Evidence-Aware Coach Phase 1
 ```
 
-**Storage bucket:** Create a bucket named `audio` with public read access for audio files.
+**Storage buckets:** Create the following buckets in Supabase Dashboard → Storage:
+- `audio` — public read access, for speech recordings
+- `documents` — private, for uploaded case/evidence files (Evidence Library)
 
 **New columns added in Pass 4/5 (already in migrations):**
 | Table | Column | Type | Notes |
@@ -230,6 +256,15 @@ supabase/migrations/20260606000000_add_drill_time_limit.sql # Drill time_limit_s
 - `POST /teams/join` — Join team with invite code
 - `GET /teams/users/{user_id}` — List user's teams
 - `GET /teams/{team_id}/dashboard` — Coach view (student progress)
+
+### Evidence Library (Phase 1)
+- `POST /documents` — Register uploaded document and trigger parsing
+- `GET /documents?user_id={id}` — List user's documents
+- `GET /documents/{doc_id}?user_id={id}` — Get document with chunks and evidence cards
+- `DELETE /documents/{doc_id}?user_id={id}` — Delete document and cascade
+- `POST /documents/search` — Full-text search over evidence library
+- `POST /speeches/{speech_id}/evidence-check` — Check if a speech claim is supported by uploaded evidence
+- `GET /speeches/{speech_id}/evidence-checks?user_id={id}` — List saved evidence checks for a speech
 
 ---
 

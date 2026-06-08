@@ -1,0 +1,584 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  FileText, Upload, Search, Trash2, ChevronDown, ChevronUp,
+  AlertCircle, CheckCircle2, Clock, X, BookOpen,
+} from "lucide-react";
+import PageShell from "@/components/PageShell";
+import SectionHeader from "@/components/SectionHeader";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { createClient } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
+import type {
+  EvidenceDocument,
+  EvidenceCard,
+  DocumentWithCards,
+  SearchResultItem,
+} from "@/types";
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const ALLOWED_EXTS = ["pdf", "docx", "txt", "md"];
+const MAX_MB = 20;
+
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; variant: "default" | "indigo" | "green" | "amber" | "red" }
+> = {
+  uploaded: { label: "Processing…", variant: "amber" },
+  parsed:   { label: "Ready",       variant: "green"  },
+  failed:   { label: "Failed",      variant: "red"    },
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function fileSizeLabel(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function extFromFilename(name: string): string {
+  return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function AttributionBadge({ card }: { card: EvidenceCard }) {
+  if (card.attribution_complete) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+        <CheckCircle2 size={10} /> {card.author} · {card.year}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+      <AlertCircle size={10} />
+      {card.author ?? "author unclear"}{card.year ? ` · ${card.year}` : " · date not found"}
+    </span>
+  );
+}
+
+function CardItem({ card, defaultOpen = false }: { card: EvidenceCard; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-hairline bg-surface-2 text-sm">
+      <button
+        className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex flex-col gap-0.5 min-w-0">
+          {card.tag && (
+            <span className="truncate text-xs font-semibold uppercase tracking-wide text-ink-subtle">
+              {card.tag}
+            </span>
+          )}
+          <AttributionBadge card={card} />
+          {card.claim_summary && (
+            <p className="text-xs text-ink-subtle mt-0.5 line-clamp-2">{card.claim_summary}</p>
+          )}
+        </div>
+        {open ? <ChevronUp size={14} className="shrink-0 mt-1 text-ink-muted" /> : <ChevronDown size={14} className="shrink-0 mt-1 text-ink-muted" />}
+      </button>
+      {open && (
+        <div className="border-t border-hairline px-3 py-2.5">
+          <p className="whitespace-pre-wrap text-xs leading-relaxed text-ink">{card.card_text}</p>
+          {card.source && (
+            <p className="mt-1.5 text-xs text-ink-subtle">Source: {card.source}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentCard({
+  doc,
+  onDelete,
+}: {
+  doc: EvidenceDocument;
+  onDelete: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [cards, setCards] = useState<EvidenceCard[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const cfg = STATUS_CONFIG[doc.status] ?? STATUS_CONFIG.uploaded;
+
+  async function loadCards() {
+    if (expanded || doc.status !== "parsed") return;
+    setLoading(true);
+    try {
+      const data = await apiFetch<DocumentWithCards>(`/documents/${doc.id}?user_id=${doc.user_id}`);
+      setCards(data.cards);
+      setExpanded(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await apiFetch(`/documents/${doc.id}?user_id=${doc.user_id}`, { method: "DELETE" });
+      onDelete(doc.id);
+    } catch {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-hairline bg-surface-2">
+              <FileText size={16} className="text-ink-subtle" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-ink">{doc.filename}</p>
+              <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                <Badge variant={cfg.variant} className="text-xs">{cfg.label}</Badge>
+                {doc.page_count && (
+                  <span className="text-xs text-ink-subtle">{doc.page_count} pages</span>
+                )}
+                {doc.file_size_bytes && (
+                  <span className="text-xs text-ink-subtle">{fileSizeLabel(doc.file_size_bytes)}</span>
+                )}
+                <span className="text-xs text-ink-subtle capitalize">{doc.doc_type}</span>
+              </div>
+              {doc.error_message && (
+                <p className="mt-1 text-xs text-danger">{doc.error_message}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {doc.status === "parsed" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={expanded ? () => setExpanded(false) : loadCards}
+                disabled={loading}
+              >
+                {loading ? "Loading…" : expanded ? "Hide cards" : "Show cards"}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-ink-subtle hover:text-danger"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              <Trash2 size={13} />
+            </Button>
+          </div>
+        </div>
+
+        {expanded && cards.length > 0 && (
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-xs text-ink-subtle font-medium">{cards.length} extracted card{cards.length !== 1 ? "s" : ""}</p>
+            {cards.slice(0, 10).map((card) => (
+              <CardItem key={card.id} card={card} />
+            ))}
+            {cards.length > 10 && (
+              <p className="text-xs text-ink-muted text-center">+{cards.length - 10} more cards</p>
+            )}
+          </div>
+        )}
+        {expanded && cards.length === 0 && (
+          <p className="mt-3 text-xs text-ink-subtle">No evidence cards extracted from this document.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SearchResultCard({ item }: { item: SearchResultItem }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-hairline bg-surface p-3 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-ink-subtle truncate">{item.document_filename}</p>
+          {item.chunk.heading && (
+            <p className="text-xs font-semibold text-lav mt-0.5">{item.chunk.heading}</p>
+          )}
+        </div>
+        <button onClick={() => setOpen((v) => !v)} className="shrink-0 text-ink-muted hover:text-ink">
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
+      <p className={`mt-1.5 text-xs leading-relaxed text-ink ${open ? "" : "line-clamp-3"}`}>
+        {item.chunk.chunk_text}
+      </p>
+      {item.cards.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {item.cards.map((card) => (
+            <AttributionBadge key={card.id} card={card} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
+export default function EvidencePage() {
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [docType, setDocType] = useState<string>("case");
+  const [fileError, setFileError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[] | null>(null);
+  const [searchError, setSearchError] = useState("");
+
+  // ── Auth ───────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    createClient()
+      .auth.getUser()
+      .then(async ({ data }) => {
+        if (!data.user) { router.replace("/login"); return; }
+        setUserId(data.user.id);
+        await loadDocuments(data.user.id);
+      })
+      .catch(() => router.replace("/login"))
+      .finally(() => setLoading(false));
+  }, [router]);
+
+  // ── Load documents ─────────────────────────────────────────────────────────
+
+  async function loadDocuments(uid: string) {
+    setDocsLoading(true);
+    try {
+      const docs = await apiFetch<EvidenceDocument[]>(`/documents?user_id=${uid}`);
+      setDocuments(docs);
+    } catch {
+      // non-fatal
+    } finally {
+      setDocsLoading(false);
+    }
+  }
+
+  // ── File selection ─────────────────────────────────────────────────────────
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setFileError("");
+    setUploadError("");
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return;
+
+    const ext = extFromFilename(file.name);
+    if (!ALLOWED_EXTS.includes(ext)) {
+      setFileError(`Unsupported file type. Allowed: ${ALLOWED_EXTS.join(", ")}`);
+      return;
+    }
+    if (file.size > MAX_MB * 1024 * 1024) {
+      setFileError(`File too large. Maximum size is ${MAX_MB} MB.`);
+      return;
+    }
+    setSelectedFile(file);
+  }
+
+  // ── Upload ─────────────────────────────────────────────────────────────────
+
+  async function handleUpload() {
+    if (!selectedFile) return;
+    if (!userId) {
+      setUploadError("Please sign in before uploading evidence.");
+      return;
+    }
+    setUploading(true);
+    setUploadError("");
+
+    const sb = createClient();
+    // Sanitize filename: remove characters that can break storage paths
+    const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${userId}/${Date.now()}_${safeName}`;
+
+    try {
+      // Step 1: upload file to Supabase Storage "documents" bucket
+      const { error: storageErr } = await sb.storage
+        .from("documents")
+        .upload(storagePath, selectedFile, { upsert: false });
+
+      if (storageErr) {
+        const msg = storageErr.message ?? "";
+        if (msg.includes("row-level security") || msg.includes("policy")) {
+          setUploadError(
+            "Upload blocked by evidence library permissions. " +
+            "Apply migration 20260608110000_fix_document_storage_policies.sql " +
+            "and ensure the 'documents' storage bucket exists."
+          );
+        } else if (msg.includes("Bucket not found") || msg.includes("bucket")) {
+          setUploadError(
+            "The 'documents' storage bucket does not exist. " +
+            "Create it in the Supabase dashboard (Storage → New bucket → 'documents', private)."
+          );
+        } else if (msg.includes("already exists") || msg.includes("duplicate")) {
+          setUploadError("A file with that name already exists. Rename the file and try again.");
+        } else {
+          setUploadError("Storage upload failed: " + msg);
+        }
+        return;
+      }
+
+      // Step 2: register document with backend (triggers parsing)
+      let doc: EvidenceDocument;
+      try {
+        doc = await apiFetch<EvidenceDocument>("/documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: userId,
+            filename: selectedFile.name,
+            storage_path: storagePath,
+            doc_type: docType,
+            file_size_bytes: selectedFile.size,
+          }),
+        });
+      } catch (parseErr: unknown) {
+        // File is stored but parsing failed — show document status from backend if available
+        setUploadError(
+          parseErr instanceof Error
+            ? "File uploaded but parsing failed: " + parseErr.message
+            : "File uploaded but the backend could not process it."
+        );
+        // Still reload the list so the user can see the failed document
+        await loadDocuments(userId);
+        return;
+      }
+
+      setDocuments((prev) => [doc, ...prev]);
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!searchQuery.trim() || !userId) return;
+    setSearching(true);
+    setSearchError("");
+    setSearchResults(null);
+    try {
+      const results = await apiFetch<SearchResultItem[]>("/documents/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, query: searchQuery.trim(), limit: 8 }),
+      });
+      setSearchResults(results);
+    } catch (err: unknown) {
+      setSearchError(err instanceof Error ? err.message : "Search failed.");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function handleDeleteDoc(id: string) {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  }
+
+  // ── Loading state ──────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-hairline border-t-lav" />
+      </div>
+    );
+  }
+
+  if (!userId) return null;
+
+  const parsedCount = documents.filter((d) => d.status === "parsed").length;
+
+  return (
+    <PageShell maxWidth="5xl">
+      <div className="flex flex-col gap-8">
+
+        {/* Header */}
+        <SectionHeader
+          title="Evidence Library"
+          description="Upload your case files. RoundLab checks whether your speech claims are supported by your own evidence."
+        />
+
+        {/* Upload panel */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-ink">Upload a document</h2>
+          <div className="rounded-xl border border-hairline bg-surface p-5 flex flex-col gap-4">
+            {/* Drop zone */}
+            <label className="flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 border-dashed border-hairline-strong p-8 text-center hover:border-lav/40 hover:bg-lav/[0.03] transition-all">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-hairline bg-surface-2">
+                <Upload size={16} className="text-ink-subtle" />
+              </div>
+              {selectedFile ? (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-ink">{selectedFile.name}</span>
+                  <span className="text-xs text-ink-subtle">{fileSizeLabel(selectedFile.size)}</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-ink">Click to select a file</span>
+                  <span className="text-xs text-ink-subtle">
+                    {ALLOWED_EXTS.join(", ")} · max {MAX_MB} MB
+                  </span>
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ALLOWED_EXTS.map((e) => `.${e}`).join(",")}
+                onChange={handleFileChange}
+                disabled={uploading}
+                className="sr-only"
+              />
+            </label>
+
+            {fileError && <p className="text-xs text-danger">{fileError}</p>}
+            {uploadError && <p className="text-xs text-danger">{uploadError}</p>}
+
+            {selectedFile && (
+              <div className="flex items-center gap-3">
+                <select
+                  value={docType}
+                  onChange={(e) => setDocType(e.target.value)}
+                  disabled={uploading}
+                  className="h-9 rounded-lg border border-hairline bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-lav/40"
+                >
+                  <option value="case">Case file</option>
+                  <option value="evidence">Evidence packet</option>
+                  <option value="brief">Brief</option>
+                  <option value="other">Other</option>
+                </select>
+
+                <Button onClick={handleUpload} disabled={uploading} size="sm" className="flex-1">
+                  {uploading ? "Uploading and parsing…" : "Upload"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={uploading}
+                  onClick={() => {
+                    setSelectedFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="gap-1"
+                >
+                  <X size={12} /> Clear
+                </Button>
+              </div>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-ink-muted">
+            RoundLab extracts evidence cards from your file. It never invents citations.
+          </p>
+        </section>
+
+        {/* Search */}
+        {parsedCount > 0 && (
+          <section>
+            <h2 className="mb-3 text-sm font-semibold text-ink">Search your evidence</h2>
+            <form onSubmit={handleSearch} className="flex gap-2">
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="e.g. deterrence fiscal burden alliance credibility"
+                className="flex-1 text-sm"
+                disabled={searching}
+              />
+              <Button type="submit" size="sm" disabled={searching || !searchQuery.trim()}>
+                <Search size={14} className="mr-1.5" />
+                {searching ? "Searching…" : "Search"}
+              </Button>
+            </form>
+
+            {searchError && <p className="mt-2 text-xs text-danger">{searchError}</p>}
+
+            {searchResults !== null && (
+              <div className="mt-3 flex flex-col gap-2">
+                {searchResults.length === 0 ? (
+                  <p className="text-sm text-ink-subtle">No matching evidence found in your library.</p>
+                ) : (
+                  <>
+                    <p className="text-xs text-ink-subtle">{searchResults.length} result{searchResults.length !== 1 ? "s" : ""}</p>
+                    {searchResults.map((item, i) => (
+                      <SearchResultCard key={item.chunk.id ?? i} item={item} />
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Documents list */}
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-ink">
+              Your documents{documents.length > 0 ? ` (${documents.length})` : ""}
+            </h2>
+            {parsedCount > 0 && (
+              <span className="text-xs text-ink-subtle">{parsedCount} ready</span>
+            )}
+          </div>
+
+          {docsLoading ? (
+            <div className="flex flex-col gap-3">
+              {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-hairline p-10 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-hairline bg-surface-2">
+                <BookOpen size={16} className="text-ink-subtle" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-ink">No documents yet</p>
+                <p className="text-xs text-ink-subtle mt-0.5">
+                  Upload a case file or evidence packet above to get started.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {documents.map((doc) => (
+                <DocumentCard key={doc.id} doc={doc} onDelete={handleDeleteDoc} />
+              ))}
+            </div>
+          )}
+        </section>
+
+      </div>
+    </PageShell>
+  );
+}

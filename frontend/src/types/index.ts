@@ -264,3 +264,89 @@ export interface TeamDashboard {
   member_count: number;
   students: StudentProgress[];
 }
+
+// ── Evidence-Aware Coach types ─────────────────────────────────────────────────
+
+export type DocumentStatus = "uploaded" | "parsed" | "failed";
+export type DocumentType = "case" | "evidence" | "brief" | "other";
+export type EvidenceSupportLevel =
+  | "supported"
+  | "partially_supported"
+  | "unsupported"
+  | "unverifiable";
+
+export interface EvidenceDocument {
+  id: string;
+  user_id: string;
+  team_id: string | null;
+  filename: string;
+  storage_path: string;
+  doc_type: DocumentType;
+  status: DocumentStatus;
+  file_size_bytes: number | null;
+  page_count: number | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface DocumentChunk {
+  id: string;
+  document_id: string;
+  user_id: string;
+  chunk_text: string;
+  chunk_index: number;
+  heading: string | null;
+  page_number: number | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EvidenceCard {
+  id: string;
+  document_id: string;
+  user_id: string;
+  chunk_id: string | null;
+  tag: string | null;
+  author: string | null;
+  source: string | null;
+  year: number | null;
+  card_text: string;
+  claim_summary: string | null;
+  attribution_complete: boolean;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ClaimEvidenceCheck {
+  id: string;
+  speech_id: string;
+  user_id: string;
+  argument_label: string | null;
+  claim_text: string;
+  evidence_text_from_speech: string | null;
+  matched_card_id: string | null;
+  support_level: EvidenceSupportLevel | null;
+  explanation: string | null;
+  created_at: string;
+}
+
+export interface DocumentWithCards {
+  document: EvidenceDocument;
+  chunks: DocumentChunk[];
+  cards: EvidenceCard[];
+}
+
+export interface SearchResultItem {
+  chunk: DocumentChunk;
+  document_filename: string;
+  cards: EvidenceCard[];
+}
+
+export interface EvidenceCheckResult {
+  argument_label: string | null;
+  claim_text: string;
+  evidence_text_from_speech: string | null;
+  matched_card: EvidenceCard | null;
+  support_level: EvidenceSupportLevel;
+  explanation: string;
+}

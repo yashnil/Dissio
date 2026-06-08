@@ -33,9 +33,10 @@ import FlowTable from "@/components/FlowTable";
 import PracticeLoopCTA from "@/components/PracticeLoopCTA";
 import ImprovementComparisonCard from "@/components/ImprovementComparisonCard";
 import CoachMarginNote from "@/components/CoachMarginNote";
+import EvidenceSupportPanel from "@/components/EvidenceSupportPanel";
 import { getCoachNote, deriveFlowCoachNoteType, getPrimaryIssue } from "@/lib/debateHelpers";
 import type { ArgumentMap, Drill, DrillStatus, FeedbackReport, Speech, Transcript } from "@/types";
-import type { DebateIssue } from "@/types";
+import type { DebateIssue, ClaimEvidenceCheck, EvidenceCheckResult, EvidenceDocument } from "@/types";
 import type { RecordState } from "@/components/RecordingStudio";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -609,6 +610,15 @@ export default function SpeechPage() {
   // Re-record comparison (fetched best-effort when speech has parent_speech_id)
   const [comparison, setComparison] = useState<import("@/types").SpeechComparisonResult | null>(null);
 
+  // Evidence-Aware Coach (Phase 2)
+  // hasLibrary: null = loading, false = no parsed docs, true = at least one parsed doc
+  const [hasLibrary, setHasLibrary] = useState<boolean | null>(null);
+  const [savedChecks, setSavedChecks] = useState<ClaimEvidenceCheck[]>([]);
+  const [freshResults, setFreshResults] = useState<EvidenceCheckResult[]>([]);
+  const [checkingEvidence, setCheckingEvidence] = useState(false);
+  const [checkingIndex, setCheckingIndex] = useState<number>(-1);
+  const [evidenceCheckErr, setEvidenceCheckErr] = useState("");
+
   const mrRef   = useRef<MediaRecorder | null>(null);
   const chunks  = useRef<Blob[]>([]);
   const stream  = useRef<MediaStream | null>(null);
@@ -652,6 +662,15 @@ export default function SpeechPage() {
         if (argData.status === "fulfilled") setArgMap(argData.value);
         if (fbData.status === "fulfilled") setFeedback(fbData.value);
         if (drillData.status === "fulfilled") setDrills(drillData.value);
+
+        // Evidence library + saved checks — best-effort, non-blocking
+        Promise.all([
+          apiFetch<EvidenceDocument[]>(`/documents?user_id=${uid}`).catch(() => [] as EvidenceDocument[]),
+          apiFetch<ClaimEvidenceCheck[]>(`/speeches/${speechId}/evidence-checks?user_id=${uid}`).catch(() => [] as ClaimEvidenceCheck[]),
+        ]).then(([docs, checks]) => {
+          setHasLibrary((docs as EvidenceDocument[]).some((d) => d.status === "parsed"));
+          if ((checks as ClaimEvidenceCheck[]).length > 0) setSavedChecks(checks as ClaimEvidenceCheck[]);
+        });
       })
       .catch(() => setPageErr("Could not load your data. Please refresh and try again."))
       .finally(() => setPageLoad(false));
@@ -1087,6 +1106,50 @@ export default function SpeechPage() {
       setFeedbackRated(true);
     } catch {}
     finally { setRatingFeedback(false); }
+  }
+
+  // ── Evidence support check ─────────────────────────────────────────────────
+
+  async function runAllEvidenceChecks() {
+    if (!userId || !argMap || argMap.arguments.length === 0) return;
+    setCheckingEvidence(true);
+    setEvidenceCheckErr("");
+    setFreshResults([]);
+
+    const results: EvidenceCheckResult[] = [];
+    for (let i = 0; i < argMap.arguments.length; i++) {
+      const arg = argMap.arguments[i];
+      setCheckingIndex(i);
+      try {
+        const result = await apiFetch<EvidenceCheckResult>(
+          `/speeches/${speechId}/evidence-check`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              user_id: userId,
+              argument_label: arg.label,
+              claim_text: arg.claim,
+              evidence_text_from_speech: arg.evidence ?? undefined,
+            }),
+          },
+        );
+        results.push(result);
+      } catch {
+        results.push({
+          argument_label: arg.label,
+          claim_text: arg.claim,
+          evidence_text_from_speech: arg.evidence ?? null,
+          matched_card: null,
+          support_level: "unverifiable",
+          explanation: "Check failed — please try again.",
+        });
+      }
+    }
+
+    setFreshResults(results);
+    setCheckingIndex(-1);
+    setCheckingEvidence(false);
   }
 
   // ── States ─────────────────────────────────────────────────────────────────
@@ -2269,6 +2332,147 @@ export default function SpeechPage() {
                   )
                 )}
               </>
+            )}
+
+            {/* ── Evidence Support — shown after feedback exists and argMap is available ── */}
+            {feedback && argMap && argMap.arguments.length > 0 && (
+              <WorkspaceCard key="evidence-support">
+                <CardContent className="flex flex-col gap-4 px-5 py-5">
+                  {/* Section header */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-hairline-strong text-xs font-bold text-ink-faint">
+                        E
+                      </span>
+                      <p className="text-heading text-ink">Evidence Support</p>
+                    </div>
+                    {hasLibrary && !checkingEvidence && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-xs shrink-0"
+                        onClick={runAllEvidenceChecks}
+                        disabled={checkingEvidence}
+                      >
+                        {freshResults.length > 0 || savedChecks.length > 0
+                          ? "Re-check all"
+                          : "Check all claims"}
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Purpose copy */}
+                  <p className="text-xs text-ink-subtle leading-relaxed">
+                    Check whether your uploaded case files support the claims and evidence used in this speech.
+                    Results are based only on your library — not outside knowledge.
+                  </p>
+
+                  {/* State A: no library */}
+                  {hasLibrary === false && (
+                    <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-hairline p-6 text-center">
+                      <p className="text-sm font-medium text-ink">Upload a case file to verify evidence</p>
+                      <p className="text-xs text-ink-subtle leading-relaxed max-w-sm">
+                        Go to your Evidence Library and upload a case file.
+                        RoundLab will check whether your speech claims are supported by your own uploaded evidence.
+                      </p>
+                      <a
+                        href="/evidence"
+                        className="mt-1 inline-flex items-center gap-1 text-xs text-lav underline-offset-2 hover:underline"
+                      >
+                        Open Evidence Library →
+                      </a>
+                    </div>
+                  )}
+
+                  {/* State B: has library, no checks yet */}
+                  {hasLibrary === true && !checkingEvidence && freshResults.length === 0 && savedChecks.length === 0 && (
+                    <div className="flex flex-col gap-3 rounded-xl border border-lav/20 bg-lav/5 px-4 py-4">
+                      <p className="text-sm font-semibold text-ink">
+                        Check claims against your evidence library
+                      </p>
+                      <p className="text-xs text-ink-subtle leading-relaxed">
+                        RoundLab will compare each argument in this speech to your uploaded case files
+                        and tell you whether your cited evidence actually supports the claim you made.
+                      </p>
+                      <Button
+                        size="sm"
+                        onClick={runAllEvidenceChecks}
+                        disabled={checkingEvidence}
+                        className="w-full"
+                      >
+                        Check claims against my evidence library
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* State C: checking */}
+                  {checkingEvidence && (
+                    <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface-2 px-4 py-4">
+                      <div className="flex items-center gap-2 text-xs text-ink-subtle">
+                        <span className="h-1.5 w-1.5 rounded-full bg-lav analysis-step-active" />
+                        {checkingIndex >= 0 && checkingIndex < argMap.arguments.length
+                          ? `Checking argument ${checkingIndex + 1} of ${argMap.arguments.length}: ${argMap.arguments[checkingIndex].label}`
+                          : "Matching claims to uploaded cards…"}
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-surface-1">
+                        <div
+                          className="h-full rounded-full bg-lav transition-all duration-500"
+                          style={{
+                            width: checkingIndex >= 0
+                              ? `${Math.round((checkingIndex / argMap.arguments.length) * 100)}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {evidenceCheckErr && (
+                    <p className="text-xs text-danger">{evidenceCheckErr}</p>
+                  )}
+
+                  {/* State D/E: results (fresh or saved) */}
+                  {(freshResults.length > 0 || savedChecks.length > 0) && !checkingEvidence && (
+                    <>
+                      {/* Coach margin note based on overall results */}
+                      {freshResults.length > 0 && (() => {
+                        const hasProblems = freshResults.some(
+                          (r) => r.support_level === "unsupported" || r.support_level === "unverifiable",
+                        );
+                        const allGood = freshResults.every((r) => r.support_level === "supported");
+                        if (allGood) {
+                          return (
+                            <CoachMarginNote
+                              type="strong"
+                              label="Evidence check"
+                              note="Your uploaded evidence supports the main claims checked in this report."
+                            />
+                          );
+                        }
+                        if (hasProblems) {
+                          return (
+                            <CoachMarginNote
+                              type="warn"
+                              label="Evidence check"
+                              note="Evidence check found claims that may need clearer citation or stronger card support."
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
+
+                      <EvidenceSupportPanel
+                        speechId={speechId}
+                        userId={userId ?? ""}
+                        arguments={argMap.arguments}
+                        hasLibrary={hasLibrary ?? true}
+                        savedChecks={savedChecks}
+                        freshResults={freshResults}
+                      />
+                    </>
+                  )}
+                </CardContent>
+              </WorkspaceCard>
             )}
 
           </AnimatePresence>
