@@ -20,6 +20,8 @@ import {
 import AppNav from "@/components/AppNav";
 import CoachMarginNote from "@/components/CoachMarginNote";
 import DrillAttemptRecorder from "@/components/DrillAttemptRecorder";
+import DrillRating from "@/components/DrillRating";
+import ConfusionReport from "@/components/ConfusionReport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,7 +29,7 @@ import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
 import { resolveAudioUrl } from "@/lib/audio";
 import { fadeUp, EASE } from "@/lib/motion";
-import type { Drill, DrillAttempt, DrillStatus } from "@/types";
+import type { Drill, DrillAttempt, DrillRatingRow, DrillStatus } from "@/types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -254,6 +256,7 @@ export default function DrillPage() {
   const [userId,      setUserId]      = useState<string | null>(null);
   const [drill,       setDrill]       = useState<Drill | null>(null);
   const [attempts,    setAttempts]    = useState<DrillAttempt[]>([]);
+  const [drillRating, setDrillRating] = useState<DrillRatingRow | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [err,         setErr]         = useState("");
   const [attemptsErr, setAttemptsErr] = useState("");
@@ -285,6 +288,12 @@ export default function DrillPage() {
       } catch {
         setAttemptsErr("Couldn't load drill attempts. Try refreshing this drill.");
       }
+
+      // Fetch existing drill rating (best-effort)
+      try {
+        const ratingData = await apiFetch<DrillRatingRow | null>(`/drills/${drillId}/rating?user_id=${uid}`);
+        if (ratingData) setDrillRating(ratingData);
+      } catch { /* no-op */ }
     }).catch(() => setErr("Auth error. Please refresh."))
       .finally(() => setLoading(false));
   }, [drillId, router]);
@@ -570,6 +579,24 @@ export default function DrillPage() {
                       <p className="text-eyebrow text-ink-subtle">Latest result</p>
                     </div>
                     <AttemptCard attempt={attempts[0]} index={0} isLatest />
+                  </motion.div>
+                )}
+
+                {/* ── Drill rating — show after at least one attempt ────── */}
+                {attempts.length > 0 && userId && (
+                  <motion.div {...fadeUp(0.27)} className="flex flex-col gap-2">
+                    <DrillRating
+                      drillId={drill.id}
+                      userId={userId}
+                      drillAttemptId={attempts[0]?.id ?? null}
+                      initialRating={drillRating?.rating ?? null}
+                      onRated={setDrillRating}
+                    />
+                    <ConfusionReport
+                      targetType="drill_feedback"
+                      targetId={drill.id}
+                      userId={userId}
+                    />
                   </motion.div>
                 )}
 

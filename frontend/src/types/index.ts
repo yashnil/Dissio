@@ -350,3 +350,80 @@ export interface EvidenceCheckResult {
   support_level: EvidenceSupportLevel;
   explanation: string;
 }
+
+// ── Pilot / Analytics types ───────────────────────────────────────────────────
+
+export type FeedbackRating = "helpful" | "somewhat" | "not_helpful";
+export type DrillRating = "helpful" | "somewhat" | "not_helpful";
+
+export interface DrillRatingRow {
+  id: string;
+  user_id: string;
+  drill_id: string;
+  drill_attempt_id: string | null;
+  rating: DrillRating;
+  comment: string | null;
+  created_at: string;
+}
+
+export type OutputFeedbackCategory =
+  | "incorrect_issue"
+  | "generic_feedback"
+  | "evidence_mismatch"
+  | "confusing_wording"
+  | "technical_bug"
+  | "other";
+
+export type OutputFeedbackTargetType =
+  | "speech_report"
+  | "drill_feedback"
+  | "evidence_check";
+
+export interface SkillTrend {
+  current: number;
+  previous: number | null;
+  delta: number | null;
+  trend: "improving" | "stable" | "needs_attention" | "no_data";
+}
+
+export interface SkillTrends {
+  clash: SkillTrend;
+  weighing: SkillTrend;
+  extensions: SkillTrend;
+  drops: SkillTrend;
+  judge_adaptation: SkillTrend;
+}
+
+export interface PilotSummary {
+  speech_count: number;
+  analyzed_speech_count: number;
+  drill_count: number;
+  drill_attempt_count: number;
+  completed_drill_count: number;
+  rerecord_count: number;
+  comparison_count: number;
+  feedback_rating_count: number;
+  average_feedback_rating: number | null;
+  drill_rating_count: number;
+  average_drill_rating: number | null;
+  return_for_second_speech: boolean;
+  completed_one_drill: boolean;
+  latest_skill_scores: Record<string, number> | null;
+  skill_trends: SkillTrends | null;
+  common_issues: string[];
+}
+
+export interface PilotAggregate {
+  total_users: number;
+  speeches_uploaded: number;
+  analyzed_speeches: number;
+  drills_assigned: number;
+  drill_attempts: number;
+  rerecords: number;
+  feedback_ratings: number;
+  average_feedback_usefulness: number | null;
+  drill_ratings: number;
+  average_drill_usefulness: number | null;
+  common_issues: string[];
+  common_drop_off: string;
+}

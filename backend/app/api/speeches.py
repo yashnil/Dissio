@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.models.speech import SpeechCreateRequest, SpeechRow, SpeechUpdateRequest
+from app.services.product_events import track_product_event
 from app.services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,15 @@ async def create_speech(body: SpeechCreateRequest) -> SpeechRow:
             .insert(row)
             .execute()
         )
-        return result.data[0]
+        speech = result.data[0]
+        is_rerecord = bool(body.parent_speech_id)
+        track_product_event(
+            user_id=body.user_id,
+            event_name="rerecord_started" if is_rerecord else "speech_created",
+            speech_id=speech["id"],
+            metadata={"is_rerecord": is_rerecord},
+        )
+        return speech
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to create speech") from exc
 

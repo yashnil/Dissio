@@ -538,6 +538,98 @@ Pull requests welcome. For major changes, open an issue first.
 
 ---
 
+## Pilot Readiness
+
+RoundLab is designed to run a 5–10 student pilot using the following protocol.
+
+### Recommended Pilot Protocol
+
+1. Ask each student to record one PF speech (any type).
+2. Ask them to open their flow report and review judge-style feedback.
+3. Ask them to complete one recommended drill.
+4. Ask them to re-record the speech.
+5. Ask them to view the improvement comparison report.
+6. Ask them to rate the feedback usefulness.
+
+### Analytics Events Tracked Internally
+
+| Event | When |
+|---|---|
+| `speech_created` | User creates a new speech session |
+| `rerecord_started` | User creates a speech with a parent speech (re-record) |
+| `speech_analyzed` | Feedback report generation completes successfully |
+| `feedback_viewed` | User fetches a feedback report |
+| `feedback_rated` | User submits a feedback helpfulness rating |
+| `drill_attempt_saved` | User saves a drill attempt |
+| `drill_attempt_scored` | Drill attempt scoring completes |
+| `drill_rated` | User submits a drill helpfulness rating |
+| `comparison_viewed` | User views a speech improvement comparison |
+
+All events are stored in the `product_events` table (user-scoped, best-effort).
+Failures never break user flows. No external analytics service required.
+
+### Feedback Ratings
+
+Feedback reports support three helpfulness ratings: `helpful`, `somewhat`, `not_helpful`.
+
+Users submit ratings from the speech report page. A short optional comment is supported.
+Ratings are stored in `feedback_reports.helpful_rating` and `helpful_comment`.
+
+Drill ratings (`helpful`, `somewhat`, `not_helpful`) are stored in the `drill_ratings` table.
+One rating per user per drill (upserts on re-submit).
+
+### Confusion Reporting
+
+Any AI output surface (speech report, drill feedback, evidence check) has a small
+"Report confusing output" control. Users can flag:
+
+- Incorrect issue
+- Generic feedback
+- Evidence mismatch
+- Confusing wording
+- Technical bug
+- Other
+
+Feedback is stored in `output_feedback` for pilot learning, not public support.
+
+### Pilot Dashboard
+
+Navigate to `/pilot` (dev-only) to see per-user pilot metrics:
+
+- Activity counts (speeches, drills, attempts, re-records, ratings)
+- Pilot loop flags (returned for second speech, completed drill, viewed comparison, rated feedback)
+- Full pilot checklist with live completion state
+- Skill trends (per-dimension improvement vs. previous speech)
+- Common issues from feedback reports
+- Drop-off point analysis
+
+**Security note:** The pilot dashboard shows only the current user's data.
+No cross-user data or transcripts are exposed.
+
+### Pilot Metrics Tracked
+
+| Metric | Meaning |
+|---|---|
+| `return_for_second_speech` | Student recorded 2+ speeches |
+| `completed_one_drill` | At least one drill marked completed |
+| `rerecord_count` | Speeches recorded over a parent speech |
+| `comparison_count` | Times the improvement comparison was viewed |
+| `feedback_rating_count` | Number of feedback reports rated |
+| `average_feedback_rating` | Weighted helpfulness score (1.0 = all helpful) |
+| `drill_rating_count` | Number of drills rated |
+| `average_drill_rating` | Weighted drill helpfulness score |
+| `skill_trends` | Per-dimension trend vs. previous feedback report |
+| `common_issues` | Most frequent top_3_priorities across all feedback reports |
+
+### Current Limitations
+
+- Pilot dashboard is current-user-only (no team-wide aggregate view yet).
+- Streak bonuses are defined in XP rules but not yet auto-awarded.
+- `comparison_count` is derived from the `product_events` table; requires events to be present.
+- Evidence checking is not live-wired into the main speech report pipeline yet.
+
+---
+
 ## License
 
 MIT

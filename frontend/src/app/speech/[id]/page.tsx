@@ -34,6 +34,8 @@ import PracticeLoopCTA from "@/components/PracticeLoopCTA";
 import ImprovementComparisonCard from "@/components/ImprovementComparisonCard";
 import CoachMarginNote from "@/components/CoachMarginNote";
 import EvidenceSupportPanel from "@/components/EvidenceSupportPanel";
+import FeedbackRating from "@/components/FeedbackRating";
+import ConfusionReport from "@/components/ConfusionReport";
 import { getCoachNote, deriveFlowCoachNoteType, getPrimaryIssue } from "@/lib/debateHelpers";
 import type { ArgumentMap, Drill, DrillStatus, FeedbackReport, Speech, Transcript } from "@/types";
 import type { DebateIssue, ClaimEvidenceCheck, EvidenceCheckResult, EvidenceDocument } from "@/types";
@@ -1603,36 +1605,20 @@ export default function SpeechPage() {
                         </div>
                       ) : null}
 
-                      {/* Feedback Rating */}
-                      {!feedback.helpful_rating && !feedbackRated ? (
-                        <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface-2 px-4 py-3">
-                          <p className="text-xs font-medium text-ink-subtle">Was this feedback useful?</p>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => rateFeedback("helpful")}
-                              disabled={ratingFeedback}
-                              className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-ok/40 hover:bg-ok/5 hover:text-ok disabled:opacity-50"
-                            >
-                              <ThumbsUp size={12} />
-                              Helpful
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => rateFeedback("not_helpful")}
-                              disabled={ratingFeedback}
-                              className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
-                            >
-                              <ThumbsDown size={12} />
-                              Not helpful
-                            </button>
-                          </div>
-                          <p className="text-xs text-ink-faint">Your rating helps improve RoundLab.</p>
-                        </div>
-                      ) : (feedback.helpful_rating || feedbackRated) && (
-                        <div className="flex items-center gap-2 rounded-xl border border-ok/20 bg-ok/5 px-4 py-2">
-                          <Check size={12} className="text-ok" />
-                          <p className="text-xs text-ok">Thanks for the feedback!</p>
+                      {/* Feedback Rating + Confusion Report */}
+                      {userId && (
+                        <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface-2 px-4 py-3">
+                          <FeedbackRating
+                            speechId={speechId}
+                            userId={userId}
+                            initialRating={(feedback.helpful_rating as "helpful" | "somewhat" | "not_helpful" | null) ?? null}
+                            onRated={() => setFeedbackRated(true)}
+                          />
+                          <ConfusionReport
+                            targetType="speech_report"
+                            targetId={feedback.id}
+                            userId={userId}
+                          />
                         </div>
                       )}
                     </CardContent>
@@ -2203,36 +2189,20 @@ export default function SpeechPage() {
                           </div>
                         ) : null}
 
-                        {/* Feedback Rating */}
-                        {!feedback.helpful_rating && !feedbackRated ? (
-                          <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface-2 px-4 py-3">
-                            <p className="text-xs font-medium text-ink-subtle">Was this feedback useful?</p>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => rateFeedback("helpful")}
-                                disabled={ratingFeedback}
-                                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-ok/40 hover:bg-ok/5 hover:text-ok disabled:opacity-50"
-                              >
-                                <ThumbsUp size={12} />
-                                Helpful
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => rateFeedback("not_helpful")}
-                                disabled={ratingFeedback}
-                                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs text-ink-subtle transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
-                              >
-                                <ThumbsDown size={12} />
-                                Not helpful
-                              </button>
-                            </div>
-                            <p className="text-xs text-ink-faint">Your rating helps improve RoundLab.</p>
-                          </div>
-                        ) : (feedback.helpful_rating || feedbackRated) && (
-                          <div className="flex items-center gap-2 rounded-xl border border-ok/20 bg-ok/5 px-4 py-2">
-                            <Check size={12} className="text-ok" />
-                            <p className="text-xs text-ok">Thanks for the feedback!</p>
+                        {/* Feedback Rating + Confusion Report */}
+                        {userId && (
+                          <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface-2 px-4 py-3">
+                            <FeedbackRating
+                              speechId={speechId}
+                              userId={userId}
+                              initialRating={(feedback.helpful_rating as "helpful" | "somewhat" | "not_helpful" | null) ?? null}
+                              onRated={() => setFeedbackRated(true)}
+                            />
+                            <ConfusionReport
+                              targetType="speech_report"
+                              targetId={feedback.id}
+                              userId={userId}
+                            />
                           </div>
                         )}
 

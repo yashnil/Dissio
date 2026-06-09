@@ -1,10 +1,13 @@
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.models.drill import DrillAttemptCreate, DrillAttemptRow, DrillRow, DrillStatusUpdate
 from app.services.drill_attempt_scoring import DrillScoringError, score_drill_attempt
 from app.services.drill_generation import DrillGenerationError, generate_drills
+from app.services.product_events import track_product_event
 from app.services.supabase_client import get_supabase
 from app.services.transcription import (
     AudioTooLargeError,
@@ -446,7 +449,126 @@ async def create_drill_attempt(drill_id: str, body: DrillAttemptCreate, user_id:
         except Exception as xp_exc:
             logger.warning("create_drill_attempt: XP award failed | %s", type(xp_exc).__name__)
 
+        # Track analytics event (best-effort)
+        track_product_event(
+            user_id=user_id,
+            event_name="drill_attempt_saved",
+            drill_id=drill_id,
+            metadata={"has_transcript": transcript is not None, "has_score": score is not None},
+        )
+        if score is not None:
+            track_product_event(
+                user_id=user_id,
+                event_name="drill_attempt_scored",
+                drill_id=drill_id,
+                metadata={"score": score},
+            )
+
         return attempt
     except Exception as exc:
         logger.error("create_drill_attempt: insert failed | %s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Failed to save drill attempt") from exc
+
+
+# ── Drill rating models ────────────────────────────────────────────────────────
+
+class DrillRatingCreate(BaseModel):
+    rating: str  # helpful | somewhat | not_helpful
+    comment: Optional[str] = None
+    drill_attempt_id: Optional[str] = None
+
+
+class DrillRatingRow(BaseModel):
+    id: str
+    user_id: str
+    drill_id: str
+    drill_attempt_id: Optional[str] = None
+    rating: str
+    comment: Optional[str] = None
+    created_at: str
+
+
+# ── POST /drills/{drill_id}/rating ────────────────────────────────────────────
+
+@drills_router.post("/{drill_id}/rating", response_model=DrillRatingRow)
+async def rate_drill(drill_id: str, body: DrillRatingCreate, user_id: str = Query(...)) -> DrillRatingRow:
+    """Submit or update a helpfulness rating for a drill."""
+    supabase = get_supabase()
+
+    valid_ratings = {"helpful", "somewhat", "not_helpful"}
+    if body.rating not in valid_ratings:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid rating. Must be one of: {', '.join(valid_ratings)}",
+        )
+
+    # Verify drill ownership
+    try:
+        drill_check = (
+            supabase.table("drills")
+            .select("id")
+            .eq("id", drill_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not drill_check.data:
+            raise HTTPException(status_code=404, detail="Drill not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to verify drill ownership") from exc
+
+    row: dict = {
+        "user_id": user_id,
+        "drill_id": drill_id,
+        "rating": body.rating,
+    }
+    if body.comment:
+        row["comment"] = body.comment
+    if body.drill_attempt_id:
+        row["drill_attempt_id"] = body.drill_attempt_id
+
+    try:
+        result = (
+            supabase.table("drill_ratings")
+            .upsert(row, on_conflict="user_id,drill_id")
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to save drill rating")
+
+        track_product_event(
+            user_id=user_id,
+            event_name="drill_rated",
+            drill_id=drill_id,
+            metadata={"rating": body.rating},
+        )
+        logger.info("rate_drill: success | drill_id=%s rating=%s", drill_id, body.rating)
+        return result.data[0]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("rate_drill: failed | exc_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to save drill rating") from exc
+
+
+# ── GET /drills/{drill_id}/rating ─────────────────────────────────────────────
+
+@drills_router.get("/{drill_id}/rating", response_model=Optional[DrillRatingRow])
+async def get_drill_rating(drill_id: str, user_id: str = Query(...)) -> Optional[DrillRatingRow]:
+    """Fetch the current user's rating for a drill, or null if not yet rated."""
+    supabase = get_supabase()
+    try:
+        result = (
+            supabase.table("drill_ratings")
+            .select("*")
+            .eq("drill_id", drill_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        logger.error("get_drill_rating: failed | exc_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed to fetch drill rating") from exc

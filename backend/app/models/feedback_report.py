@@ -28,3 +28,4 @@ class FeedbackReportRow(BaseModel):
 
 class FeedbackRatingUpdate(BaseModel):
     helpful_rating: str
+    helpful_comment: Optional[str] = None

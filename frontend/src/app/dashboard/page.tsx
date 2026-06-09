@@ -7,11 +7,13 @@ import { motion } from "motion/react";
 import {
   Mic, CheckCircle2, Target,
   MoreHorizontal, Trash2, ArrowUpRight, ArrowRight,
-  BookOpen, Zap, Users, Play,
+  BookOpen, Zap, Users, Play, BarChart2,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import EmptyState from "@/components/EmptyState";
 import DeleteDialog from "@/components/DeleteDialog";
+import PilotChecklist from "@/components/PilotChecklist";
+import SkillTrendCard from "@/components/SkillTrendCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +29,7 @@ import { getSpeechStatusConfig } from "@/lib/debateHelpers";
 import DashboardMissionPanel, { DashboardMissionPanelSkeleton } from "@/components/DashboardMissionPanel";
 import TrainingLoopMap, { DEFAULT_LOOP_NODES } from "@/components/TrainingLoopMap";
 import type { LoopNodeDef, LoopNodeStatus } from "@/components/TrainingLoopMap";
-import type { Speech, ProgressSummary } from "@/types";
+import type { Speech, ProgressSummary, PilotSummary } from "@/types";
 
 // ── Derive TrainingLoopMap nodes from real progress data ───────────────────────
 
@@ -211,14 +213,15 @@ function SpeechSkeleton() {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [userId,    setUserId]    = useState<string | null>(null);
-  const [speeches,  setSpeeches]  = useState<Speech[]>([]);
-  const [progress,  setProgress]  = useState<ProgressSummary | null>(null);
-  const [loading,   setLoading]   = useState(true);
-  const [err,       setErr]       = useState("");
-  const [del,       setDel]       = useState<Speech | null>(null);
-  const [deleting,  setDeleting]  = useState(false);
-  const [deleteErr, setDeleteErr] = useState("");
+  const [userId,       setUserId]       = useState<string | null>(null);
+  const [speeches,     setSpeeches]     = useState<Speech[]>([]);
+  const [progress,     setProgress]     = useState<ProgressSummary | null>(null);
+  const [pilotSummary, setPilotSummary] = useState<PilotSummary | null>(null);
+  const [loading,      setLoading]      = useState(true);
+  const [err,          setErr]          = useState("");
+  const [del,          setDel]          = useState<Speech | null>(null);
+  const [deleting,     setDeleting]     = useState(false);
+  const [deleteErr,    setDeleteErr]    = useState("");
 
   useEffect(() => {
     createClient().auth.getUser()
@@ -226,7 +229,7 @@ export default function DashboardPage() {
         if (!data.user) { router.replace("/login"); return; }
         setUserId(data.user.id);
 
-        // Fetch speeches and progress in parallel
+        // Fetch speeches, progress, and pilot summary in parallel
         const [speechesData, progressData] = await Promise.all([
           apiFetch<Speech[]>(`/speeches?user_id=${data.user.id}`),
           apiFetch<ProgressSummary>(`/users/${data.user.id}/progress`),
@@ -234,6 +237,12 @@ export default function DashboardPage() {
 
         setSpeeches(speechesData);
         setProgress(progressData);
+
+        // Pilot summary is best-effort — don't block the page if it fails
+        try {
+          const pilotData = await apiFetch<PilotSummary>(`/users/${data.user.id}/pilot-summary`);
+          setPilotSummary(pilotData);
+        } catch { /* non-critical */ }
       })
       .catch(() => setErr("Could not load your data. Please refresh and try again."))
       .finally(() => setLoading(false));
@@ -250,6 +259,10 @@ export default function DashboardPage() {
       // Refresh progress
       const progressData = await apiFetch<ProgressSummary>(`/users/${userId}/progress`);
       setProgress(progressData);
+      try {
+        const pilotData = await apiFetch<PilotSummary>(`/users/${userId}/pilot-summary`);
+        setPilotSummary(pilotData);
+      } catch { /* non-critical */ }
       setDel(null);
     } catch (e: unknown) {
       setDeleteErr(e instanceof Error ? e.message : "Could not delete this session. Please refresh and try again.");
@@ -304,6 +317,26 @@ export default function DashboardPage() {
                   <span className="text-xs text-ink-faint">+{progress.badges.length - 6} more</span>
                 )}
               </div>
+            </motion.div>
+          )}
+
+          {/* ── Pilot Checklist — replaces the old onboarding card for returning users ── */}
+          {!loading && progress && progress.drill_attempts_count > 0 && (
+            <motion.div variants={staggerChild}>
+              <Card className="border-lav/20 bg-lav/5">
+                <CardContent className="px-5 py-5">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <BarChart2 size={14} className="text-lav" />
+                      <p className="text-sm font-semibold text-lav">Practice loop progress</p>
+                    </div>
+                    <Link href="/pilot" className="text-[10px] font-medium text-lav/70 transition-colors hover:text-lav">
+                      View full analytics →
+                    </Link>
+                  </div>
+                  <PilotChecklist progress={progress} pilot={pilotSummary} />
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 
@@ -497,6 +530,31 @@ export default function DashboardPage() {
                   )}
                 </CardContent>
               </Card>
+            </motion.div>
+          )}
+
+          {/* Skill Trend Cards — show when we have trend data and 2+ feedback reports */}
+          {!loading && pilotSummary?.skill_trends && progress && progress.feedback_ready_count >= 2 && (
+            <motion.div variants={staggerChild} className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-eyebrow text-ink-subtle">Skill Trends</p>
+                <span className="rounded-full border border-hairline bg-surface-2 px-1.5 py-0.5 text-xs text-ink-faint">
+                  vs previous speech
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {[
+                  { key: "clash",            label: "Clash",           icon: "⚔", max: 20 },
+                  { key: "weighing",         label: "Impact Weighing", icon: "⚖", max: 20 },
+                  { key: "extensions",       label: "Extensions",      icon: "↗", max: 20 },
+                  { key: "drops",            label: "Drop Prevention", icon: "🛡", max: 20 },
+                  { key: "judge_adaptation", label: "Judge Adapt.",    icon: "👁", max: 20 },
+                ].map(({ key, label, icon, max }) => {
+                  const trend = pilotSummary.skill_trends![key as keyof typeof pilotSummary.skill_trends];
+                  if (!trend || trend.trend === "no_data") return null;
+                  return <SkillTrendCard key={key} label={label} icon={icon} max={max} trend={trend} />;
+                })}
+              </div>
             </motion.div>
           )}
 

@@ -11,6 +11,7 @@ from app.services.deterministic_scoring import (
     calculate_rubric_scores,
     compute_report_fingerprint,
 )
+from app.services.product_events import track_product_event
 from app.services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -349,6 +350,12 @@ async def generate_feedback_report(speech_id: str, user_id: str = Query(...)) ->
         supabase.table("speeches").update({"status": "done"}).eq("id", speech_id).execute()
 
         logger.info("generate_feedback: done | speech_id=%s overall_score=%d", speech_id, derived_score)
+        track_product_event(
+            user_id=user_id,
+            event_name="speech_analyzed",
+            speech_id=speech_id,
+            metadata={"overall_score": derived_score},
+        )
         return result.data[0]
     except Exception as exc:
         logger.error(
@@ -421,6 +428,12 @@ async def get_feedback(speech_id: str, user_id: str = Query(...)) -> FeedbackRep
                 )
                 report["overall_score"] = recomputed_overall
 
+        # Track feedback viewed event (best-effort)
+        track_product_event(
+            user_id=user_id,
+            event_name="feedback_viewed",
+            speech_id=speech_id,
+        )
         return report
     except HTTPException:
         raise
@@ -456,17 +469,21 @@ async def update_feedback_rating(
         raise HTTPException(status_code=500, detail="Failed to verify speech ownership") from exc
 
     # 2. Update feedback rating
-    valid_ratings = {"helpful", "not_helpful"}
+    valid_ratings = {"helpful", "somewhat", "not_helpful"}
     if body.helpful_rating not in valid_ratings:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid rating. Must be one of: {', '.join(valid_ratings)}",
         )
 
+    update_payload: dict = {"helpful_rating": body.helpful_rating}
+    if body.helpful_comment is not None:
+        update_payload["helpful_comment"] = body.helpful_comment
+
     try:
         result = (
             supabase.table("feedback_reports")
-            .update({"helpful_rating": body.helpful_rating})
+            .update(update_payload)
             .eq("speech_id", speech_id)
             .execute()
         )
@@ -476,6 +493,13 @@ async def update_feedback_rating(
             "update_feedback_rating: success | speech_id=%s rating=%s",
             speech_id,
             body.helpful_rating,
+        )
+        # Track analytics event (best-effort)
+        track_product_event(
+            user_id=user_id,
+            event_name="feedback_rated",
+            speech_id=speech_id,
+            metadata={"rating": body.helpful_rating},
         )
         return result.data[0]
     except HTTPException:

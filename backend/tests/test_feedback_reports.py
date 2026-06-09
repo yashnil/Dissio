@@ -833,3 +833,112 @@ def test_generate_rebuttal_speech():
     )
     assert body["overall_score"] == score_sum
     assert body["overall_score"] > 0  # Should have reasonable baseline scores
+
+
+# ── Feedback rating tests ──────────────────────────────────────────────────────
+
+def _speech_check_mock(found: bool = True):
+    m = MagicMock()
+    m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
+        [{"id": SPEECH_ID}] if found else []
+    )
+    return m
+
+
+def _rating_update_mock(rating: str = "helpful"):
+    rated_row = {**FAKE_FEEDBACK_ROW, "helpful_rating": rating}
+    m = MagicMock()
+    m.update.return_value.eq.return_value.execute.return_value.data = [rated_row]
+    return m
+
+
+def test_update_feedback_rating_helpful():
+    """PATCH /speeches/{id}/feedback/rating accepts 'helpful'."""
+    mock_sb = MagicMock()
+    mock_sb.table.side_effect = [_speech_check_mock(), _rating_update_mock("helpful")]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb), \
+         patch("app.api.feedback_reports.track_product_event"):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "helpful"},
+        )
+    assert response.status_code == 200
+    assert response.json()["helpful_rating"] == "helpful"
+
+
+def test_update_feedback_rating_somewhat():
+    """PATCH /speeches/{id}/feedback/rating accepts 'somewhat'."""
+    mock_sb = MagicMock()
+    mock_sb.table.side_effect = [_speech_check_mock(), _rating_update_mock("somewhat")]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb), \
+         patch("app.api.feedback_reports.track_product_event"):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "somewhat"},
+        )
+    assert response.status_code == 200
+    assert response.json()["helpful_rating"] == "somewhat"
+
+
+def test_update_feedback_rating_not_helpful():
+    """PATCH /speeches/{id}/feedback/rating accepts 'not_helpful'."""
+    mock_sb = MagicMock()
+    mock_sb.table.side_effect = [_speech_check_mock(), _rating_update_mock("not_helpful")]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb), \
+         patch("app.api.feedback_reports.track_product_event"):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "not_helpful"},
+        )
+    assert response.status_code == 200
+
+
+def test_update_feedback_rating_invalid():
+    """PATCH /speeches/{id}/feedback/rating rejects unknown values."""
+    mock_sb = MagicMock()
+    mock_sb.table.side_effect = [_speech_check_mock()]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "super_helpful"},
+        )
+    assert response.status_code == 400
+
+
+def test_update_feedback_rating_with_comment():
+    """PATCH /speeches/{id}/feedback/rating saves optional comment."""
+    rated_row = {**FAKE_FEEDBACK_ROW, "helpful_rating": "somewhat", "helpful_comment": "Feedback was vague."}
+    mock_sb = MagicMock()
+    update_mock = MagicMock()
+    update_mock.update.return_value.eq.return_value.execute.return_value.data = [rated_row]
+    mock_sb.table.side_effect = [_speech_check_mock(), update_mock]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb), \
+         patch("app.api.feedback_reports.track_product_event"):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "somewhat", "helpful_comment": "Feedback was vague."},
+        )
+    assert response.status_code == 200
+
+    # Verify the update call included the comment
+    update_call_payload = update_mock.update.call_args[0][0]
+    assert update_call_payload["helpful_rating"] == "somewhat"
+    assert update_call_payload["helpful_comment"] == "Feedback was vague."
+
+
+def test_update_feedback_rating_speech_not_found():
+    """Returns 404 when speech does not belong to user."""
+    mock_sb = MagicMock()
+    mock_sb.table.side_effect = [_speech_check_mock(found=False)]
+
+    with patch("app.api.feedback_reports.get_supabase", return_value=mock_sb):
+        response = client.patch(
+            f"/speeches/{SPEECH_ID}/feedback/rating?user_id={USER_ID}",
+            json={"helpful_rating": "helpful"},
+        )
+    assert response.status_code == 404
