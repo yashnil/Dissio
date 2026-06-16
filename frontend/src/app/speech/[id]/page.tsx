@@ -14,14 +14,16 @@ import AppShell from "@/components/shell/AppShell";
 import SpeechReportWorkspace from "@/components/speech/SpeechReportWorkspace";
 import SpeechProcessingWorkspace from "@/components/speech/SpeechProcessingWorkspace";
 import SpeechCaptureWorkspace from "@/components/speech/SpeechCaptureWorkspace";
+import SpeechLoadingState from "@/components/speech/SpeechLoadingState";
+import SpeechNotFoundState from "@/components/speech/SpeechNotFoundState";
+import SpeechFailureState from "@/components/speech/SpeechFailureState";
 import { StatusBadge, WorkspaceCard, getVerifiedOverallScore } from "@/components/speech/reportPrimitives";
 import WorkflowStepper from "@/components/WorkflowStepper";
 import { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import ReportVerdictPanel from "@/components/ReportVerdictPanel";
 import DeleteDialog from "@/components/DeleteDialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CardContent } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
 import { staggerParent, staggerChild } from "@/lib/motion";
@@ -521,30 +523,17 @@ export default function SpeechPage() {
 
   // ── States ─────────────────────────────────────────────────────────────────
 
-  if (pageLoad) {
+  if (pageLoad) return <SpeechLoadingState />;
+  if (pageErr) {
     return (
-      <AppShell maxWidth="full" bare>
-          <div className="mx-auto flex max-w-5xl flex-col gap-5 px-6 py-9">
-            <Skeleton className="h-6 w-48 rounded-lg" />
-            <Skeleton className="h-4 w-60 rounded-lg" />
-            <Skeleton className="h-8 w-full rounded-full" />
-            {[1, 2].map((i) => (
-              <Card key={i}><CardContent className="py-8"><Skeleton className="h-20 w-full rounded-lg" /></CardContent></Card>
-            ))}
-          </div>
-      </AppShell>
+      <SpeechFailureState
+        message={pageErr}
+        onRetry={() => window.location.reload()}
+        retryLabel="Reload"
+      />
     );
   }
-
-  if (pageErr || !speech) {
-    return (
-      <AppShell maxWidth="full" bare>
-          <div className="mx-auto max-w-5xl px-6 py-16">
-            <p className="text-sm text-danger">{pageErr || "Speech not found."}</p>
-          </div>
-      </AppShell>
-    );
-  }
+  if (!speech) return <SpeechNotFoundState />;
 
   // ── Computed ───────────────────────────────────────────────────────────────
 
