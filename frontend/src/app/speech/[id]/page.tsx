@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Check, ChevronDown, ChevronUp, FileText,
+  Check, FileText,
   Mic, Pencil, RefreshCw, Trash2, Upload, ThumbsUp, ThumbsDown, Target, Copy,
   ShieldAlert, Sparkles, Share2, Printer, ArrowRight, Swords,
 } from "lucide-react";
@@ -12,6 +12,11 @@ import { useCopy } from "@/lib/useCopy";
 import { deriveAnalysisRecoveryState, isJobActive } from "@/lib/jobHelpers";
 import AppShell from "@/components/shell/AppShell";
 import SpeechReportNav from "@/components/speech/SpeechReportNav";
+import {
+  StepHeader, Collapsible, InlineAlert, StatusBadge, CoachDiagnosis, WorkspaceCard,
+  FlowSummary, TopIssueCoachNote, FlowCoachNote, FlowLensNote, ContextualHelp,
+  getVerifiedOverallScore, isReportStale,
+} from "@/components/speech/reportPrimitives";
 import WorkflowStepper from "@/components/WorkflowStepper";
 import RecordingStudio from "@/components/RecordingStudio";
 import UploadDropzone from "@/components/UploadDropzone";
@@ -29,7 +34,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { fadeUp, staggerParent, staggerChild, T, EASE } from "@/lib/motion";
+import { fadeUp, staggerParent, staggerChild, T } from "@/lib/motion";
 import DrillCard from "@/components/DrillCard";
 import FlowTable from "@/components/FlowTable";
 import PracticeLoopCTA from "@/components/PracticeLoopCTA";
@@ -47,11 +52,12 @@ import BlockCoveragePanel from "@/components/BlockCoveragePanel";
 import { logEvent } from "@/lib/analytics";
 import { deriveNextBestAction } from "@/lib/blockfileHelpers";
 import { formatPracticePlan, copyToClipboard } from "@/lib/reportHelpers";
-import { getCoachNote, deriveFlowCoachNoteType, getPrimaryIssue, deriveEvidenceRiskSummary } from "@/lib/debateHelpers";
+import { deriveEvidenceRiskSummary } from "@/lib/debateHelpers";
 import { initEditArgs, isFlowCorrectedAndNeedsRegen } from "@/lib/flowEditHelpers";
 import type { AnalysisJob, AnalyzeResponse, ArgumentItem, ArgumentMap, DeliveryMetrics, Drill, DrillStatus, FeedbackReport, Speech, Transcript, Workout, BlockCoverageResponse } from "@/types";
-import type { DebateIssue, ClaimEvidenceCheck, EvidenceCheckResult, EvidenceDocument } from "@/types";
+import type { ClaimEvidenceCheck, EvidenceCheckResult, EvidenceDocument } from "@/types";
 import type { RecordState } from "@/components/RecordingStudio";
+import { useRecorder } from "@/hooks/useRecorder";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -68,9 +74,6 @@ const MSG_FLOW       = ["Finding claims and warrants", "Mapping evidence and imp
 const MSG_FEEDBACK   = ["Reading your speech", "Mapping arguments", "Evaluating the case", "Building your coaching report"];
 const MSG_DRILLS     = ["Reviewing your feedback", "Identifying skill gaps", "Creating practice drills"];
 const MSG_UNIFIED_ANALYSIS = ["Reading your speech", "Mapping arguments", "Building your flow", "Evaluating the case", "Creating your coaching report"];
-
-// Current scoring version - should match backend SCORING_VERSION
-const CURRENT_SCORING_VERSION = "pf_rubric_v3_recalibrated_2026_06_04";
 
 const STAGE_MESSAGES: Record<"transcript" | "flow" | "feedback", { title: string; messages: string[] }> = {
   transcript: {
@@ -96,372 +99,6 @@ function validateFile(f: File): string | null {
   return null;
 }
 
-function getBestMime(): { mimeType: string; ext: string } {
-  if (typeof MediaRecorder === "undefined") return { mimeType: "", ext: "webm" };
-  for (const c of [
-    { mimeType: "audio/webm;codecs=opus", ext: "webm" },
-    { mimeType: "audio/webm",             ext: "webm" },
-    { mimeType: "audio/ogg;codecs=opus",  ext: "ogg"  },
-    { mimeType: "audio/mp4",              ext: "mp4"  },
-  ]) { if (MediaRecorder.isTypeSupported(c.mimeType)) return c; }
-  return { mimeType: "", ext: "webm" };
-}
-
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-function StepHeader({ n, title, done, aside }: {
-  n?: number; title: string; done: boolean; aside?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2.5">
-        {(done || n !== undefined) && (
-          <AnimatePresence mode="wait">
-            {done ? (
-              <motion.span
-                key="done"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={T.snap}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-lav text-white"
-              >
-                <Check size={10} strokeWidth={2.5} />
-              </motion.span>
-            ) : (
-              <motion.span
-                key="pending"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={T.snap}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border border-hairline-strong text-[11px] font-bold text-ink-faint"
-                style={{ fontFamily: "var(--font-jetbrains-mono)" }}
-              >
-                {n}
-              </motion.span>
-            )}
-          </AnimatePresence>
-        )}
-        <p className="text-heading text-ink">{title}</p>
-      </div>
-      {aside}
-    </div>
-  );
-}
-
-function Collapsible({ label, children, open: defaultOpen = false }: {
-  label: string; children: React.ReactNode; open?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="border-t border-hairline">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between py-3 text-left"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="section-stamp">{label}</span>
-        <motion.span
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={T.fast}
-        >
-          <ChevronDown size={12} className="text-ink-faint" />
-        </motion.span>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: EASE }}
-            className="overflow-hidden"
-          >
-            <div className="pb-4">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function InlineAlert({ variant, children }: { variant: "danger" | "warn"; children: React.ReactNode }) {
-  const s = variant === "danger"
-    ? "border-danger/20 bg-danger/5 text-danger/90"
-    : "border-warn/20 bg-warn/5 text-warn/90";
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={T.base}
-      className={`flex items-start gap-2 rounded-lg border px-4 py-3 text-sm ${s}`}
-    >
-      <span className="mt-0.5 shrink-0">⚠</span>
-      <p>{children}</p>
-    </motion.div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  type V = "default" | "indigo" | "green" | "amber" | "red";
-  const MAP: Record<string, [string, V]> = {
-    pending:      ["Pending",      "default"],
-    transcribing: ["Transcribing", "indigo" ],
-    analyzing:    ["Analyzing",    "amber"  ],
-    done:         ["Complete",     "green"  ],
-    error:        ["Error",        "red"    ],
-  };
-  const [label, variant] = MAP[status] ?? [status, "default" as V];
-  return <Badge variant={variant} className="shrink-0">{label}</Badge>;
-}
-
-function CoachDiagnosis({ category, items, label }: { category: string; items: string[]; label: string }) {
-  if (!items || items.length === 0) return null;
-
-  // Determine status based on content
-  const rawText = items.join(" ").toLowerCase();
-  let status: "strong" | "needs-work" | "missing";
-  let statusColor: string;
-
-  if (rawText.includes("none") || rawText.includes("absent") || rawText.includes("missing") || items.length === 0) {
-    status = "missing";
-    statusColor = "text-danger";
-  } else if (rawText.includes("thin") || rawText.includes("weak") || rawText.includes("unclear")) {
-    status = "needs-work";
-    statusColor = "text-warn";
-  } else {
-    status = "strong";
-    statusColor = "text-ok";
-  }
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-ink">{label}</p>
-        <span className={`text-xs font-medium ${statusColor} capitalize`}>
-          {status === "needs-work" ? "Needs Work" : status === "missing" ? "Missing" : "Strong"}
-        </span>
-      </div>
-
-      {/* Display actual diagnostics from LLM (includes topic-aware examples) */}
-      <div className="flex flex-col gap-2">
-        {items.map((item, i) => (
-          <p key={i} className="text-sm leading-relaxed text-ink-muted whitespace-pre-wrap">{item}</p>
-        ))}
-      </div>
-
-      {/* Disclaimer for examples */}
-      {items.some(item => item.toLowerCase().includes("before:") || item.toLowerCase().includes("after:")) && (
-        <div className="flex items-start gap-2 rounded-md border border-amber/20 bg-amber/5 px-3 py-2">
-          <p className="text-xs text-amber">⚠ Model example only — adapt to your arguments, don't copy word-for-word</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Wraps a workspace section card — animates in when it first appears */
-function WorkspaceCard({ children, glow }: { children: React.ReactNode; glow?: boolean }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: EASE }}
-    >
-      <Card
-        className={glow ? "beam-top" : undefined}
-        style={glow ? { boxShadow: "0 0 40px -12px oklch(0.510 0.156 278 / 0.18)" } : undefined}
-      >
-        {children}
-      </Card>
-    </motion.div>
-  );
-}
-
-
-
-// ── Flow Summary Helper ────────────────────────────────────────────────────────
-
-function FlowSummary({ argMap }: { argMap: ArgumentMap }) {
-  const offenseArgs = argMap.arguments.filter(a => a.argument_type === "offense");
-  const allIssues = argMap.arguments.flatMap(a => a.issues);
-  const warrantIssues = allIssues.filter(i => i.toLowerCase().includes("warrant")).length;
-  const impactIssues = allIssues.filter(i => i.toLowerCase().includes("impact")).length;
-  const evidenceIssues = allIssues.filter(i => i.toLowerCase().includes("evidence") || i.toLowerCase().includes("unsupported")).length;
-
-  // Find strongest argument (highest confidence, offense type preferred)
-  const strongestArg = argMap.arguments.reduce((best, curr) => {
-    if (!best) return curr;
-    const currScore = (curr.confidence ?? 0) + (curr.argument_type === "offense" ? 0.1 : 0);
-    const bestScore = (best.confidence ?? 0) + (best.argument_type === "offense" ? 0.1 : 0);
-    return currScore > bestScore ? curr : best;
-  }, argMap.arguments[0]);
-
-  // Determine most common weakness
-  let commonWeakness = "";
-  if (warrantIssues > Math.max(impactIssues, evidenceIssues)) {
-    commonWeakness = "Warranting";
-  } else if (impactIssues > Math.max(warrantIssues, evidenceIssues)) {
-    commonWeakness = "Impact development";
-  } else if (evidenceIssues > 0) {
-    commonWeakness = "Evidence connection";
-  } else if (allIssues.length > 0) {
-    commonWeakness = "Argument structure";
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <div className="flex flex-col gap-1 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-        <p className="text-xs text-ink-faint">Total Arguments</p>
-        <p className="text-2xl font-bold text-ink">{argMap.arguments.length}</p>
-        <p className="text-xs text-ink-subtle">{offenseArgs.length} offense</p>
-      </div>
-
-      {strongestArg && (
-        <div className="flex flex-col gap-1 rounded-lg border border-ok/20 bg-ok/5 px-4 py-3">
-          <p className="text-xs text-ok">Strongest Argument</p>
-          <p className="text-sm font-semibold text-ink line-clamp-2">{strongestArg.label}</p>
-        </div>
-      )}
-
-      {commonWeakness && (
-        <div className="flex flex-col gap-1 rounded-lg border border-amber/20 bg-amber/5 px-4 py-3">
-          <p className="text-xs text-amber">Most Common Issue</p>
-          <p className="text-sm font-semibold text-ink">{commonWeakness}</p>
-          <p className="text-xs text-ink-subtle">{allIssues.length} total issues</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Coach annotation sub-components ───────────────────────────────────────────
-
-/**
- * Renders a CoachMarginNote for the highest-severity structured issue.
- * Shows nothing if no structured issues exist.
- */
-function TopIssueCoachNote({ issues }: { issues?: DebateIssue[] }) {
-  const top = getPrimaryIssue(issues);
-  if (!top) return null;
-  const cfg = getCoachNote(top.issue_type);
-  if (!cfg) return null;
-  return <CoachMarginNote type={cfg.type} note={cfg.note} />;
-}
-
-/**
- * Renders a CoachMarginNote derived from the argument map's most common issue.
- * Only appears when at least one argument has a flagged issue.
- * Provides a flow-level annotation above the FlowTable.
- */
-function FlowCoachNote({ args }: { args: Array<{ issues: string[] }> }) {
-  const issueType = deriveFlowCoachNoteType(args);
-  if (!issueType) return null;
-  const cfg = getCoachNote(issueType);
-  if (!cfg) return null;
-  return <CoachMarginNote type={cfg.type} note={cfg.note} label="Flow note" />;
-}
-
-const LENS_NOTE_TEXT: Record<JudgeViewMode, string> = {
-  coach: "Coach lens — showing fix actions and drill targets for each argument.",
-  lay:   "Lay lens — highlighting impact clarity, persuasion, and judge comprehension.",
-  flow:  "Flow lens — highlighting dropped arguments, extensions, and warrant depth.",
-  tech:  "Tech lens — highlighting evidence quality, warrant support, and weighing.",
-};
-
-function FlowLensNote({ judgeMode }: { judgeMode: JudgeViewMode }) {
-  const isDetailLens = judgeMode === "flow" || judgeMode === "tech";
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-lav/10 bg-lav/5 px-4 py-3 text-xs">
-      <p className="text-ink-subtle">{LENS_NOTE_TEXT[judgeMode]}</p>
-      <div className="flex flex-col gap-1 border-t border-lav/10 pt-2">
-        <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-          <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Offense</span> = winning argument</span>
-          <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Defense</span> = answers opponent</span>
-          <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Weighing</span> = impact comparison</span>
-        </div>
-        {isDetailLens && (
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 pt-0.5">
-            <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Claim</span> = what you argue</span>
-            <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Warrant</span> = why it&apos;s true</span>
-            <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Evidence</span> = support</span>
-            <span className="text-ink-faint"><span className="font-semibold text-ink-subtle">Impact</span> = why it matters</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Contextual help panel ─────────────────────────────────────────────────────
-
-function ContextualHelp({ question, children }: { question: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen((v) => !v)}
-      className="flex w-full items-start gap-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2.5 text-left hover:border-hairline-strong hover:bg-surface-3 transition-colors"
-    >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-lav/30 text-[9px] font-bold text-lav">?</span>
-      <div className="flex flex-col gap-1 flex-1 min-w-0">
-        <span className="text-xs font-medium text-ink-subtle">{question}</span>
-        {open && (
-          <p className="text-[11px] leading-relaxed text-ink-faint mt-0.5">{children}</p>
-        )}
-      </div>
-      <span className="shrink-0 text-ink-faint mt-0.5">
-        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-      </span>
-    </button>
-  );
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/**
- * Defensively recompute overall score from visible dimension scores.
- * This ensures the displayed overall score always matches the sum of dimension bars.
- */
-function getVerifiedOverallScore(feedback: FeedbackReport | null): number | null {
-  if (!feedback?.scores) return feedback?.overall_score ?? null;
-
-  const sum =
-    feedback.scores.clash +
-    feedback.scores.weighing +
-    feedback.scores.extensions +
-    feedback.scores.drops +
-    feedback.scores.judge_adaptation;
-
-  // If stored overall_score doesn't match, use recomputed sum
-  if (feedback.overall_score !== null && feedback.overall_score !== sum) {
-    console.warn(
-      `[Score Verification] Stored overall_score (${feedback.overall_score}) doesn't match dimension sum (${sum}). Using sum.`
-    );
-  }
-
-  return sum;
-}
-
-/**
- * Check if a feedback report is stale and needs regeneration.
- * Returns true if the report uses an older scoring version.
- */
-function isReportStale(feedback: FeedbackReport | null): boolean {
-  if (!feedback) return false;
-
-  // If raw_feedback contains scoring_version, check if it matches current
-  const reportVersion = feedback.raw_feedback?.scoring_version;
-  if (reportVersion && reportVersion !== CURRENT_SCORING_VERSION) {
-    return true;
-  }
-
-  // If scoring_version is missing (old reports), consider stale
-  if (!reportVersion) {
-    return true;
-  }
-
-  return false;
-}
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -475,11 +112,7 @@ export default function SpeechPage() {
   const [pageErr,    setPageErr]    = useState("");
 
   const [mode,       setMode]       = useState<"record" | "upload" | "paste">("record");
-  const [recState,   setRecState]   = useState<RecordState>("idle");
-  const [recSecs,    setRecSecs]    = useState(0);
-  const [recBlob,    setRecBlob]    = useState<Blob | null>(null);
-  const [recUrl,     setRecUrl]     = useState<string | null>(null);
-  const [recErr,     setRecErr]     = useState("");
+  const rec = useRecorder();
   const [selFile,    setSelFile]    = useState<File | null>(null);
   const [fileErr,    setFileErr]    = useState("");
   const [upErr,      setUpErr]      = useState("");
@@ -563,20 +196,11 @@ export default function SpeechPage() {
   const [blockCoverage, setBlockCoverage] = useState<BlockCoverageResponse | null | undefined>(undefined);
   const [hasBlockEntries, setHasBlockEntries] = useState(false);
 
-  const mrRef   = useRef<MediaRecorder | null>(null);
-  const chunks  = useRef<Blob[]>([]);
-  const stream  = useRef<MediaStream | null>(null);
-  const timer   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const extRef  = useRef("webm");
-  const urlRef  = useRef<string | null>(null);
   const autoAnalysisStartedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => () => {
-    if (timer.current) clearInterval(timer.current);
     if (pollRef.current) clearInterval(pollRef.current);
-    stream.current?.getTracks().forEach((t) => t.stop());
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
   }, []);
 
   useEffect(() => {
@@ -657,69 +281,59 @@ export default function SpeechPage() {
 
   // ── Recording ──────────────────────────────────────────────────────────────
 
-  async function startRec() {
-    setRecErr(""); setRecState("requesting");
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.current = s;
-      const { mimeType, ext } = getBestMime();
-      extRef.current = ext;
-      const mr = new MediaRecorder(s, mimeType ? { mimeType } : {});
-      mrRef.current = mr; chunks.current = [];
-      mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.current.push(e.data); };
-      mr.onstop = () => {
-        const blob = new Blob(chunks.current, { type: mimeType || "audio/webm" });
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-        const u = URL.createObjectURL(blob);
-        urlRef.current = u;
-        setRecBlob(blob); setRecUrl(u); setRecState("recorded");
-        stream.current?.getTracks().forEach((t) => t.stop());
-        stream.current = null;
-        if (timer.current) { clearInterval(timer.current); timer.current = null; }
-      };
-      mr.start();
-      setRecSecs(0);
-      timer.current = setInterval(() => setRecSecs((n) => n + 1), 1000);
-      setRecState("recording");
-    } catch (err: unknown) {
-      setRecState("error");
-      setRecErr(err instanceof Error && err.name === "NotAllowedError"
-        ? "Microphone permission denied." : "Could not access microphone.");
+  /** Map the useRecorder status onto the presentational RecordingStudio states. */
+  function recordStudioState(): RecordState {
+    switch (rec.state.status) {
+      case "idle": return "idle";
+      case "requesting-permission":
+      case "ready": return "requesting";
+      case "recording":
+      case "stopping": return "recording";
+      case "recorded":
+      case "playing": return "recorded";
+      case "uploading":
+      case "uploaded": return "uploading";
+      case "error": return "error";
+      default: return "idle";
     }
   }
 
-  function stopRec()    { mrRef.current?.stop(); }
+  async function handleStartRec() {
+    if (rec.state.status === "idle" || rec.state.status === "error") {
+      await rec.requestPermission();
+    }
+    rec.start();
+  }
 
-  function discardRec() {
-    if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; }
-    setRecUrl(null); setRecBlob(null); setRecState("idle"); setRecSecs(0); setRecErr("");
+  function handleDiscardRec() {
+    if (rec.state.blob && !window.confirm("Discard this recording? You haven't saved it yet.")) return;
+    rec.reset();
   }
 
   async function saveRec() {
-    if (!recBlob || !userId) return;
-    setRecState("uploading");
-    const path = `${userId}/${speechId}/audio.${extRef.current}`;
-    try {
+    if (!rec.state.blob || !userId) return;
+    const t = rec.state.blob.type;
+    const ext = t.includes("mp4") ? "mp4" : t.includes("ogg") ? "ogg" : "webm";
+    const durationSeconds = Math.round(rec.state.durationMs / 1000);
+    const path = `${userId}/${speechId}/audio.${ext}`;
+    let upd: Speech | null = null;
+    const ok = await rec.upload(async (blob) => {
       const sb = createClient();
-      const { error: se } = await sb.storage.from("audio").upload(path, recBlob, {
-        upsert: true, contentType: recBlob.type || "audio/webm",
+      const { error: se } = await sb.storage.from("audio").upload(path, blob, {
+        upsert: true, contentType: blob.type || "audio/webm",
       });
-      if (se) { setRecState("error"); setRecErr(`Upload failed: ${se.message}`); return; }
-      // Use recSecs (the live timer) as duration_seconds for recordings
-      const upd = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`, {
+      if (se) throw new Error(`Upload failed: ${se.message}`);
+      // Use the recorder's measured duration for recordings
+      upd = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audio_url: path, duration_seconds: recSecs > 0 ? recSecs : undefined }),
+        body: JSON.stringify({ audio_url: path, duration_seconds: durationSeconds > 0 ? durationSeconds : undefined }),
       });
       setSpeech(upd);
-      if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; }
-      setRecUrl(null); setRecBlob(null); setRecState("idle");
-
-      // Auto-start analysis after recording upload completes
-      // Pass the fresh upd object to avoid stale state race conditions
+    });
+    if (ok && upd) {
+      rec.reset();
+      // Auto-start analysis after recording upload completes (fresh upd avoids stale state)
       await maybeStartAutoAnalysis(upd);
-    } catch (err: unknown) {
-      setRecState("error");
-      setRecErr(err instanceof Error ? err.message : "Upload failed.");
     }
   }
 
@@ -808,7 +422,7 @@ export default function SpeechPage() {
       const upd = await apiFetch<Speech>(`/speeches/${speechId}/reset-audio?user_id=${userId}`, { method: "POST" });
       setSpeech(upd);
       setTranscript(null); setArgMap(null); setFeedback(null);
-      setRecState("idle"); setRecUrl(null); setRecBlob(null); setRecErr("");
+      rec.reset();
       autoAnalysisStartedRef.current = false; // Reset auto-analysis flag for new upload
     } catch {}
     finally { setResetting(false); }
@@ -1302,7 +916,7 @@ export default function SpeechPage() {
 
   const wc         = transcript?.word_count ?? null;
   const canAnalyze = wc !== null && wc >= 20;
-  const recBusy    = recState === "requesting" || recState === "recording" || recState === "uploading";
+  const recBusy    = rec.state.status === "requesting-permission" || rec.state.status === "recording" || rec.state.status === "stopping" || rec.state.status === "uploading";
 
   const date = new Date(speech.created_at).toLocaleDateString(undefined, {
     month: "long", day: "numeric", year: "numeric",
@@ -1486,10 +1100,10 @@ export default function SpeechPage() {
                           transition={T.fast}
                         >
                           <RecordingStudio
-                            recordState={recState} recordingSeconds={recSecs}
-                            recordObjectUrl={recUrl} recordError={recErr}
-                            onStartRecording={startRec} onStopRecording={stopRec}
-                            onSaveRecording={saveRec}  onDiscardRecording={discardRec}
+                            recordState={recordStudioState()} recordingSeconds={Math.round(rec.state.durationMs / 1000)}
+                            recordObjectUrl={rec.state.url} recordError={rec.state.error ?? ""}
+                            onStartRecording={handleStartRec} onStopRecording={rec.stop}
+                            onSaveRecording={saveRec}  onDiscardRecording={handleDiscardRec}
                           />
                         </motion.div>
                       ) : mode === "upload" ? (
