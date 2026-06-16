@@ -34,6 +34,7 @@ import { deriveWorkoutProgress, getNextIncompleteStep } from "@/lib/workoutHelpe
 import NextActionPanel from "@/components/dashboard/NextActionPanel";
 import QuickStartRow from "@/components/dashboard/QuickStartRow";
 import CoachingFocusCard from "@/components/dashboard/CoachingFocusCard";
+import RecentActivity from "@/components/dashboard/RecentActivity";
 import { selectNextAction } from "@/lib/dashboardHelpers";
 import { deriveDeliveryFocus, deliveryScoreColor, getPacingBandDisplay } from "@/lib/deliveryHelpers";
 import { deriveBlockReadiness } from "@/lib/blockfileHelpers";
@@ -319,6 +320,13 @@ export default function DashboardPage() {
                 skillAverages={progress.skill_averages}
                 feedbackReadyCount={progress.feedback_ready_count}
               />
+            </motion.div>
+          )}
+
+          {/* ── Recent activity — debate-native event stream ─────────── */}
+          {!loading && speeches.length > 0 && (
+            <motion.div variants={staggerChild}>
+              <RecentActivity speeches={speeches} />
             </motion.div>
           )}
 
