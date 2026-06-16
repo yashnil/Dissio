@@ -100,6 +100,30 @@
   --color-pro:    oklch(0.620 0.150 165);   /* teal-green  affirmative */
   --color-con:    oklch(0.600 0.180 25);    /* warm red    negative    */
 
+  /* ── Debate-semantic tokens — ONE shared vocabulary across the product ───── */
+  /* These map debate concepts to consistent colors so flow, report, drills,    */
+  /* progress, and evidence all speak the same visual language. Never use color */
+  /* as the sole signal — always pair with a label/icon.                        */
+  /* Flow argument status */
+  --color-flow-live:      var(--color-ok);          /* live / extended      */
+  --color-flow-contested: var(--color-warn);        /* contested / weak     */
+  --color-flow-dropped:   var(--color-danger);      /* dropped              */
+  /* Evidence integrity */
+  --color-ev-strong:      var(--color-ok);
+  --color-ev-weak:        var(--color-warn);
+  --color-ev-unverified:  var(--color-ink-subtle);
+  /* Content authorship / provenance (keep coach vs AI vs user distinguishable) */
+  --color-authored-coach: var(--color-cyan);
+  --color-authored-ai:    var(--color-lav);
+  --color-authored-user:  var(--color-ink);
+  /* Processing */
+  --color-proc-active:    var(--color-lav);
+  --color-proc-delayed:   var(--color-warn);
+  /* Skill trajectory */
+  --color-skill-up:       var(--color-ok);
+  --color-skill-down:     var(--color-danger);
+  --color-skill-nodata:   var(--color-ink-faint);
+
   /* ── Argument type colors (debate-specific, consistent) ─────────────────── */
   --color-blue:      oklch(0.560 0.150 250);
   --color-blue-hi:   oklch(0.720 0.120 250);
