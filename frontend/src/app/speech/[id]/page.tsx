@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -9,16 +9,12 @@ import {
   ShieldAlert, Sparkles, Share2, Printer,
 } from "lucide-react";
 import { useCopy } from "@/lib/useCopy";
-import { deriveAnalysisRecoveryState, isJobActive } from "@/lib/jobHelpers";
+import { deriveAnalysisRecoveryState } from "@/lib/jobHelpers";
 import AppShell from "@/components/shell/AppShell";
 import SpeechReportWorkspace from "@/components/speech/SpeechReportWorkspace";
 import SpeechProcessingWorkspace from "@/components/speech/SpeechProcessingWorkspace";
 import SpeechCaptureWorkspace from "@/components/speech/SpeechCaptureWorkspace";
-import {
-  StepHeader, InlineAlert, StatusBadge, CoachDiagnosis, WorkspaceCard,
-  FlowSummary, TopIssueCoachNote, FlowCoachNote, FlowLensNote, ContextualHelp,
-  getVerifiedOverallScore, isReportStale,
-} from "@/components/speech/reportPrimitives";
+import { StatusBadge, WorkspaceCard, getVerifiedOverallScore } from "@/components/speech/reportPrimitives";
 import WorkflowStepper from "@/components/WorkflowStepper";
 import { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import ReportVerdictPanel from "@/components/ReportVerdictPanel";
@@ -28,7 +24,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { staggerParent, staggerChild, T } from "@/lib/motion";
+import { staggerParent, staggerChild } from "@/lib/motion";
 import PracticeLoopCTA from "@/components/PracticeLoopCTA";
 import ImprovementComparisonCard from "@/components/ImprovementComparisonCard";
 import CoachMarginNote from "@/components/CoachMarginNote";
@@ -37,11 +33,12 @@ import ShareReportModal from "@/components/ShareReportModal";
 import { logEvent } from "@/lib/analytics";
 import { formatPracticePlan, copyToClipboard } from "@/lib/reportHelpers";
 import { deriveEvidenceRiskSummary } from "@/lib/debateHelpers";
-import type { AnalysisJob, AnalyzeResponse, ArgumentItem, ArgumentMap, DeliveryMetrics, Drill, DrillStatus, FeedbackReport, Speech, Transcript, Workout, BlockCoverageResponse } from "@/types";
+import type { AnalysisJob, ArgumentItem, ArgumentMap, DeliveryMetrics, Drill, DrillStatus, FeedbackReport, Speech, Transcript, Workout, BlockCoverageResponse } from "@/types";
 import type { ClaimEvidenceCheck, EvidenceCheckResult, EvidenceDocument } from "@/types";
 import type { RecordState } from "@/components/RecordingStudio";
 import { useRecorder } from "@/hooks/useRecorder";
 import { useSpeechUpload } from "@/hooks/useSpeechUpload";
+import { useSpeechProcessing, type SpeechAnalysisResults } from "@/hooks/useSpeechProcessing";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -75,27 +72,22 @@ export default function SpeechPage() {
   const [pasteErr,     setPasteErr]     = useState("");
 
   const [transcript,   setTranscript]   = useState<Transcript | null>(null);
-  const [transcribing, setTranscribing] = useState(false);
-  const [txErr,        setTxErr]        = useState("");
   const [argMap,       setArgMap]       = useState<ArgumentMap | null>(null);
-  const [genFlow,      setGenFlow]      = useState(false);
-  const [flowErr,      setFlowErr]      = useState("");
+  const genFlow = false;
   const [feedback,     setFeedback]     = useState<FeedbackReport | null>(null);
   const [genFb,        setGenFb]        = useState(false);
-  const [fbErr,        setFbErr]        = useState("");
+  const [, setFbErr] = useState("");
 
   // Unified analysis workflow state
-  const [analyzingUnified, setAnalyzingUnified] = useState(false);
-  const [unifiedAnalysisErr, setUnifiedAnalysisErr] = useState("");
-  const [analysisStage, setAnalysisStage] = useState<"transcript" | "flow" | "feedback" | null>(null);
+  const analyzingUnified = false; // legacy manual-analysis flag (job-based path active)
+  const analysisStage: "transcript" | "flow" | "feedback" | null = null;
 
   const [drills,        setDrills]        = useState<Drill[]>([]);
   const [genDrills,     setGenDrills]     = useState(false);
   const [drillErr,      setDrillErr]      = useState("");
   const [updatingDrill, setUpdatingDrill] = useState<string | null>(null);
 
-  const [ratingFeedback, setRatingFeedback] = useState(false);
-  const [feedbackRated, setFeedbackRated] = useState(false);
+  const [, setFeedbackRated] = useState(false);
   const [copyRFD, rfdCopied] = useCopy();
 
   const [showTableView, setShowTableView] = useState(false);
@@ -121,8 +113,6 @@ export default function SpeechPage() {
   const [evidenceDrillsDone, setEvidenceDrillsDone] = useState(false);
 
   // Job-based analysis state
-  const [activeJob, setActiveJob] = useState<AnalysisJob | null>(null);
-  const [retryingJob, setRetryingJob] = useState(false);
 
   // Flow edit state
   const [flowEditMode, setFlowEditMode] = useState(false);
@@ -147,12 +137,17 @@ export default function SpeechPage() {
   const [blockCoverage, setBlockCoverage] = useState<BlockCoverageResponse | null | undefined>(undefined);
   const [hasBlockEntries, setHasBlockEntries] = useState(false);
 
-  const autoAnalysisStartedRef = useRef(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current);
+  const applyResults = useCallback((r: SpeechAnalysisResults) => {
+    if (r.transcript) setTranscript(r.transcript);
+    if (r.argMap) setArgMap(r.argMap);
+    if (r.feedback) setFeedback(r.feedback);
+    if (r.drills) setDrills(r.drills);
   }, []);
+
+  const processing = useSpeechProcessing({
+    speechId, userId, hasFeedback: !!feedback, analyzing: analyzingUnified,
+    onResults: applyResults, onSpeechRefresh: setSpeech,
+  });
 
   useEffect(() => {
     createClient().auth.getUser()
@@ -217,17 +212,16 @@ export default function SpeechPage() {
         apiFetch<AnalysisJob[]>(`/speeches/${speechId}/jobs?user_id=${uid}`)
           .then((jobs) => {
             const state = deriveAnalysisRecoveryState(jobs, s.status);
-            if (state.type === "in_progress") {
-              setActiveJob(state.job);
-              startPollWithUid(state.job.id, uid);
-            } else if (state.type === "failed") {
-              setActiveJob(state.job);
+            if (state.type === "in_progress" || state.type === "failed") {
+              processing.resumeFromRecovery(state.job, state.type, uid);
             }
           })
           .catch(() => {});
       })
       .catch(() => setPageErr("Could not load your data. Please refresh and try again."))
       .finally(() => setPageLoad(false));
+    // processing.resumeFromRecovery is stable; effect runs once per speech load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speechId, router]);
 
   // ── Recording ──────────────────────────────────────────────────────────────
@@ -275,7 +269,7 @@ export default function SpeechPage() {
     if (ok && upd) {
       rec.reset();
       // Auto-start analysis after recording upload completes (fresh upd avoids stale state)
-      await maybeStartAutoAnalysis(upd);
+      await processing.autoStartAfterUpload(upd);
     }
   }
 
@@ -294,7 +288,7 @@ export default function SpeechPage() {
     if (upd) {
       setSpeech(upd);
       // Auto-start analysis after file upload completes (fresh upd avoids stale state)
-      await maybeStartAutoAnalysis(upd);
+      await processing.autoStartAfterUpload(upd);
     }
   }
 
@@ -327,74 +321,9 @@ export default function SpeechPage() {
       setSpeech(upd);
       setTranscript(null); setArgMap(null); setFeedback(null);
       rec.reset();
-      autoAnalysisStartedRef.current = false; // Reset auto-analysis flag for new upload
+      processing.resetAutoStart();
     } catch {}
     finally { setResetting(false); }
-  }
-
-  // ── Job-based analysis ─────────────────────────────────────────────────────
-
-  function startPollWithUid(jobId: string, uid: string) {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const job = await apiFetch<AnalysisJob>(`/jobs/${jobId}?user_id=${uid}`);
-        setActiveJob(job);
-        if (!isJobActive(job.status)) {
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
-          if (job.status === "succeeded") {
-            const [txData, argData, fbData, drillData] = await Promise.allSettled([
-              apiFetch<Transcript>(`/speeches/${speechId}/transcript?user_id=${uid}`),
-              apiFetch<ArgumentMap>(`/speeches/${speechId}/argument-map?user_id=${uid}`),
-              apiFetch<FeedbackReport>(`/speeches/${speechId}/feedback?user_id=${uid}`),
-              apiFetch<Drill[]>(`/speeches/${speechId}/drills?user_id=${uid}`),
-            ]);
-            if (txData.status === "fulfilled") setTranscript(txData.value);
-            if (argData.status === "fulfilled") setArgMap(argData.value);
-            if (fbData.status === "fulfilled") setFeedback(fbData.value);
-            if (drillData.status === "fulfilled") setDrills(drillData.value);
-            const updatedSpeech = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${uid}`).catch(() => null);
-            if (updatedSpeech) setSpeech(updatedSpeech);
-            setActiveJob(null);
-          }
-        }
-      } catch {}
-    }, 2000);
-  }
-
-  async function startJobAnalysis() {
-    if (!userId) return;
-    setUnifiedAnalysisErr("");
-    try {
-      const resp = await apiFetch<AnalyzeResponse>(
-        `/speeches/${speechId}/analyze?user_id=${userId}`,
-        { method: "POST" },
-      );
-      const job = await apiFetch<AnalysisJob>(`/jobs/${resp.job_id}?user_id=${userId}`);
-      setActiveJob(job);
-      if (isJobActive(job.status)) startPollWithUid(job.id, userId);
-    } catch (e: unknown) {
-      setUnifiedAnalysisErr(e instanceof Error ? e.message : "Analysis failed. Please try again.");
-    }
-  }
-
-  async function retryAnalysis() {
-    if (!activeJob || !userId) return;
-    setRetryingJob(true);
-    setUnifiedAnalysisErr("");
-    try {
-      const job = await apiFetch<AnalysisJob>(
-        `/jobs/${activeJob.id}/retry?user_id=${userId}`,
-        { method: "POST" },
-      );
-      setActiveJob(job);
-      if (isJobActive(job.status)) startPollWithUid(job.id, userId);
-    } catch (e: unknown) {
-      setUnifiedAnalysisErr(e instanceof Error ? e.message : "Retry failed. Please try again.");
-    } finally {
-      setRetryingJob(false);
-    }
   }
 
   // ── Flow correction ────────────────────────────────────────────────────────
@@ -441,193 +370,12 @@ export default function SpeechPage() {
 
   // ── AI operations ──────────────────────────────────────────────────────────
 
-  async function transcribe() {
-    if (!userId) return;
-    setTxErr(""); setTranscribing(true);
-    try { setTranscript(await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" })); }
-    catch (e: unknown) { setTxErr(e instanceof Error ? e.message : "Transcription failed."); }
-    finally { setTranscribing(false); }
-  }
-
-  async function generateFlow() {
-    if (!userId) return;
-    setFlowErr(""); setGenFlow(true);
-    try { setArgMap(await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments?user_id=${userId}`, { method: "POST" })); }
-    catch (e: unknown) { setFlowErr(e instanceof Error ? e.message : "Flow generation failed."); }
-    finally { setGenFlow(false); }
-  }
-
   async function generateFeedback() {
     if (!userId) return;
     setFbErr(""); setGenFb(true);
     try { setFeedback(await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback?user_id=${userId}`, { method: "POST" })); }
     catch (e: unknown) { setFbErr(e instanceof Error ? e.message : "Feedback generation failed."); }
     finally { setGenFb(false); }
-  }
-
-  // ── Unified Analysis Workflow ──────────────────────────────────────────────
-
-  async function analyzeMySpeech(options?: {
-    speechOverride?: Speech;
-    transcriptOverride?: Transcript | null;
-    autoStartedFromUpload?: boolean;
-  }) {
-    // Use fresh data if provided, otherwise fall back to React state
-    const activeSpeech = options?.speechOverride ?? speech;
-    if (!userId || !activeSpeech) return;
-    if (analyzingUnified) return; // Prevent double-clicks
-
-    const autoStarted = options?.autoStartedFromUpload ?? false;
-    console.log(`[Analyze] ${autoStarted ? 'Auto-started after upload' : 'Manual trigger'}, audio_url=${activeSpeech.audio_url ? 'exists' : 'missing'}`);
-
-    setUnifiedAnalysisErr("");
-    setAnalyzingUnified(true);
-    setAnalysisStage("transcript");
-
-    try {
-      // Track current state with local variables to avoid stale state bugs
-      let currentTranscript = options?.transcriptOverride ?? transcript;
-      let currentArgMap = argMap;
-      let currentFeedback = feedback;
-
-      // Step 1: Ensure transcript/text exists
-      if (!currentTranscript) {
-        if (activeSpeech.audio_url) {
-          setTxErr("");
-          console.log("[Analyze] Step 1: Generating transcript from audio_url=" + activeSpeech.audio_url);
-          try {
-            const txResult = await apiFetch<Transcript>(`/speeches/${speechId}/transcribe?user_id=${userId}`, { method: "POST" });
-            if (!txResult || !txResult.text) {
-              // If POST didn't return data, try GET
-              const fetchedTx = await apiFetch<Transcript>(`/speeches/${speechId}/transcript?user_id=${userId}`);
-              currentTranscript = fetchedTx;
-              setTranscript(fetchedTx);
-            } else {
-              currentTranscript = txResult;
-              setTranscript(txResult);
-            }
-            console.log("[Analyze] Step 1: Transcript ready, word_count=" + currentTranscript?.word_count);
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : "Transcription failed.";
-            console.error("[Analyze] Step 1 failed:", msg);
-            setTxErr(msg);
-            throw new Error(msg);
-          }
-        } else {
-          throw new Error("Add speech text or upload audio first.");
-        }
-      }
-
-      // Verify we have transcript before continuing
-      if (!currentTranscript || !currentTranscript.text) {
-        throw new Error("Could not prepare speech text. Please try again.");
-      }
-
-      // Step 2: Generate flow if missing
-      if (!currentArgMap) {
-        setAnalysisStage("flow");
-        setFlowErr("");
-        console.log("[Analyze] Step 2: Generating argument map...");
-        try {
-          const flowResult = await apiFetch<ArgumentMap>(`/speeches/${speechId}/extract-arguments?user_id=${userId}`, { method: "POST" });
-          if (!flowResult || !flowResult.arguments) {
-            // If POST didn't return data, try GET
-            const fetchedFlow = await apiFetch<ArgumentMap>(`/speeches/${speechId}/argument-map?user_id=${userId}`);
-            currentArgMap = fetchedFlow;
-            setArgMap(fetchedFlow);
-          } else {
-            currentArgMap = flowResult;
-            setArgMap(flowResult);
-          }
-          console.log("[Analyze] Step 2: Flow ready, arguments=" + currentArgMap?.arguments?.length);
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Flow generation failed.";
-          console.error("[Analyze] Step 2 failed:", msg);
-          setFlowErr(msg);
-          throw new Error(msg);
-        }
-      }
-
-      // Verify we have argument map before continuing
-      if (!currentArgMap) {
-        throw new Error("Could not generate argument flow. Please try again.");
-      }
-
-      // Step 3: Generate feedback if missing
-      if (!currentFeedback) {
-        setAnalysisStage("feedback");
-        setFbErr("");
-        console.log("[Analyze] Step 3: Generating feedback...");
-        try {
-          const fbResult = await apiFetch<FeedbackReport>(`/speeches/${speechId}/generate-feedback?user_id=${userId}`, { method: "POST" });
-          if (!fbResult || typeof fbResult.overall_score !== 'number') {
-            // If POST didn't return data, try GET
-            const fetchedFb = await apiFetch<FeedbackReport>(`/speeches/${speechId}/feedback?user_id=${userId}`);
-            currentFeedback = fetchedFb;
-            setFeedback(fetchedFb);
-          } else {
-            currentFeedback = fbResult;
-            setFeedback(fbResult);
-          }
-          console.log("[Analyze] Step 3: Feedback ready, score=" + currentFeedback?.overall_score);
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Feedback generation failed.";
-          console.error("[Analyze] Step 3 failed:", msg);
-          setFbErr(msg);
-          throw new Error(msg);
-        }
-      }
-
-      // Verify we have feedback
-      if (!currentFeedback) {
-        throw new Error("Could not generate coaching report. Please try again.");
-      }
-
-      // Success - all steps completed
-      console.log("[Analyze] ✓ All steps completed successfully");
-      setAnalysisStage(null);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Analysis failed. Please try again.";
-      console.error("[Analyze] Pipeline failed:", msg);
-      setUnifiedAnalysisErr(msg);
-    } finally {
-      setAnalyzingUnified(false);
-      setAnalysisStage(null);
-    }
-  }
-
-  /** Auto-start analysis after audio upload (called once per audio upload event) */
-  async function maybeStartAutoAnalysis(uploadedSpeech: Speech) {
-    // Guard against duplicate auto-analysis
-    if (autoAnalysisStartedRef.current) {
-      console.log("[AutoAnalyze] Already started, skipping");
-      return;
-    }
-
-    // Don't auto-analyze if already analyzing
-    if (analyzingUnified) {
-      console.log("[AutoAnalyze] Analysis already in progress, skipping");
-      return;
-    }
-
-    // Don't auto-analyze if feedback already exists
-    if (feedback) {
-      console.log("[AutoAnalyze] Feedback already exists, skipping");
-      return;
-    }
-
-    // Verify the uploaded speech actually has audio
-    if (!uploadedSpeech.audio_url) {
-      console.warn("[AutoAnalyze] Uploaded speech has no audio_url, skipping auto-analysis");
-      return;
-    }
-
-    // Mark as started to prevent duplicates
-    autoAnalysisStartedRef.current = true;
-    console.log("[AutoAnalyze] Starting job-based analysis, audio_url=" + uploadedSpeech.audio_url);
-
-    // Start the job-based analysis pipeline
-    await startJobAnalysis();
   }
 
   async function deleteSession() {
@@ -689,24 +437,6 @@ export default function SpeechPage() {
       });
       router.push(`/speech/${newSpeech.id}`);
     } catch { /* fallback: just go to new session */ router.push("/session"); }
-  }
-
-  async function rateFeedback(rating: "helpful" | "not_helpful") {
-    if (!userId || feedbackRated) return;
-    setRatingFeedback(true);
-    try {
-      const updated = await apiFetch<FeedbackReport>(
-        `/speeches/${speechId}/feedback/rating?user_id=${userId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ helpful_rating: rating }),
-        }
-      );
-      setFeedback(updated);
-      setFeedbackRated(true);
-    } catch {}
-    finally { setRatingFeedback(false); }
   }
 
   // ── Evidence support check ─────────────────────────────────────────────────
@@ -989,9 +719,9 @@ export default function SpeechPage() {
             ) : (
               <SpeechProcessingWorkspace
                 speech={speech} transcript={transcript} analyzingUnified={analyzingUnified}
-                activeJob={activeJob} canAnalyze={canAnalyze} startJobAnalysis={startJobAnalysis}
-                unifiedAnalysisErr={unifiedAnalysisErr} retryAnalysis={retryAnalysis}
-                retryingJob={retryingJob} analysisStage={analysisStage} argMap={argMap}
+                activeJob={processing.activeJob} canAnalyze={canAnalyze} startJobAnalysis={processing.startAnalysis}
+                unifiedAnalysisErr={processing.error} retryAnalysis={processing.retryAnalysis}
+                retryingJob={processing.isRetrying} analysisStage={analysisStage} argMap={argMap}
                 genFlow={genFlow} feedback={feedback} genFb={genFb} generateFeedback={generateFeedback}
                 judgeViewMode={judgeViewMode} setJudgeViewMode={setJudgeViewMode}
                 flowEditMode={flowEditMode} setFlowEditMode={setFlowEditMode} editingArgs={editingArgs}
