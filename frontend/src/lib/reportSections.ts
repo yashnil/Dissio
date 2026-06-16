@@ -10,6 +10,8 @@
 export type ReportSectionId =
   | "overview"
   | "flow"
+  | "ballot"
+  | "skills"
   | "drills"
   | "transcript";
 
@@ -20,12 +22,14 @@ export interface ReportSection {
   hint: string;
 }
 
-/** Canonical render/nav order. */
+/** Canonical nav order (Overview → Flow → Ballot → Skills → Transcript → Drills). */
 export const REPORT_SECTIONS: ReportSection[] = [
-  { id: "overview", label: "Overview", hint: "Verdict, ballot, and skills" },
+  { id: "overview", label: "Overview", hint: "Verdict and what to fix next" },
   { id: "flow", label: "Flow", hint: "Claim, warrant, evidence, impact" },
-  { id: "drills", label: "Drills", hint: "Practice built from this speech" },
+  { id: "ballot", label: "Ballot", hint: "How the judge would decide" },
+  { id: "skills", label: "Skills", hint: "Scored dimensions and why" },
   { id: "transcript", label: "Transcript", hint: "What you said, with timing" },
+  { id: "drills", label: "Drills", hint: "Practice built from this speech" },
 ];
 
 export interface ReportSectionFlags {
@@ -40,6 +44,8 @@ export function availableSections(flags: ReportSectionFlags): ReportSection[] {
   return REPORT_SECTIONS.filter((s) => {
     switch (s.id) {
       case "overview":
+      case "ballot": // ballot + skills live in the coaching report (feedback)
+      case "skills":
         return flags.hasFeedback;
       case "flow":
         return flags.hasFlow;

@@ -175,12 +175,12 @@ export default function SpeechReportWorkspace({
                       )}
 
                       {/* Judge Ballot */}
-                      <div className="flex flex-col gap-3">
+                      <div id="ballot" className="flex flex-col gap-3 scroll-mt-20">
                         <div className="section-stamp" style={{ color: "oklch(0.510 0.156 278 / 0.8)" }}>
                           <span className="h-1.5 w-1.5 rounded-full bg-lav flex-shrink-0" />
                           Judge Ballot
                         </div>
-                        <div className="rounded-xl border border-hairline bg-surface-2 p-4">
+                        <div id="skills" className="rounded-xl border border-hairline bg-surface-2 p-4 scroll-mt-20">
                           <ScoreBreakdown
                             scores={feedback.scores}
                             speechType={speech?.speech_type}

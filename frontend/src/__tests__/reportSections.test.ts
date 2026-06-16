@@ -5,12 +5,14 @@ import {
 } from "@/lib/reportSections";
 
 describe("REPORT_SECTIONS", () => {
-  it("is ordered Overview → Flow → Drills → Transcript", () => {
+  it("is ordered Overview → Flow → Ballot → Skills → Transcript → Drills", () => {
     expect(REPORT_SECTIONS.map((s) => s.id)).toEqual([
       "overview",
       "flow",
-      "drills",
+      "ballot",
+      "skills",
       "transcript",
+      "drills",
     ]);
   });
 });
@@ -23,17 +25,18 @@ describe("availableSections", () => {
       hasDrills: true,
       hasTranscript: false,
     });
-    expect(result.map((s) => s.id)).toEqual(["overview", "drills"]);
+    // feedback present → overview + ballot + skills; drills present too
+    expect(result.map((s) => s.id)).toEqual(["overview", "ballot", "skills", "drills"]);
   });
 
-  it("returns all when everything is present", () => {
+  it("returns all six when everything is present", () => {
     const result = availableSections({
       hasFeedback: true,
       hasFlow: true,
       hasDrills: true,
       hasTranscript: true,
     });
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(6);
   });
 
   it("returns none for an empty report", () => {
