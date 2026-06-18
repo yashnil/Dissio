@@ -1,18 +1,19 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import { Swords, ArrowRight, Target, RefreshCw, Pencil, FileText } from "lucide-react";
+import { Swords, ArrowRight, Target, RefreshCw, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CardContent } from "@/components/ui/card";
 import SpeechReportNav from "@/components/speech/SpeechReportNav";
 import {
-  StepHeader, Collapsible, InlineAlert, WorkspaceCard,
+  StepHeader, InlineAlert, WorkspaceCard,
   FlowSummary, TopIssueCoachNote, FlowLensNote, ContextualHelp, isReportStale,
 } from "@/components/speech/reportPrimitives";
 import ReportOverview from "@/components/speech/ReportOverview";
 import BallotDecision from "@/components/speech/BallotDecision";
 import SkillsWorkspace from "@/components/speech/SkillsWorkspace";
+import TranscriptReview from "@/components/speech/TranscriptReview";
 import FlowCanvas from "@/components/speech/FlowCanvas";
 import DrillCard from "@/components/DrillCard";
 import JudgeModeSelector, { type JudgeViewMode } from "@/components/JudgeModeSelector";
@@ -426,20 +427,11 @@ export default function SpeechReportWorkspace({
                 {transcript && (
                   <WorkspaceCard key="input-details">
                     <CardContent className="flex flex-col gap-3 px-5 py-5">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2">
-                          <FileText size={14} className="text-ink-subtle" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">View Speech Text</p>
-                          <p className="text-xs text-ink-faint">{transcript.word_count} words</p>
-                        </div>
-                      </div>
-                      <Collapsible label="Show full transcript">
-                        <div className="rounded-lg border border-hairline bg-surface-2 p-4">
-                          <p className="text-sm leading-relaxed text-ink whitespace-pre-wrap">{transcript.text}</p>
-                        </div>
-                      </Collapsible>
+                      <TranscriptReview
+                        transcript={transcript}
+                        audioUrl={speech?.audio_url}
+                        flowHref="#flow"
+                      />
                     </CardContent>
                   </WorkspaceCard>
                 )}
