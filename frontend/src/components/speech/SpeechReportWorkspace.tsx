@@ -11,8 +11,7 @@ import {
   FlowSummary, TopIssueCoachNote, FlowLensNote, ContextualHelp, isReportStale,
 } from "@/components/speech/reportPrimitives";
 import ScoreBreakdown from "@/components/ScoreBreakdown";
-import FlowBoard from "@/components/FlowBoard";
-import FlowTable from "@/components/FlowTable";
+import FlowCanvas from "@/components/speech/FlowCanvas";
 import DrillCard from "@/components/DrillCard";
 import JudgeModeSelector, { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import DeliveryCoachPanel, { DeliveryCoachPanelEmpty } from "@/components/DeliveryCoachPanel";
@@ -77,9 +76,9 @@ export default function SpeechReportWorkspace({
   speech, feedback, argMap, drills, transcript, userId, speechId, analyzingUnified,
   genFb, genDrills, drillErr, updatingDrill, workout, freshResults, savedChecks,
   blockCoverage, hasBlockEntries, deliveryLoaded, deliveryMetrics, judgeViewMode,
-  showTableView, flowEditMode, editingArgs, savingCorrection, correctionErr, regenErr,
+  flowEditMode, editingArgs, savingCorrection, correctionErr, regenErr,
   regenerating, setFeedbackRated, setWorkout, setBlockCoverage, setJudgeViewMode,
-  setFlowEditMode, setEditingArgs, setCorrectionErr, setShowTableView, generateFeedback,
+  setFlowEditMode, setEditingArgs, setCorrectionErr, generateFeedback,
   generateDrills, updateDrillStatus, saveFlowCorrection, regenerateFromFlow, startNewAttempt,
 }: SpeechReportWorkspaceProps) {
   return (
@@ -525,20 +524,14 @@ export default function SpeechReportWorkspace({
 
                           {argMap.arguments.length === 0 ? (
                             <p className="text-sm text-ink-faint">No arguments extracted.</p>
-                          ) : showTableView ? (
-                            <FlowTable args={argMap.arguments} judgeMode={judgeViewMode} />
                           ) : (
-                            <FlowBoard args={argMap.arguments} judgeMode={judgeViewMode} />
+                            <FlowCanvas
+                              args={argMap.arguments}
+                              judgeMode={judgeViewMode}
+                              transcriptHref="#transcript"
+                              drillsHref="#drills"
+                            />
                           )}
-
-                          {/* View toggle — demoted, secondary */}
-                          <button
-                            type="button"
-                            onClick={() => setShowTableView((v) => !v)}
-                            className="self-start text-[10px] text-ink-faint underline-offset-2 hover:text-ink-subtle hover:underline"
-                          >
-                            {showTableView ? "Switch to flow board" : "Switch to table view"}
-                          </button>
                         </>
                       )}
 
