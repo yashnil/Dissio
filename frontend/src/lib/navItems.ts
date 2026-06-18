@@ -61,8 +61,8 @@ export interface SidebarNavGroup {
 
 export const APP_NAV_GROUPS: SidebarNavGroup[] = [
   {
-    id: "core",
-    label: "Core",
+    id: "train",
+    label: "Train",
     items: [
       {
         href: "/dashboard",
@@ -76,27 +76,27 @@ export const APP_NAV_GROUPS: SidebarNavGroup[] = [
         label: "Practice",
         icon: Mic,
         match: ["/session", "/speech"],
-        hint: "Record or upload a speech for analysis",
+        hint: "Record, upload, or paste a speech for analysis",
       },
       {
-        href: "/evidence",
-        label: "Evidence",
-        icon: BookMarked,
-        match: ["/evidence"],
-        hint: "Research sources and cut debate cards",
+        href: "/learn",
+        label: "Drills & Learn",
+        icon: GraduationCap,
+        match: ["/learn", "/drills"],
+        hint: "Targeted drills and skill-building guides",
       },
     ],
   },
   {
-    id: "growth",
-    label: "Growth",
+    id: "research",
+    label: "Research",
     items: [
       {
-        href: "/learn",
-        label: "Learn",
-        icon: GraduationCap,
-        match: ["/learn", "/drills"],
-        hint: "Drills and skill-building guides",
+        href: "/evidence",
+        label: "Evidence Studio",
+        icon: BookMarked,
+        match: ["/evidence"],
+        hint: "Research sources and cut debate cards",
       },
     ],
   },
@@ -114,15 +114,15 @@ export const APP_NAV_GROUPS: SidebarNavGroup[] = [
     ],
   },
   {
-    id: "utility",
-    label: "Utility",
+    id: "resources",
+    label: "Resources",
     items: [
       {
         href: "/pilot",
-        label: "Pilot",
+        label: "Feedback",
         icon: ClipboardCheck,
         match: ["/pilot"],
-        hint: "Pilot checklist and product feedback",
+        hint: "Practice-loop checklist and product feedback",
       },
     ],
   },

@@ -5,15 +5,15 @@ import {
 } from "@/lib/navItems";
 
 describe("APP_NAV_GROUPS", () => {
-  it("exposes the Core / Growth / Team / Utility groups", () => {
+  it("exposes the Train / Research / Team / Resources groups", () => {
     const ids = APP_NAV_GROUPS.map((g) => g.id);
-    expect(ids).toEqual(["core", "growth", "team", "utility"]);
+    expect(ids).toEqual(["train", "research", "team", "resources"]);
   });
 
-  it("places the primary destinations in Core", () => {
-    const core = APP_NAV_GROUPS.find((g) => g.id === "core");
-    const hrefs = core?.items.map((i) => i.href);
-    expect(hrefs).toEqual(["/dashboard", "/session", "/evidence"]);
+  it("places the primary training destinations in Train", () => {
+    const train = APP_NAV_GROUPS.find((g) => g.id === "train");
+    const hrefs = train?.items.map((i) => i.href);
+    expect(hrefs).toEqual(["/dashboard", "/session", "/learn"]);
   });
 
   it("gives every item an icon, a label, and at least one match prefix", () => {
@@ -50,14 +50,17 @@ describe("flattenNavGroups", () => {
 
 describe("isNavItemActive on sidebar items", () => {
   it("marks Practice active on a nested /speech route", () => {
-    const practice = APP_NAV_GROUPS[0].items.find((i) => i.label === "Practice")!;
+    const train = APP_NAV_GROUPS.find((g) => g.id === "train")!;
+    const practice = train.items.find((i) => i.label === "Practice")!;
     expect(isNavItemActive(practice, "/speech/abc123")).toBe(true);
     expect(isNavItemActive(practice, "/session")).toBe(true);
     expect(isNavItemActive(practice, "/evidence")).toBe(false);
   });
 
-  it("marks Learn active on a nested /drills route", () => {
-    const learn = APP_NAV_GROUPS[1].items.find((i) => i.label === "Learn")!;
+  it("marks Drills & Learn active on a nested /drills route", () => {
+    const train = APP_NAV_GROUPS.find((g) => g.id === "train")!;
+    const learn = train.items.find((i) => i.label === "Drills & Learn")!;
     expect(isNavItemActive(learn, "/drills/xyz")).toBe(true);
+    expect(isNavItemActive(learn, "/learn")).toBe(true);
   });
 });

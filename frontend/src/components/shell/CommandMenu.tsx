@@ -12,6 +12,10 @@ import {
   Sun,
   Moon,
   ClipboardCheck,
+  Swords,
+  Scale,
+  Flag,
+  MessageSquarePlus,
 } from "lucide-react";
 import {
   CommandDialog,
@@ -75,12 +79,36 @@ export default function CommandMenu() {
 
   const actions: CommandAction[] = [
     {
-      id: "practice-record",
-      label: "Start a new practice speech",
+      id: "practice-constructive",
+      label: "Start a Constructive",
       group: "Practice",
       icon: Mic,
-      keywords: "record speech round constructive rebuttal",
-      run: go("/session"),
+      keywords: "record speech round constructive case contention build",
+      run: go("/session?type=constructive"),
+    },
+    {
+      id: "practice-rebuttal",
+      label: "Start a Rebuttal",
+      group: "Practice",
+      icon: Swords,
+      keywords: "record speech round rebuttal refute answer clash",
+      run: go("/session?type=rebuttal"),
+    },
+    {
+      id: "practice-summary",
+      label: "Start a Summary",
+      group: "Practice",
+      icon: Scale,
+      keywords: "record speech round summary collapse weigh narrow",
+      run: go("/session?type=summary"),
+    },
+    {
+      id: "practice-final-focus",
+      label: "Start a Final Focus",
+      group: "Practice",
+      icon: Flag,
+      keywords: "record speech round final focus voter crystallize",
+      run: go("/session?type=final_focus"),
     },
     {
       id: "practice-upload",
@@ -140,6 +168,14 @@ export default function CommandMenu() {
         toggleTheme(getStoredTheme());
         setOpen(false);
       },
+    },
+    {
+      id: "send-feedback",
+      label: "Send feedback",
+      group: "Preferences",
+      icon: MessageSquarePlus,
+      keywords: "feedback report issue bug suggestion pilot",
+      run: go("/pilot"),
     },
   ];
 
