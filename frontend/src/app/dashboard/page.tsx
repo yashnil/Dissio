@@ -697,6 +697,9 @@ export default function DashboardPage() {
                 <span className="rep-badge">
                   avg · {progress.feedback_ready_count} speech{progress.feedback_ready_count !== 1 ? "es" : ""}
                 </span>
+                <Link href="/progress" className="ml-auto flex items-center gap-1 text-xs font-medium text-lav transition-colors hover:text-lav-hi">
+                  Full progress <ArrowRight size={11} />
+                </Link>
               </div>
               <Card>
                 <CardContent className="grid grid-cols-1 gap-4 px-5 py-5 sm:grid-cols-2">

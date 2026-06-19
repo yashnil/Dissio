@@ -269,24 +269,38 @@ export default function SpeechReportWorkspace({
                           </Badge>
                         }
                       />
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Complete drills to turn feedback into improvement</p>
-                          <p className="text-xs text-ink-subtle">
-                            Each drill targets a specific weakness from your feedback. Practice the exercise, then re-record your speech to track progress.
-                          </p>
-                        </div>
-                      </div>
+                      {/* Training chain — how this connects to improvement */}
+                      <ol className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        {["Speech weakness", "Recommended drill", "Attempt", "Re-record", "Comparison"].map((step, i, arr) => {
+                          const reached =
+                            i === 0 ? true
+                            : i === 1 ? drills.length > 0
+                            : i === 2 ? drills.some((d) => d.status !== "assigned")
+                            : false;
+                          return (
+                            <li key={step} className="flex items-center gap-1.5">
+                              <span className={reached ? "rounded-md border border-lav/30 bg-lav/10 px-2 py-0.5 font-medium text-lav" : "rounded-md border border-hairline bg-surface-1 px-2 py-0.5 text-ink-faint"}>
+                                {step}
+                              </span>
+                              {i < arr.length - 1 && <span className="text-hairline-strong" aria-hidden>→</span>}
+                            </li>
+                          );
+                        })}
+                      </ol>
                       <div className="flex flex-col gap-2">
                         {drills.map((drill, i) => (
-                          <DrillCard
-                            key={drill.id}
-                            drill={drill}
-                            index={i}
-                            onStatusChange={updateDrillStatus}
-                            updatingId={updatingDrill}
-                            userId={userId ?? undefined}
-                          />
+                          <div key={drill.id} className="flex flex-col gap-1">
+                            {i === 0 && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-lav">Start here — top recommendation</span>
+                            )}
+                            <DrillCard
+                              drill={drill}
+                              index={i}
+                              onStatusChange={updateDrillStatus}
+                              updatingId={updatingDrill}
+                              userId={userId ?? undefined}
+                            />
+                          </div>
                         ))}
                       </div>
 
