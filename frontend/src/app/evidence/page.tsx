@@ -26,6 +26,10 @@ import { EvidenceStudioModal } from "@/components/evidence/EvidenceStudioModal";
 import { SavedCardBody } from "@/components/evidence/SavedCardBody";
 import { shouldShowResultsSummary, shouldShowEmptyState } from "@/components/EvidenceSearchPanel";
 import { EvidenceSearchProgress } from "@/components/evidence/EvidenceSearchProgress";
+import ClaimDecomposition from "@/components/evidence/ClaimDecomposition";
+import ResearchSummary from "@/components/evidence/ResearchSummary";
+import ProvenanceTrail from "@/components/evidence/ProvenanceTrail";
+import { RESEARCH_DEPTH_OPTIONS, type ResearchDepth } from "@/lib/claimDecomposition";
 import type {
   EvidenceDocument,
   EvidenceCard,
@@ -526,6 +530,7 @@ export default function EvidencePage() {
   const [cbTopic, setCbTopic] = useState("");
   const [cbClaimGoal, setCbClaimGoal] = useState("");
   const [cbSide, setCbSide] = useState("");
+  const [cbDepth, setCbDepth] = useState<ResearchDepth>("standard");
   const [cbPastedText, setCbPastedText] = useState("");
   const [cbPasteAuthor, setCbPasteAuthor] = useState("");
   const [cbPastePublication, setCbPastePublication] = useState("");
@@ -675,8 +680,12 @@ export default function EvidencePage() {
     }
   }
 
-  async function handleGenerateCards() {
-    if (!userId || !cbClaimGoal.trim()) return;
+  async function handleGenerateCards(claimOverride?: string) {
+    const override = typeof claimOverride === "string" ? claimOverride.trim() : "";
+    const claim = override || cbClaimGoal.trim();
+    if (!userId || !claim) return;
+    if (override) setCbClaimGoal(override);
+    const maxCards = cbDepth === "quick" ? 3 : cbDepth === "deep" ? 8 : 5;
     setCbLoading(true);
     setCbError("");
     setCbGenerateResult(null);
@@ -687,9 +696,9 @@ export default function EvidencePage() {
         body: JSON.stringify({
           user_id: userId,
           topic: cbTopic.trim() || undefined,
-          claim_to_support: cbClaimGoal.trim(),
+          claim_to_support: claim,
           side: cbSide || undefined,
-          max_cards: 5,
+          max_cards: maxCards,
           include_partial_support: true,
         }),
       });
@@ -1150,8 +1159,35 @@ export default function EvidencePage() {
               {/* Research Search mode */}
               {builderMode === "search" && (
                 <div className="flex flex-col gap-3">
+                  {/* Research plan — decompose the claim into angles */}
+                  <ClaimDecomposition
+                    claim={cbClaimGoal}
+                    disabled={cbLoading}
+                    onSearchBranch={(query) => handleGenerateCards(query)}
+                  />
+
+                  {/* Research depth (maps to how many cards we cut) */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-ink-muted">Depth</span>
+                    <div className="flex gap-0.5 rounded-lg border border-border bg-surface-1 p-0.5" role="radiogroup" aria-label="Research depth">
+                      {RESEARCH_DEPTH_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          role="radio"
+                          aria-checked={cbDepth === opt.key}
+                          title={opt.hint}
+                          onClick={() => setCbDepth(opt.key)}
+                          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${cbDepth === opt.key ? "bg-surface-3 text-ink" : "text-ink-subtle hover:text-ink"}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <Button
-                    onClick={handleGenerateCards}
+                    onClick={() => handleGenerateCards()}
                     disabled={cbLoading || !cbClaimGoal.trim()}
                     size="sm"
                     className="self-start bg-blue-600 text-white hover:bg-blue-700"
@@ -1161,6 +1197,11 @@ export default function EvidencePage() {
                       : <><Globe size={13} className="mr-1.5" />Find candidate cards</>
                     }
                   </Button>
+
+                  {/* Transparent research summary (real stages + rejected sources) */}
+                  {!cbLoading && cbGenerateResult?.search_configured && (
+                    <ResearchSummary result={cbGenerateResult} />
+                  )}
 
                   {/* Not configured */}
                   {cbGenerateResult && !cbGenerateResult.search_configured && (
@@ -1310,6 +1351,9 @@ export default function EvidencePage() {
                                 onDiscard={handleDiscardDraft}
                                 onOpenStudio={() => setStudioCard(card)}
                               />
+                              <div className="mt-1.5">
+                                <ProvenanceTrail card={card} />
+                              </div>
                             </div>
                           ))}
                           {filtered.length === 0 && (
@@ -1355,7 +1399,7 @@ export default function EvidencePage() {
                                   <ClipboardPaste size={10} /> Paste source text
                                 </button>
                                 <button
-                                  onClick={handleGenerateCards}
+                                  onClick={() => handleGenerateCards()}
                                   disabled={cbLoading}
                                   className="text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100"
                                 >
