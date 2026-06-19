@@ -11,14 +11,17 @@ interface StickyActionDockProps {
 
 /**
  * A sticky bottom action dock — keeps the primary action reachable while the
- * student scrolls a builder or training room. Honors the mobile safe area.
- * Reused by practice setup, the capture room, and the drill room.
+ * student scrolls a builder or training room.
+ *
+ * On mobile it sits *above* the fixed bottom nav (h ≈ 3.5rem + safe area) so the
+ * primary action is never hidden behind it; on md+ (no bottom nav) it sticks to
+ * the viewport bottom. Reused by practice setup and the assignment builder.
  */
 export default function StickyActionDock({ summary, children }: StickyActionDockProps) {
   return (
     <div
-      className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-hairline bg-canvas/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:px-6"
-      style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-2 border-t border-hairline bg-canvas/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:px-6 md:bottom-0"
+      style={{ paddingBottom: "0.75rem" }}
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         {summary ? <div className="min-w-0 flex-1">{summary}</div> : <div />}
