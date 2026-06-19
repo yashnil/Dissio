@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     supabase_url: str = ""
     supabase_service_role_key: str = ""
+    # Supabase project JWT secret (HS256) — verifies access tokens server-side.
+    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
     cors_origins: str = "http://localhost:3000"
     environment: str = "development"
     tavily_api_key: str = ""
