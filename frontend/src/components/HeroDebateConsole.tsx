@@ -6,33 +6,56 @@
  * Shows the full product loop at a glance:
  *   Audio → Argument Flow → Judge Ballot → Drill
  *
- * Fits in the first fold. Uses perspective CSS for a 2.5D feel.
- * All animations are one-shot entrances — nothing loops.
- * The "No weighing" issue is embedded as a normal issue row, not a floating chip.
+ * Hydration safety: server render and first client render are identical
+ * (animated=false via isMounted). Animations only activate after mount.
+ * Reduced-motion users always receive the fully static final state.
  */
 
-import { Fragment } from "react";
-import { motion } from "motion/react";
+import { Fragment, useState, useEffect } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Mic, Zap } from "lucide-react";
 import { EASE } from "@/lib/motion";
 
-// ── Static waveform ────────────────────────────────────────────────────────────
+// ── Animation helper ───────────────────────────────────────────────────────────
+// Returns {} when not animated (motion.div renders at CSS natural values, no
+// inline styles). Returns full framer-motion animation props when animated.
+
+function ap(
+  animated: boolean,
+  from: Record<string, unknown>,
+  to: Record<string, unknown>,
+  delay: number,
+  duration = 0.35,
+): Record<string, unknown> {
+  if (!animated) return {};
+  return { initial: from, animate: to, transition: { delay, duration, ease: EASE } };
+}
+
+// ── Waveform ───────────────────────────────────────────────────────────────────
 
 const WAVE = [5, 9, 14, 8, 20, 13, 6, 18, 11, 5, 16, 10, 4, 17, 7, 12, 9, 15, 6, 11];
 
-function StaticWaveform() {
+function Waveform({ animated }: { animated: boolean }) {
   return (
     <div className="flex items-end gap-0.5" aria-hidden>
-      {WAVE.map((h, i) => (
-        <motion.div
-          key={i}
-          className="w-1 shrink-0 rounded-full bg-lav"
-          initial={{ height: 2, opacity: 0 }}
-          animate={{ height: h * 1.5, opacity: 0.25 + (h / 20) * 0.65 }}
-          transition={{ duration: 0.35, delay: 0.4 + i * 0.022, ease: EASE }}
-          style={{ minHeight: 2 }}
-        />
-      ))}
+      {WAVE.map((h, i) => {
+        const finalH = h * 1.5;
+        const finalOp = 0.25 + (h / 20) * 0.65;
+        return (
+          <motion.div
+            key={i}
+            className="w-1 shrink-0 rounded-full bg-lav"
+            {...(animated
+              ? {
+                  initial: { height: 2, opacity: 0 },
+                  animate: { height: finalH, opacity: finalOp },
+                  transition: { duration: 0.35, delay: 0.4 + i * 0.022, ease: EASE },
+                }
+              : {})}
+            style={animated ? { minHeight: 2 } : { height: finalH, opacity: finalOp, minHeight: 2 }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -59,20 +82,24 @@ function ChainNode({ label, status }: { label: string; status: NodeStatus }) {
 // ── Ballot bar ─────────────────────────────────────────────────────────────────
 
 function BallotBar({
-  label, value, max, delay,
-}: { label: string; value: number; max: number; delay: number }) {
+  label, value, max, delay, animated,
+}: { label: string; value: number; max: number; delay: number; animated: boolean }) {
   const pct   = Math.round((value / max) * 100);
   const color = value < 12 ? "bg-warn" : "bg-lav";
   return (
     <div className="flex items-center gap-1.5">
       <span className="w-14 shrink-0 text-[9px] text-ink-faint">{label}</span>
       <div className="h-0.5 flex-1 overflow-hidden rounded-full bg-hairline">
-        <motion.div
-          className={`h-full rounded-full ${color}`}
-          initial={{ width: 0 }}
-          animate={{ width: `${pct}%` }}
-          transition={{ duration: 0.55, delay, ease: EASE }}
-        />
+        {animated ? (
+          <motion.div
+            className={`h-full rounded-full ${color}`}
+            initial={{ width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.55, delay, ease: EASE }}
+          />
+        ) : (
+          <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+        )}
       </div>
       <span className="w-4 shrink-0 text-right text-[9px] tabular-nums text-ink-faint">{value}</span>
     </div>
@@ -83,24 +110,20 @@ function BallotBar({
 
 const STAGES = ["Audio", "Flow", "Ballot", "Drill"] as const;
 
-function StageBar() {
+function StageBar({ animated }: { animated: boolean }) {
   return (
     <div className="flex items-center justify-between border-b border-hairline px-4 py-2">
       {STAGES.map((s, i) => (
         <Fragment key={s}>
           <motion.span
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.15 + i * 0.10, duration: 0.3 }}
+            {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.15 + i * 0.10, 0.3)}
             className="text-[9px] font-bold uppercase tracking-wider text-lav"
           >
             {s}
           </motion.span>
           {i < STAGES.length - 1 && (
             <motion.span
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.20 + i * 0.10, duration: 0.3 }}
+              {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.20 + i * 0.10, 0.3)}
               className="text-[10px] text-hairline-strong"
               aria-hidden
             >
@@ -116,24 +139,31 @@ function StageBar() {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function HeroDebateConsole() {
+  // isMounted ensures SSR and first client render are identical (both animated=false).
+  // Animations only activate after mount, preventing hydration mismatch warnings.
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => { setIsMounted(true); }, []);
+
+  const prefersReducedMotion = useReducedMotion();
+  // Animate only when mounted AND the user hasn't opted out of motion.
+  const animated = isMounted && prefersReducedMotion === false;
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.08, ease: EASE }}
+      role="img"
+      aria-label="RoundLab product preview: speech analysed into flow, judge ballot, and drill"
       className="relative w-full"
-      aria-label="RoundLab product preview"
+      {...ap(animated, { opacity: 0, y: 16 }, { opacity: 1, y: 0 }, 0.08, 0.5)}
     >
-      {/* 2.5D outer panel — perspective tilt on lg+ screens */}
+      {/* 2.5D outer panel — all content is presentational, not in the a11y tree */}
       <div
+        aria-hidden="true"
         className="beam-top overflow-hidden rounded-2xl border border-hairline bg-surface-1/95 backdrop-blur-sm"
         style={{
           boxShadow:
             "0 0 80px -20px oklch(0.510 0.156 278 / 0.25)," +
             "0 0 0 1px oklch(0.510 0.156 278 / 0.08)," +
             "0 28px 56px -12px oklch(0 0 0 / 0.28)",
-          // Subtle 2.5D tilt — gives depth without Three.js
-          // transform applied via CSS so reduced-motion doesn't block it (it's static)
           transform: "perspective(960px) rotateX(1.5deg) rotateY(-5deg)",
           transformStyle: "preserve-3d",
         }}
@@ -152,20 +182,18 @@ export default function HeroDebateConsole() {
         </div>
 
         {/* ── Stage progress ─────────────────────────────────────────── */}
-        <StageBar />
+        <StageBar animated={animated} />
 
         {/* ── Top zone: Audio (left) + Argument chain (right) ───────── */}
         <div className="grid grid-cols-2 divide-x divide-hairline">
 
           {/* Audio */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.38, duration: 0.4 }}
+            {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.38, 0.4)}
             className="flex flex-col gap-2 p-3"
           >
             <p className="text-[9px] font-semibold uppercase tracking-wider text-lav">Audio input</p>
-            <StaticWaveform />
+            <Waveform animated={animated} />
             <div className="mt-0.5 flex flex-wrap items-center gap-1">
               {["Pro", "Flow judge", "1:52"].map((chip) => (
                 <span
@@ -180,20 +208,17 @@ export default function HeroDebateConsole() {
 
           {/* Argument chain */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.50, duration: 0.4 }}
+            {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.50, 0.4)}
             className="flex flex-col gap-2 p-3"
           >
             <p className="text-[9px] font-semibold uppercase tracking-wider text-lav">Argument flow</p>
-            {/* Chain strip: Claim ━ Warrant ━ Evidence⚠ ━ Impact */}
             <div className="flex flex-wrap items-center gap-1">
               <ChainNode label="Claim"    status="ok"   />
-              <span className="text-[8px] text-ok/50"    aria-hidden>━</span>
+              <span className="text-[8px] text-ok/50"   aria-hidden>━</span>
               <ChainNode label="Warrant"  status="ok"   />
-              <span className="text-[8px] text-warn/40"  aria-hidden>╌</span>
+              <span className="text-[8px] text-warn/40" aria-hidden>╌</span>
               <ChainNode label="Evidence" status="warn" />
-              <span className="text-[8px] text-ok/50"    aria-hidden>━</span>
+              <span className="text-[8px] text-ok/50"   aria-hidden>━</span>
               <ChainNode label="Impact"   status="ok"   />
             </div>
             <p className="text-[9px] leading-relaxed text-ink-faint">
@@ -204,9 +229,7 @@ export default function HeroDebateConsole() {
 
         {/* ── Issue row — embedded, not floating ─────────────────────── */}
         <motion.div
-          initial={{ opacity: 0, x: -6 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.68, duration: 0.35 }}
+          {...ap(animated, { opacity: 0, x: -6 }, { opacity: 1, x: 0 }, 0.68, 0.35)}
           className="flex items-center gap-2 border-t border-warn/15 bg-warn/5 px-4 py-2"
         >
           <span className="h-1 w-1 shrink-0 rounded-full bg-warn" aria-hidden />
@@ -221,14 +244,12 @@ export default function HeroDebateConsole() {
 
           {/* Judge ballot */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.58, duration: 0.4 }}
+            {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.58, 0.4)}
             className="flex flex-col gap-2.5 p-3"
           >
             <p className="text-[9px] font-semibold uppercase tracking-wider text-lav">Judge ballot</p>
             <div className="flex items-center gap-2.5">
-              {/* Score ring */}
+              {/* Score ring — CSS circle, clean and iconic */}
               <div className="relative flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-full border-2 border-lav bg-canvas">
                 <span className="text-lg font-bold tabular-nums leading-none text-ink">78</span>
                 <span className="text-[8px] leading-none text-ink-faint">/100</span>
@@ -239,17 +260,15 @@ export default function HeroDebateConsole() {
               </div>
             </div>
             <div className="flex flex-col gap-1">
-              <BallotBar label="Clash"    value={14} max={20} delay={0.78} />
-              <BallotBar label="Weighing" value={9}  max={20} delay={0.88} />
-              <BallotBar label="Coverage" value={16} max={20} delay={0.98} />
+              <BallotBar label="Clash"    value={14} max={20} delay={0.78} animated={animated} />
+              <BallotBar label="Weighing" value={9}  max={20} delay={0.88} animated={animated} />
+              <BallotBar label="Coverage" value={16} max={20} delay={0.98} animated={animated} />
             </div>
           </motion.div>
 
           {/* Drill unlocked */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.72, duration: 0.4 }}
+            {...ap(animated, { opacity: 0 }, { opacity: 1 }, 0.72, 0.4)}
             className="flex flex-col gap-2.5 p-3"
           >
             <p className="text-[9px] font-semibold uppercase tracking-wider text-lav">Drill unlocked</p>
