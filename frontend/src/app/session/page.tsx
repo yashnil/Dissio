@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { fadeUp } from "@/lib/motion";
+import { fadeUp, reducedSafe } from "@/lib/motion";
 import {
   getJudgeTypeInfo, formatSpeechTarget, SPEECH_TYPE_INFO, SPEECH_TYPE_ORDER,
   readLastJudgeType, rememberJudgeType,
@@ -201,7 +201,7 @@ export default function SessionPage() {
 
   return (
     <AppShell maxWidth="full" bare>
-      <motion.div {...fadeUp(0)} className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
+      <motion.div {...reducedSafe(fadeUp(0))} className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
         {/* Header */}
         <div className="flex flex-col gap-2">
           <span className="section-stamp">Practice room</span>

@@ -142,6 +142,7 @@ export default function FlowCanvas({ args, judgeMode, transcriptHref, drillsHref
                       type="button"
                       onClick={() => setFocusedId(focused ? null : row.id)}
                       aria-pressed={focused}
+                      aria-label={`${row.label}: ${row.statusLabel}. ${focused ? "Collapse" : "Expand"} details.`}
                       className={cn(
                         "grid w-full grid-cols-[minmax(120px,1fr)_2fr_2fr_2fr_2fr_auto] gap-px bg-hairline text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
                       )}
@@ -234,13 +235,13 @@ function FocusDetail({
       )}
       <div className="ml-auto flex items-center gap-3">
         {transcriptHref && (
-          <a href={transcriptHref} className="flex items-center gap-1 text-[11px] font-medium text-lav hover:underline">
-            <FileText size={11} aria-hidden /> Transcript
+          <a href={transcriptHref} className="flex items-center gap-1 rounded text-[11px] font-medium text-lav hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50">
+            <FileText size={11} aria-hidden="true" /> Transcript
           </a>
         )}
         {drillsHref && row.tone !== "ok" && (
-          <a href={drillsHref} className="flex items-center gap-1 text-[11px] font-medium text-lav hover:underline">
-            <Target size={11} aria-hidden /> Drill this
+          <a href={drillsHref} className="flex items-center gap-1 rounded text-[11px] font-medium text-lav hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50">
+            <Target size={11} aria-hidden="true" /> Drill this
           </a>
         )}
       </div>

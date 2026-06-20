@@ -18,19 +18,19 @@ export function sourceQualityLabel(quality: SourceQuality | null | undefined): s
 
 export function sourceQualityColor(quality: SourceQuality | null | undefined): string {
   switch (quality) {
-    case "high":    return "text-green-700";
-    case "medium":  return "text-amber-600";
-    case "low":     return "text-red-600";
-    default:        return "text-ink-muted";
+    case "high":    return "text-ok";
+    case "medium":  return "text-warn";
+    case "low":     return "text-danger";
+    default:        return "text-ink-subtle";
   }
 }
 
 export function sourceQualityBadgeStyle(quality: SourceQuality | null | undefined): string {
   switch (quality) {
-    case "high":    return "bg-green-50 text-green-800 border border-green-200";
-    case "medium":  return "bg-amber-50 text-amber-800 border border-amber-200";
-    case "low":     return "bg-red-50 text-red-800 border border-red-200";
-    default:        return "bg-surface-faint text-ink-muted border border-border";
+    case "high":    return "bg-ok/10 text-ok border border-ok/30";
+    case "medium":  return "bg-warn/10 text-warn border border-warn/30";
+    case "low":     return "bg-danger/10 text-danger border border-danger/30";
+    default:        return "bg-surface-2 text-ink-subtle border border-hairline";
   }
 }
 
@@ -90,11 +90,11 @@ export function supportLevelLabel(level: SupportLevel | null | undefined): strin
 
 export function supportLevelBadgeStyle(level: SupportLevel | null | undefined): string {
   switch (level) {
-    case "strong_support":  return "bg-green-50 text-green-800 border border-green-200";
-    case "partial_support": return "bg-amber-50 text-amber-800 border border-amber-200";
-    case "weak_support":    return "bg-orange-50 text-orange-800 border border-orange-200";
-    case "no_support":      return "bg-red-50 text-red-800 border border-red-200";
-    default:                return "bg-surface-faint text-ink-muted border border-border";
+    case "strong_support":  return "bg-ok/10 text-ok border border-ok/30";
+    case "partial_support": return "bg-warn/10 text-warn border border-warn/30";
+    case "weak_support":    return "bg-warn/10 text-warn border border-warn/30";
+    case "no_support":      return "bg-danger/10 text-danger border border-danger/30";
+    default:                return "bg-surface-2 text-ink-subtle border border-hairline";
   }
 }
 
@@ -179,14 +179,14 @@ export const EVIDENCE_ROLE_ORDER: EvidenceRole[] = [
 
 export function evidenceRoleBadgeStyle(role: EvidenceRole | null | undefined): string {
   switch (role) {
-    case "direct_support":    return "bg-green-100 text-green-800";
-    case "mechanism_support": return "bg-blue-100 text-blue-800";
-    case "example_support":   return "bg-purple-100 text-purple-800";
-    case "impact_support":    return "bg-red-100 text-red-800";
-    case "definition_support": return "bg-slate-100 text-slate-800";
-    case "authority_support": return "bg-indigo-100 text-indigo-800";
-    case "counter_evidence":  return "bg-orange-100 text-orange-800";
-    default:                  return "bg-surface-faint text-ink-muted";
+    case "direct_support":    return "bg-ok/10 text-ok";
+    case "mechanism_support": return "bg-lav/10 text-lav";
+    case "example_support":   return "bg-lav/15 text-lav";
+    case "impact_support":    return "bg-danger/10 text-danger";
+    case "definition_support": return "bg-surface-2 text-ink-subtle";
+    case "authority_support": return "bg-lav/10 text-lav";
+    case "counter_evidence":  return "bg-warn/10 text-warn";
+    default:                  return "bg-surface-2 text-ink-subtle";
   }
 }
 

@@ -29,7 +29,7 @@ function RecipeCard({ recipe }: { recipe: PracticeRecipe }) {
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium text-ink">{recipe.label}</span>
-          <span className="ml-auto shrink-0 font-mono text-[0.625rem] tabular-nums text-ink-faint">
+          <span className="ml-auto shrink-0 font-mono text-eyebrow tabular-nums text-ink-subtle">
             {recipe.minutes}
           </span>
         </span>
@@ -60,7 +60,7 @@ export default function PracticeRecipes() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+        <p className="text-eyebrow text-ink-subtle">
           Full speeches
         </p>
         <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -71,7 +71,7 @@ export default function PracticeRecipes() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+        <p className="text-eyebrow text-ink-subtle">
           Quick reps
         </p>
         <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">

@@ -40,6 +40,25 @@ export function isNavItemActive(
   return item.match.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
+// ── Practice loop step ─────────────────────────────────────────────────────
+
+export type LoopStep = "practice" | "analyze" | "drill" | "improve";
+
+/**
+ * Maps the current pathname to the loop step it belongs to.
+ * Returns null for routes outside the core loop (hub, research, team).
+ *
+ * Loop: Practice (/session, /speech) → Drill (/learn, /drills) → Improve (/progress)
+ * "Analyze" is surfaced as a sidebar label only; the speech report is the practice step.
+ */
+export function deriveLoopStep(pathname: string | null | undefined): LoopStep | null {
+  if (!pathname) return null;
+  if (pathname.startsWith("/session") || pathname.startsWith("/speech")) return "practice";
+  if (pathname.startsWith("/learn") || pathname.startsWith("/drills")) return "drill";
+  if (pathname.startsWith("/progress")) return "improve";
+  return null;
+}
+
 // ── Sidebar model ──────────────────────────────────────────────────────────
 
 export interface SidebarNavItem {
@@ -51,6 +70,8 @@ export interface SidebarNavItem {
   hint?: string;
   /** Only render for users with coach access. */
   coachOnly?: boolean;
+  /** Which step of the Practice→Analyze→Drill→Improve loop this item belongs to. */
+  loopStep?: LoopStep;
 }
 
 export interface SidebarNavGroup {
@@ -78,6 +99,7 @@ export const APP_NAV_GROUPS: SidebarNavGroup[] = [
         icon: Mic,
         match: ["/session", "/speech"],
         hint: "Record, upload, or paste a speech for analysis",
+        loopStep: "practice",
       },
       {
         href: "/progress",
@@ -85,6 +107,7 @@ export const APP_NAV_GROUPS: SidebarNavGroup[] = [
         icon: TrendingUp,
         match: ["/progress"],
         hint: "Skill trajectory, coverage, and your weekly plan",
+        loopStep: "improve",
       },
       {
         href: "/learn",
@@ -92,6 +115,7 @@ export const APP_NAV_GROUPS: SidebarNavGroup[] = [
         icon: GraduationCap,
         match: ["/learn", "/drills"],
         hint: "Targeted drills and skill-building guides",
+        loopStep: "drill",
       },
     ],
   },

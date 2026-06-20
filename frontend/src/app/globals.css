@@ -64,6 +64,13 @@
   --radius-xl:  calc(var(--radius) * 2);     /* 16px */
   --radius-2xl: calc(var(--radius) * 3);     /* 24px */
 
+  /* Shadow scale — ink-tinted (not harsh black) so they work in both themes.
+     Use sparingly: prefer surface layering. Only use when floating above content. */
+  --shadow-xs: 0 1px 2px oklch(0.095 0.002 264 / 0.08);
+  --shadow-sm: 0 1px 3px oklch(0.095 0.002 264 / 0.10), 0 1px 2px oklch(0.095 0.002 264 / 0.06);
+  --shadow-md: 0 4px 6px oklch(0.095 0.002 264 / 0.07), 0 2px 4px oklch(0.095 0.002 264 / 0.06);
+  --shadow-lg: 0 10px 15px oklch(0.095 0.002 264 / 0.10), 0 4px 6px oklch(0.095 0.002 264 / 0.05);
+
   /* ── Theme-aware color tokens (reference CSS vars set by theme class) ─── */
   --color-canvas:          var(--theme-canvas);
   --color-surface-1:       var(--theme-surface-1);
@@ -320,7 +327,19 @@
 
   /* ── Motion timing classes (apply to transition-duration etc.) ──────────── */
   /* Used with motion/react via transition prop — kept here for reference     */
-  /* fast: 150ms, base: 300ms, slow: 500ms, spring: stiffness:300/damping:24 */
+  /* fast: 150ms, base: 300ms, slow: 500ms, spring: stiffness:360/damping:30 */
+  /* Import from @/lib/motion — never hardcode transition values in components */
+
+  /* ── Focus ring — consistent 2px offset ring for non-Button elements ─────── */
+  /* Usage: add .focus-ring to any interactive element that isn't a Button.    */
+  /* Complements the global `outline-ring/50` base and Button's focus-visible. */
+  .focus-ring {
+    outline: none;
+    transition: box-shadow 150ms ease;
+  }
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-lav);
+  }
 
   /* ── Surface utilities (deprecated - use bg-canvas instead) ─────────────── */
 
@@ -483,11 +502,11 @@
     align-items: center;
     gap: 0.375rem;
     font-family: var(--font-jetbrains-mono, var(--font-mono));
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     font-weight: 600;
-    color: var(--theme-ink-faint);
+    color: var(--theme-ink-subtle);
   }
 
   /* Rep badge — mono score/attempt counter */
@@ -633,8 +652,8 @@
 /* ── Scrollbar (webkit) — thin, theme-aware ──────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: oklch(0.270 0.006 264); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: oklch(0.370 0.006 264); }
+::-webkit-scrollbar-thumb { background: var(--theme-hairline-strong); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--theme-ink-faint); }
 
 /* ── Print styles — used by shared report page and speech report print view ─── */
 @media print {

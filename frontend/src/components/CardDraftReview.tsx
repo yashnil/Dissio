@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * CardDraftReview — clean card row for URL/Paste drafts using the same EvidenceStudioModal.
- *
- * Replaces the old "debug dashboard" style with a clean horizontal card row
- * that opens the polished Evidence Studio modal on click.
- */
-
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import type { CardDraft } from "@/types";
@@ -21,6 +14,17 @@ interface CardDraftReviewProps {
   saving?: boolean;
   discarding?: boolean;
 }
+
+const READINESS_DOT: Record<string, string> = {
+  ready:         "bg-ok",
+  review_needed: "bg-warn",
+  verify_source: "bg-danger",
+};
+const READINESS_LABEL: Record<string, string> = {
+  ready:         "Ready",
+  review_needed: "Review needed",
+  verify_source: "Verify source",
+};
 
 export default function CardDraftReview({
   draft,
@@ -38,13 +42,6 @@ export default function CardDraftReview({
   const evidencePreview = (draft.cut_text_with_ellipses || draft.body_text || "")
     .replace(/\n+/g, " ").trim().slice(0, 130);
 
-  const readinessDot =
-    readiness === "ready" ? "bg-green-500" :
-    readiness === "review_needed" ? "bg-amber-400" : "bg-red-400";
-  const readinessLabel =
-    readiness === "ready" ? "Ready" :
-    readiness === "review_needed" ? "Review needed" : "Verify source";
-
   async function handleSave(card: CardDraft) {
     await onSave(card, true);
     setStudioOpen(false);
@@ -56,7 +53,6 @@ export default function CardDraftReview({
 
   return (
     <>
-      {/* Modal */}
       {studioOpen && (
         <EvidenceStudioModal
           card={draft}
@@ -67,54 +63,55 @@ export default function CardDraftReview({
         />
       )}
 
-      {/* Clean horizontal card row — same style as EvidenceStudioCard collapsed */}
-      <div className={`min-w-0 w-full rounded-xl border bg-white hover:shadow-sm transition-shadow ${
-        discarding ? "opacity-50" : ""
-      } border-gray-200`}>
+      <div
+        className={`min-w-0 w-full rounded-xl border border-hairline bg-surface-1 hover:shadow-sm transition-shadow ${
+          discarding ? "opacity-50" : ""
+        }`}
+      >
         <div className="flex items-stretch gap-0">
           {/* Left: tag + cite + preview */}
           <div className="flex-1 min-w-0 px-4 py-3.5 flex flex-col gap-1">
-            {/* Source URL as subtle label */}
             {draft.url && (
-              <p className="text-[10px] text-gray-400 truncate">
+              <p className="text-[10px] text-ink-faint truncate">
                 {draft.url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}
               </p>
             )}
-            {/* Tag */}
             <p
-              className="text-[15px] font-semibold text-gray-900 leading-snug break-words"
+              className="text-[15px] font-semibold text-ink leading-snug break-words"
               style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}
             >
               {displayTag}
             </p>
-            {/* Cite line */}
             {(citeDisplay || publication) && (
-              <p className="text-[12px] text-gray-500 truncate"
-                 style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}>
+              <p
+                className="text-[12px] text-ink-subtle truncate"
+                style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}
+              >
                 {citeDisplay}
-                {publication && <span className="text-gray-400"> — {publication}</span>}
+                {publication && <span className="text-ink-faint"> — {publication}</span>}
               </p>
             )}
-            {/* Evidence preview */}
             {evidencePreview && (
-              <p className="text-[12px] text-gray-400 leading-relaxed line-clamp-2 mt-0.5"
-                 style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}>
+              <p
+                className="text-[12px] text-ink-faint leading-relaxed line-clamp-2 mt-0.5"
+                style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}
+              >
                 {evidencePreview}{evidencePreview.length >= 130 ? "…" : ""}
               </p>
             )}
           </div>
 
           {/* Right: actions */}
-          <div className="flex flex-col items-end justify-between px-3 py-3 gap-2 shrink-0 border-l border-gray-100">
+          <div className="flex flex-col items-end justify-between px-3 py-3 gap-2 shrink-0 border-l border-hairline">
             {/* Readiness */}
             <div className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${readinessDot}`} />
-              <span className="text-[10px] text-gray-500">{readinessLabel}</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${READINESS_DOT[readiness] ?? "bg-hairline-strong"}`} />
+              <span className="text-[10px] text-ink-subtle">{READINESS_LABEL[readiness] ?? readiness}</span>
             </div>
             {/* Open Studio */}
             <button
               onClick={() => setStudioOpen(true)}
-              className="text-[11px] px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors font-medium"
+              className="text-[11px] px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/85 transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
             >
               Open Studio
             </button>
@@ -123,18 +120,18 @@ export default function CardDraftReview({
               <button
                 onClick={() => handleSave(draft)}
                 disabled={saving}
-                className="text-[10px] px-2.5 py-1 rounded-lg border border-green-300 text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50"
+                className="text-[10px] px-2.5 py-1 rounded-lg border border-ok/40 text-ok hover:bg-ok/10 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/50"
               >
                 {saving ? "Saving…" : "Save"}
               </button>
             )}
-            {/* Discard — polished icon button */}
+            {/* Discard */}
             <button
               onClick={() => handleDiscard(draft.id)}
               disabled={discarding}
               aria-label="Discard draft"
               title="Discard draft"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
             >
               <Trash2 size={13} />
             </button>

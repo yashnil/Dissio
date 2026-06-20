@@ -110,33 +110,34 @@ export function EvidenceSearchProgress({
   const PhaseIcon = phase.Icon;
 
   return (
-    <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-hairline bg-surface-1 p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-900 text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink text-canvas" aria-hidden="true">
             <PhaseIcon size={15} />
           </span>
-          <p className="text-[14px] font-semibold text-gray-900 truncate">
+          <p className="text-[14px] font-semibold text-ink truncate">
             {holding ? "Finalizing cards…" : (label ?? phase.label)}
           </p>
         </div>
-        <span className="text-[13px] font-semibold tabular-nums text-gray-500" aria-live="polite">
+        <span className="text-[13px] font-semibold tabular-nums text-ink-subtle" aria-live="polite" aria-label={`${displayProgress} percent complete`}>
           {displayProgress}%
         </span>
       </div>
 
       {/* Bar */}
-      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-surface-2"
+        role="progressbar"
+        aria-valuenow={displayProgress}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Evidence search progress"
+      >
         <div
-          className="relative h-full rounded-full bg-gradient-to-r from-gray-600 via-gray-800 to-gray-900 transition-[width] duration-500 ease-out"
+          className="relative h-full rounded-full bg-lav transition-[width] duration-500 ease-out"
           style={{ width: `${displayProgress}%` }}
-          role="progressbar"
-          aria-valuenow={displayProgress}
-          aria-valuemin={0}
-          aria-valuemax={100}
         >
-          {/* Subtle moving shimmer */}
-          <span className="absolute inset-0 animate-pulse bg-white/20" />
+          <span className="absolute inset-0 motion-safe:animate-pulse bg-white/20" aria-hidden="true" />
         </div>
       </div>
     </div>

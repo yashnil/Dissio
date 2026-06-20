@@ -432,25 +432,25 @@ describe("candidates_by_role response field", () => {
 // ── evidenceRoleBadgeStyle helper ─────────────────────────────────────────────
 
 describe("evidenceRoleBadgeStyle", () => {
-  it("direct_support returns green styling", () => {
+  it("direct_support uses ok semantic token", () => {
     const style = evidenceRoleBadgeStyle("direct_support");
-    expect(style).toContain("green");
+    expect(style).toContain("ok");
   });
-  it("mechanism_support returns blue styling", () => {
+  it("mechanism_support uses lav semantic token", () => {
     const style = evidenceRoleBadgeStyle("mechanism_support");
-    expect(style).toContain("blue");
+    expect(style).toContain("lav");
   });
-  it("example_support returns purple styling", () => {
+  it("example_support uses lav semantic token", () => {
     const style = evidenceRoleBadgeStyle("example_support");
-    expect(style).toContain("purple");
+    expect(style).toContain("lav");
   });
-  it("impact_support returns red styling", () => {
+  it("impact_support uses danger semantic token", () => {
     const style = evidenceRoleBadgeStyle("impact_support");
-    expect(style).toContain("red");
+    expect(style).toContain("danger");
   });
-  it("counter_evidence returns orange styling", () => {
+  it("counter_evidence uses warn semantic token", () => {
     const style = evidenceRoleBadgeStyle("counter_evidence");
-    expect(style).toContain("orange");
+    expect(style).toContain("warn");
   });
   it("null returns safe default", () => {
     expect(evidenceRoleBadgeStyle(null)).toBeTruthy();

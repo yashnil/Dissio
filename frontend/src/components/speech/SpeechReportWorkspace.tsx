@@ -193,7 +193,7 @@ export default function SpeechReportWorkspace({
                             {action.href && (
                               <a
                                 href={action.href}
-                                className="shrink-0 flex items-center gap-1 rounded-lg border border-hairline bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-3 transition-colors"
+                                className="shrink-0 flex items-center gap-1 rounded-lg border border-hairline bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                               >
                                 Go <ArrowRight size={11} />
                               </a>
@@ -255,96 +255,12 @@ export default function SpeechReportWorkspace({
                   </WorkspaceCard>
                 )}
 
-                {/* Recommended Practice / Drills */}
-                {drills.length > 0 ? (
-                  <WorkspaceCard key="drills-done">
-                    {/* id="drills" is the anchor target for ReportVerdictPanel and PracticeLoopCTA #drills hrefs */}
-                    <CardContent id="drills" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
-                      <StepHeader
-                        title="Recommended Practice"
-                        done
-                        aside={
-                          <Badge variant="indigo">
-                            {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
-                          </Badge>
-                        }
-                      />
-                      {/* Training chain — how this connects to improvement */}
-                      <ol className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                        {["Speech weakness", "Recommended drill", "Attempt", "Re-record", "Comparison"].map((step, i, arr) => {
-                          const reached =
-                            i === 0 ? true
-                            : i === 1 ? drills.length > 0
-                            : i === 2 ? drills.some((d) => d.status !== "assigned")
-                            : false;
-                          return (
-                            <li key={step} className="flex items-center gap-1.5">
-                              <span className={reached ? "rounded-md border border-lav/30 bg-lav/10 px-2 py-0.5 font-medium text-lav" : "rounded-md border border-hairline bg-surface-1 px-2 py-0.5 text-ink-faint"}>
-                                {step}
-                              </span>
-                              {i < arr.length - 1 && <span className="text-hairline-strong" aria-hidden>→</span>}
-                            </li>
-                          );
-                        })}
-                      </ol>
-                      <div className="flex flex-col gap-2">
-                        {drills.map((drill, i) => (
-                          <div key={drill.id} className="flex flex-col gap-1">
-                            {i === 0 && (
-                              <span className="text-[10px] font-semibold uppercase tracking-wide text-lav">Start here — top recommendation</span>
-                            )}
-                            <DrillCard
-                              drill={drill}
-                              index={i}
-                              onStatusChange={updateDrillStatus}
-                              updatingId={updatingDrill}
-                              userId={userId ?? undefined}
-                            />
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Re-record CTA after drills */}
-                      <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
-                          <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={startNewAttempt}
-                          className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
-                        >
-                          <RefreshCw size={11} />
-                          New Attempt
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </WorkspaceCard>
-                ) : feedback && (
-                  <WorkspaceCard key="drills-empty">
-                    <CardContent className="flex flex-col gap-4 px-5 py-5">
-                      <StepHeader title="Recommended Practice" done={false} />
-                      <EmptyStateCard
-                        icon={Target}
-                        title="No practice drills yet"
-                        description="Generate personalized drills based on your feedback to target your weaknesses and improve faster."
-                        actionLabel="Generate Practice Drills"
-                        onAction={generateDrills}
-                      />
-                      {genDrills && <p className="text-xs text-center text-ink-faint">Generating drills...</p>}
-                      {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
-                    </CardContent>
-                  </WorkspaceCard>
-                )}
-
-                {/* Flow */}
+                {/* ── 5. Debate Flow — analytical canvas (moved before drills) ─── */}
                 {argMap && (
                   <WorkspaceCard key="flow-done">
                     <CardContent id="flow" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <StepHeader n={3} title="Flow" done aside={
+                        <StepHeader n={3} title="Debate Flow" done aside={
                           <div className="flex items-center gap-2">
                             {argMap.source_type === "user_corrected" && (
                               <Badge variant="indigo">Flow corrected</Badge>
@@ -354,14 +270,16 @@ export default function SpeechReportWorkspace({
                             </Badge>
                           </div>
                         } />
+                        {/* Judge lens + edit — 6. Judge lens */}
                         <div className="flex items-center gap-2">
                           <JudgeModeSelector value={judgeViewMode} onChange={setJudgeViewMode} />
                           <button
                             type="button"
                             onClick={() => { setFlowEditMode(true); setEditingArgs(initEditArgs(argMap.arguments)); setCorrectionErr(""); }}
-                            className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors"
+                            aria-label="Edit flow arguments"
+                            className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                           >
-                            <Pencil size={10} />
+                            <Pencil size={10} aria-hidden="true" />
                             Edit
                           </button>
                         </div>
@@ -430,14 +348,91 @@ export default function SpeechReportWorkspace({
                   </WorkspaceCard>
                 )}
 
-                {/* View Speech Text - Collapsed (completed session)
-                    TODO: Future feature - Annotated Speech Text
-                    - Highlight claims, warrants, evidence, impacts inline
-                    - Underline weak warrants
-                    - Flag unsupported evidence
-                    - Show strong/weak segments with color coding
-                    - Useful for students who want to see exactly where their speech succeeded/failed
-                */}
+                {/* ── 7. Assigned Drills — connected to flow weaknesses ─────── */}
+                {drills.length > 0 ? (
+                  <WorkspaceCard key="drills-done">
+                    {/* id="drills" is the anchor target for ReportVerdictPanel and PracticeLoopCTA #drills hrefs */}
+                    <CardContent id="drills" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
+                      <StepHeader
+                        title="Assigned Practice"
+                        done
+                        aside={
+                          <Badge variant="indigo">
+                            {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
+                          </Badge>
+                        }
+                      />
+                      {/* Weakness → drill → re-record chain */}
+                      <ol className="flex flex-wrap items-center gap-1.5 text-[11px]" aria-label="Practice progression">
+                        {["Speech weakness", "Assigned drill", "Attempt", "Re-record", "Comparison"].map((step, i, arr) => {
+                          const reached =
+                            i === 0 ? true
+                            : i === 1 ? drills.length > 0
+                            : i === 2 ? drills.some((d) => d.status !== "assigned")
+                            : false;
+                          return (
+                            <li key={step} className="flex items-center gap-1.5">
+                              <span className={reached ? "rounded-md border border-lav/30 bg-lav/10 px-2 py-0.5 font-medium text-lav" : "rounded-md border border-hairline bg-surface-1 px-2 py-0.5 text-ink-faint"}>
+                                {step}
+                              </span>
+                              {i < arr.length - 1 && <span className="text-hairline-strong" aria-hidden="true">→</span>}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                      <div className="flex flex-col gap-2">
+                        {drills.map((drill, i) => (
+                          <div key={drill.id} className="flex flex-col gap-1">
+                            {i === 0 && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-lav">Start here — top recommendation</span>
+                            )}
+                            <DrillCard
+                              drill={drill}
+                              index={i}
+                              onStatusChange={updateDrillStatus}
+                              updatingId={updatingDrill}
+                              userId={userId ?? undefined}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Re-record CTA after drills */}
+                      <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
+                          <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={startNewAttempt}
+                          className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
+                        >
+                          <RefreshCw size={11} />
+                          New Attempt
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </WorkspaceCard>
+                ) : feedback && (
+                  <WorkspaceCard key="drills-empty">
+                    <CardContent className="flex flex-col gap-4 px-5 py-5">
+                      <StepHeader title="Assigned Practice" done={false} />
+                      <EmptyStateCard
+                        icon={Target}
+                        title="No practice drills yet"
+                        description="Generate personalized drills based on your feedback to target your weaknesses and improve faster."
+                        actionLabel="Generate Practice Drills"
+                        onAction={generateDrills}
+                      />
+                      {genDrills && <p className="text-xs text-center text-ink-faint">Generating drills...</p>}
+                      {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
+
+                {/* Transcript */}
                 {transcript && (
                   <WorkspaceCard key="input-details">
                     <CardContent className="flex flex-col gap-3 px-5 py-5">

@@ -238,9 +238,9 @@ export default function SpeechProcessingWorkspace({
                             <button
                               type="button"
                               onClick={() => { setFlowEditMode(true); setEditingArgs(initEditArgs(argMap.arguments)); setCorrectionErr(""); }}
-                              className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors"
+                              className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                             >
-                              <Pencil size={10} />
+                              <Pencil size={10} aria-hidden="true" />
                               Edit
                             </button>
                           </div>
@@ -364,8 +364,8 @@ export default function SpeechProcessingWorkspace({
                         {/* Priority Cards - Top 3 Issues */}
                         {feedback.raw_feedback?.top_3_priorities?.length ? (
                           <div className="flex flex-col gap-3">
-                            <div className="section-stamp" style={{ color: "oklch(0.640 0.215 25 / 0.8)" }}>
-                              <span className="h-1.5 w-1.5 rounded-full bg-danger flex-shrink-0" />
+                            <div className="section-stamp text-danger/80">
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" aria-hidden="true" />
                               Round-Losing Issues
                             </div>
                             <div className="grid grid-cols-1 gap-2">
@@ -490,10 +490,10 @@ export default function SpeechProcessingWorkspace({
                               <button
                                 type="button"
                                 onClick={() => copyRFD(feedback.raw_feedback?.decision_logic ?? "")}
-                                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-lav/10 hover:text-lav"
-                                title="Copy RFD"
+                                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-lav/10 hover:text-lav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+                                aria-label={rfdCopied ? "RFD copied to clipboard" : "Copy reason for decision"}
                               >
-                                {rfdCopied ? <Check size={10} className="text-ok" /> : <Copy size={10} />}
+                                {rfdCopied ? <Check size={10} className="text-ok" aria-hidden="true" /> : <Copy size={10} aria-hidden="true" />}
                                 {rfdCopied ? "Copied" : "Copy"}
                               </button>
                             </div>

@@ -26,9 +26,14 @@ export default function UploadDropzone({
 
   return (
     <div className="flex flex-col gap-3">
-      <label
+      {/* Semantic button so Enter/Space work natively without keyboard simulation */}
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading}
+        aria-label={selectedFile ? `Selected: ${selectedFile.name}. Press to change file.` : "Select an audio file"}
         className={cn(
-          "group flex cursor-pointer flex-col items-center gap-4 rounded-xl border-2 border-dashed p-10 text-center transition-all",
+          "group flex w-full cursor-pointer flex-col items-center gap-4 rounded-xl border-2 border-dashed p-10 text-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
           selectedFile
             ? "border-lav/40 bg-lav/5"
             : "border-hairline-strong hover:border-lav/40 hover:bg-lav/[0.03]",
@@ -37,7 +42,7 @@ export default function UploadDropzone({
       >
         {selectedFile ? (
           <>
-            <FileAudio size={24} className="text-lav" />
+            <FileAudio size={24} className="text-lav" aria-hidden="true" />
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium text-ink">{selectedFile.name}</span>
               <span className="text-xs text-ink-subtle">
@@ -48,25 +53,27 @@ export default function UploadDropzone({
         ) : (
           <>
             <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-hairline bg-surface-2 transition-colors group-hover:border-lav/30 group-hover:bg-lav/5">
-              <Upload size={16} className="text-ink-subtle transition-colors group-hover:text-lav" />
+              <Upload size={16} className="text-ink-subtle transition-colors group-hover:text-lav" aria-hidden="true" />
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-ink">Click to select an audio file</span>
+              <span className="text-sm font-medium text-ink">Click or press to select an audio file</span>
               <span className="text-xs text-ink-subtle">
                 {ALLOWED_EXT.join(", ")} · max {MAX_MB} MB
               </span>
             </div>
           </>
         )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ALLOWED_EXT.map((e) => `.${e}`).join(",")}
-          onChange={onFileChange}
-          disabled={uploading}
-          className="sr-only"
-        />
-      </label>
+      </button>
+      {/* Hidden input; tabIndex={-1} keeps tab flow on the button above */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ALLOWED_EXT.map((e) => `.${e}`).join(",")}
+        onChange={onFileChange}
+        disabled={uploading}
+        className="sr-only"
+        tabIndex={-1}
+      />
 
       {fileError   && <p className="text-xs text-danger">{fileError}</p>}
       {uploadError && <p className="text-xs text-danger">{uploadError}</p>}

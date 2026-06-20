@@ -445,9 +445,9 @@ describe("card action button contracts", () => {
     expect(showSnippetBadge(makeCard({ is_snippet_source: null }))).toBe(false);
   });
 
-  it("counter-evidence card gets orange border class", () => {
-    expect(cardBorderClass(makeCard({ is_counter_evidence: true }))).toContain("border-l-orange-400");
-    expect(cardBorderClass(makeCard({ is_counter_evidence: false }))).toBe("border-border");
+  it("counter-evidence card gets warn border class", () => {
+    expect(cardBorderClass(makeCard({ is_counter_evidence: true }))).toContain("warn");
+    expect(cardBorderClass(makeCard({ is_counter_evidence: false }))).toContain("hairline");
   });
 });
 

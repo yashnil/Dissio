@@ -16,6 +16,13 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import JudgeModeSelector, { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import { EASE } from "@/lib/motion";
+import {
+  resolveGrade,
+  dimColor,
+  CHAIN_STYLES,
+  ISSUE_STYLES,
+  type IssueColor,
+} from "@/lib/reportVerdictStyles";
 import type { DebateIssue, Drill, FeedbackReport, FeedbackScores, Speech } from "@/types";
 
 // ── Animated count-up ──────────────────────────────────────────────────────────
@@ -30,18 +37,7 @@ function AnimatedScore({ score }: { score: number }) {
   return <motion.span>{display}</motion.span>;
 }
 
-// ── Grade config ───────────────────────────────────────────────────────────────
-
-function resolveGrade(score: number | null) {
-  if (score === null) return { grade: "Not scored", ring: "border-hairline-strong", glow: "" };
-  if (score >= 90) return { grade: "Tournament-Ready",        ring: "border-ok",    glow: "oklch(0.620 0.170 145 / 0.30)" };
-  if (score >= 80) return { grade: "Strong",                  ring: "border-ok",    glow: "oklch(0.620 0.170 145 / 0.25)" };
-  if (score >= 70) return { grade: "Solid",                   ring: "border-lav",   glow: "oklch(0.510 0.156 278 / 0.30)" };
-  if (score >= 60) return { grade: "Developing",              ring: "border-lav",   glow: "oklch(0.510 0.156 278 / 0.25)" };
-  if (score >= 50) return { grade: "Flawed but Complete",     ring: "border-warn",  glow: "oklch(0.750 0.155 74 / 0.25)"  };
-  if (score >= 40) return { grade: "Needs Foundation",        ring: "border-warn",  glow: "oklch(0.750 0.155 74 / 0.20)"  };
-  return                  { grade: "Severely Underdeveloped", ring: "border-danger", glow: "oklch(0.640 0.215 25 / 0.20)" };
-}
+// resolveGrade, dimColor, CHAIN_STYLES, ISSUE_STYLES imported from @/lib/reportVerdictStyles
 
 // ── Mini dimension bar row ─────────────────────────────────────────────────────
 
@@ -52,13 +48,6 @@ const DIM_LABELS: Record<keyof FeedbackScores, string> = {
   drops:            "Drops",
   judge_adaptation: "Judge",
 };
-
-function dimColor(val: number): string {
-  if (val >= 16) return "bg-ok";
-  if (val >= 12) return "bg-lav";
-  if (val >= 8)  return "bg-warn";
-  return "bg-danger";
-}
 
 function MiniScoreBars({ scores }: { scores: FeedbackScores }) {
   return (
@@ -88,20 +77,17 @@ function MiniScoreBars({ scores }: { scores: FeedbackScores }) {
 
 // ── Argument chain — issue evidence visual ─────────────────────────────────────
 
-function ArgumentChain({ labels, color }: { labels: string[]; color: "danger" | "warn" }) {
+function ArgumentChain({ labels, color }: { labels: string[]; color: IssueColor }) {
   if (labels.length === 0) return null;
+  const s = CHAIN_STYLES[color];
   return (
-    <div className={`rounded-lg border border-${color}/15 bg-${color}/5 px-3 py-2`}>
-      <p className={`mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-${color}/60`}>
-        Found in your flow
-      </p>
+    <div className={s.wrapper}>
+      <p className={s.label}>Found in your flow</p>
       <div className="flex flex-wrap items-center gap-1">
         {labels.map((label, i) => (
           <span key={i} className="flex items-center gap-1">
-            {i > 0 && <ChevronRight size={9} className={`shrink-0 text-${color}/35`} />}
-            <span className={`rounded border border-${color}/20 bg-${color}/10 px-2 py-0.5 text-[10px] font-medium text-ink-muted`}>
-              {label}
-            </span>
+            {i > 0 && <ChevronRight size={9} className={s.chevron} />}
+            <span className={s.pill}>{label}</span>
           </span>
         ))}
       </div>
@@ -122,8 +108,9 @@ function TopIssueCard({
   const recommendation = issue?.recommendation ?? null;
   const whyItMatters   = issue?.why_it_matters ?? null;
   const severity       = issue?.severity       ?? "medium";
-  const color: "danger" | "warn" = severity === "high" ? "danger" : "warn";
+  const color: IssueColor = severity === "high" ? "danger" : "warn";
   const affectedLabels = issue?.affected_argument_labels?.slice(0, 4) ?? [];
+  const s = ISSUE_STYLES[color];
 
   if (!title) return null;
 
@@ -132,7 +119,7 @@ function TopIssueCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.25, ease: EASE }}
-      className={`rounded-xl border border-${color}/25 bg-${color}/5`}
+      className={s.card}
       style={{
         boxShadow: severity === "high"
           ? "0 0 24px -8px oklch(0.640 0.215 25 / 0.15)"
@@ -140,32 +127,23 @@ function TopIssueCard({
       }}
     >
       {/* Header */}
-      <div className={`flex items-center justify-between gap-2 border-b border-${color}/15 px-4 py-2`}>
+      <div className={s.header}>
         <div className="flex items-center gap-2">
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full bg-${color} analysis-step-active`} />
-          <p className={`text-eyebrow text-${color}`}>Round-Losing Issue</p>
+          <span className={s.dot} />
+          <p className={s.eyebrow}>Round-Losing Issue</p>
         </div>
-        <span className={`rounded-full border border-${color}/20 bg-${color}/10 px-2 py-0.5 text-[10px] font-semibold capitalize text-${color}`}>
-          {severity}
-        </span>
+        <span className={s.badge}>{severity}</span>
       </div>
 
       <div className="flex flex-col gap-2.5 px-4 py-3">
-        {/* Issue title */}
         <p className="text-sm font-semibold leading-snug text-ink">{title}</p>
-
-        {/* Argument chain — where this issue appears */}
         <ArgumentChain labels={affectedLabels} color={color} />
-
-        {/* Why it costs you rounds */}
         {whyItMatters && (
           <p className="text-xs leading-relaxed text-ink-muted">{whyItMatters}</p>
         )}
-
-        {/* Recommendation */}
         {recommendation && (
-          <div className={`flex items-start gap-2 rounded-lg border border-${color}/15 bg-surface-1 px-3 py-2`}>
-            <ArrowRight size={10} className={`mt-0.5 shrink-0 text-${color}`} />
+          <div className={s.reco}>
+            <ArrowRight size={10} className={s.arrow} />
             <p className="text-xs leading-relaxed text-ink-muted">{recommendation}</p>
           </div>
         )}
@@ -210,7 +188,7 @@ export default function ReportVerdictPanel({
   onStartNewAttempt,
   overallScore,
 }: ReportVerdictPanelProps) {
-  const { grade, ring, glow } = resolveGrade(overallScore);
+  const { grade, ring, glowBg, glow } = resolveGrade(overallScore);
 
   // Top structured issue (prefer high-severity v2+)
   const topIssue =
@@ -244,7 +222,7 @@ export default function ReportVerdictPanel({
         {/* Score ring + grade */}
         <div className="flex items-center gap-5">
           <div className="relative shrink-0">
-            <div className={`absolute inset-0 rounded-full opacity-20 blur-md ${ring.replace("border-", "bg-")}`} />
+            <div className={`absolute inset-0 rounded-full opacity-20 blur-md ${glowBg}`} />
             <div className={`relative flex h-20 w-20 flex-col items-center justify-center rounded-full border-[3px] bg-canvas ${ring}`}>
               <span className="text-3xl font-bold leading-none tracking-tight text-ink">
                 {overallScore !== null ? <AnimatedScore score={overallScore} /> : "—"}

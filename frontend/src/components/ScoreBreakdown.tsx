@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import type { FeedbackScores, ScoreExplanation } from "@/types";
 
@@ -64,6 +66,44 @@ function normalizeSpeechType(speechType?: string): string | undefined {
   if (normalized.includes('final') || normalized.includes('focus')) return 'final_focus';
   if (normalized.includes('cross')) return 'crossfire';
   return speechType.toLowerCase();
+}
+
+function RubricDetails({
+  speechType,
+  dims,
+}: {
+  speechType?: string;
+  dims: { label: string; description: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-hairline pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded"
+      >
+        <span className="text-xs font-medium text-ink-subtle">
+          What these dimensions measure{speechType ? ` for ${speechType.replace("_", " ")}` : ""}
+        </span>
+        <ChevronDown
+          size={12}
+          className={["text-ink-faint transition-transform duration-150", open ? "rotate-180" : ""].join(" ")}
+          aria-hidden="true"
+        />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1 pt-2 text-xs text-ink-faint">
+          {dims.map(({ label, description }) => (
+            <p key={label}>
+              <span className="font-medium text-ink">{label}:</span> {description}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ScoreBreakdown({
@@ -154,14 +194,14 @@ export default function ScoreBreakdown({
                   <span className="font-medium text-ink-subtle">{cleanScoreBand(explanation.score_band)}:</span> {explanation.evidence_from_speech}
                 </p>
                 {pct < 70 && (
-                  <p className="text-amber">
+                  <p className="text-warn">
                     ⚠ To improve: {explanation.how_to_improve}
                   </p>
                 )}
               </div>
             ) : (
               key === lowestDim.key && pct < 70 && (
-                <p className="ml-32 text-xs leading-relaxed text-amber">
+                <p className="ml-32 text-xs leading-relaxed text-warn">
                   ⚠ {advice}
                 </p>
               )
@@ -170,15 +210,8 @@ export default function ScoreBreakdown({
         );
       })}
 
-      {/* Dimension Explanations */}
-      <div className="flex flex-col gap-1 border-t border-hairline pt-2 text-xs text-ink-faint">
-        <p className="font-medium text-ink-subtle">What these dimensions measure for {speechType?.replace('_', ' ')}:</p>
-        {dims.map(({ label, description }) => (
-          <p key={label}>
-            <span className="font-medium text-ink">{label}:</span> {description}
-          </p>
-        ))}
-      </div>
+      {/* Dimension Explanations — collapsed by default (progressive disclosure) */}
+      <RubricDetails speechType={speechType} dims={dims} />
     </div>
   );
 }

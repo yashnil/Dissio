@@ -22,25 +22,25 @@ export function CardAnalysis({
 
   return (
     <div
-      className={`rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3.5 flex flex-col gap-3 ${className}`}
+      className={`rounded-xl border border-hairline bg-surface-2 px-4 py-3.5 flex flex-col gap-3 ${className}`}
     >
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
         RoundLab analysis
       </p>
       {warrant && (
         <div className="flex gap-2.5">
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-emerald-700 w-14 pt-0.5">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-ok w-14 pt-0.5">
             Warrant
           </span>
-          <p className="text-[12.5px] leading-relaxed text-gray-700">{warrant}</p>
+          <p className="text-[12.5px] leading-relaxed text-ink-subtle">{warrant}</p>
         </div>
       )}
       {impact && (
         <div className="flex gap-2.5">
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-rose-700 w-14 pt-0.5">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-danger w-14 pt-0.5">
             Impact
           </span>
-          <p className="text-[12.5px] leading-relaxed text-gray-700">{impact}</p>
+          <p className="text-[12.5px] leading-relaxed text-ink-subtle">{impact}</p>
         </div>
       )}
     </div>

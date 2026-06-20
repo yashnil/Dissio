@@ -103,14 +103,16 @@ export default function SpeechCaptureWorkspace({
                           type="button"
                           disabled={recBusy}
                           onClick={() => setMode(m)}
+                          aria-pressed={mode === m}
                           className={[
                             "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
                             mode === m
                               ? "border border-hairline bg-surface-3 text-ink"
                               : "text-ink-subtle hover:text-ink-muted",
                           ].join(" ")}
                         >
-                          {m === "record" ? <><Mic size={12} /> Record</> : m === "upload" ? <><Upload size={12} /> Upload</> : <><FileText size={12} /> Paste</>}
+                          {m === "record" ? <><Mic size={12} aria-hidden="true" /> Record</> : m === "upload" ? <><Upload size={12} aria-hidden="true" /> Upload</> : <><FileText size={12} aria-hidden="true" /> Paste</>}
                         </button>
                       ))}
                     </div>
@@ -153,7 +155,7 @@ export default function SpeechCaptureWorkspace({
                               value={pastedText}
                               onChange={(e) => setPastedText(e.target.value)}
                               placeholder={`Paste or type your speech here… (at least ${MIN_WORDS} words ≈ 30 seconds)`}
-                              className="h-48 w-full rounded-md border border-hairline bg-surface-2 px-3 py-2 text-sm text-ink outline-none transition-colors focus-visible:border-lav/50 focus-visible:ring-2 focus-visible:ring-lav/20 resize-none"
+                              className="h-48 w-full resize-none rounded-md border border-hairline bg-surface-2 px-3 py-2 text-sm text-ink outline-none transition-colors focus-visible:border-lav/50 focus-visible:ring-2 focus-visible:ring-lav/50"
                             />
                             {(() => {
                               const stats = derivePasteStats(pastedText);

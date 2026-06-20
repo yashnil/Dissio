@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   FileText, Upload, Search,
   CheckCircle2, X, BookOpen, Loader2, Sparkles,
-  Link2, ClipboardPaste, Globe,
+  Link2, ClipboardPaste, Globe, ChevronRight,
 } from "lucide-react";
 import AppShell from "@/components/shell/AppShell";
 import SectionHeader from "@/components/SectionHeader";
@@ -13,11 +13,10 @@ import { EmptyEvidenceGlyph } from "@/components/EmptyStateGlyphs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import {
-  sourceQualityLabel,
-} from "@/lib/researchHelpers";
+import { sourceQualityLabel, sourceQualityColor } from "@/lib/researchHelpers";
 import CardDraftReview from "@/components/CardDraftReview";
 import EvidenceCardDraft, { computeSaveReadiness } from "@/components/EvidenceCardDraft";
 import { EvidenceStudioModal } from "@/components/evidence/EvidenceStudioModal";
@@ -33,6 +32,14 @@ import {
   fileSizeLabel, extFromFilename, ALLOWED_EVIDENCE_EXTS, MAX_EVIDENCE_MB,
 } from "@/lib/evidenceHelpers";
 import { RESEARCH_DEPTH_OPTIONS, type ResearchDepth } from "@/lib/claimDecomposition";
+import {
+  deriveWorkbenchStage,
+  deriveMobileStageFromWorkbench,
+  deriveCandidateFilters,
+  deriveSkeletonCount,
+  MOBILE_STAGE_LABELS,
+  type MobileStage,
+} from "@/lib/workbenchModel";
 import type {
   EvidenceDocument,
   SearchResultItem,
@@ -93,8 +100,16 @@ export default function EvidencePage() {
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
   const [discardingDraftId, setDiscardingDraftId] = useState<string | null>(null);
   const [cardFilter, setCardFilter] = useState<"all" | "ready" | "review" | "weak" | "counter">("all");
-  const [studioCard, setStudioCard] = useState<CardDraft | null>(null); // card open in modal
-  const [saveError, setSaveError] = useState(""); // inline save error (replaces runtime crash)
+  const [studioCard, setStudioCard] = useState<CardDraft | null>(null);
+  const [saveError, setSaveError] = useState("");
+
+  // Workbench state — which card is previewed in the right panel
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  // Mobile panel navigation — overrides auto-derived stage routing
+  const [mobileStageOverride, setMobileStageOverride] = useState<MobileStage | null>(null);
+  // Roving tabindex for candidate keyboard navigation
+  const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
+  const candidateListRef = useRef<HTMLDivElement>(null);
 
   // Block entries state
   const [blockEntries, setBlockEntries] = useState<BlockEntry[]>([]);
@@ -103,6 +118,33 @@ export default function EvidencePage() {
   const [blockSearching, setBlockSearching] = useState(false);
   const [blockSearchResults, setBlockSearchResults] = useState<BlockEntry[] | null>(null);
   const [blockSearchErr, setBlockSearchErr] = useState("");
+
+  // ── Derived workbench state ────────────────────────────────────────────────
+
+  const allCards = cbGenerateResult?.cards ?? [];
+  const workbenchStage = deriveWorkbenchStage({
+    isLoading: cbLoading,
+    hasResults: allCards.length > 0,
+    selectedCardId,
+    isSaving: savingDraftId !== null,
+    savedCount: drafts.filter((d) => d.status === "saved").length,
+  });
+  const autoMobileStage = deriveMobileStageFromWorkbench(workbenchStage);
+  const mobileStage = mobileStageOverride ?? autoMobileStage;
+
+  // The currently selected card (for right panel preview)
+  const selectedCard =
+    (allCards.find((c) => c.id === selectedCardId) ??
+     drafts.find((d) => d.id === selectedCardId)) ?? null;
+
+  // Candidate filters
+  const candidateFilterChips = deriveCandidateFilters(
+    allCards.map((c) => ({
+      readinessLevel: computeSaveReadiness(c).level as "ready" | "review_needed" | "weak",
+      isCounter: !!c.is_counter_evidence,
+    })),
+    cardFilter,
+  );
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -122,33 +164,33 @@ export default function EvidencePage() {
       .finally(() => setLoading(false));
   }, [router]);
 
-  // ── Load documents ─────────────────────────────────────────────────────────
+  // ── Loaders ────────────────────────────────────────────────────────────────
 
   async function loadDocuments(uid: string) {
     setDocsLoading(true);
     try {
       const docs = await apiFetch<EvidenceDocument[]>(`/documents?user_id=${uid}`);
       setDocuments(docs);
-    } catch {
-      // non-fatal
-    } finally {
-      setDocsLoading(false);
-    }
+    } catch { /* non-fatal */ } finally { setDocsLoading(false); }
   }
-
-  // ── Load block entries ─────────────────────────────────────────────────────
 
   async function loadBlockEntries(uid: string) {
     setBlockEntriesLoading(true);
     try {
       const entries = await apiFetch<BlockEntry[]>(`/block-entries?user_id=${uid}`);
       setBlockEntries(entries);
-    } catch {
-      // non-fatal
-    } finally {
-      setBlockEntriesLoading(false);
-    }
+    } catch { /* non-fatal */ } finally { setBlockEntriesLoading(false); }
   }
+
+  async function loadDrafts(uid: string) {
+    setDraftsLoading(true);
+    try {
+      const data = await apiFetch<CardDraft[]>(`/research/card-drafts?user_id=${uid}&status=draft`);
+      setDrafts(data);
+    } catch { /* non-fatal */ } finally { setDraftsLoading(false); }
+  }
+
+  // ── Block search ───────────────────────────────────────────────────────────
 
   async function handleBlockSearch(e: React.SyntheticEvent) {
     e.preventDefault();
@@ -163,32 +205,17 @@ export default function EvidencePage() {
       setBlockSearchResults(results);
     } catch (e: unknown) {
       setBlockSearchErr(e instanceof Error ? e.message : "Search failed");
-    } finally {
-      setBlockSearching(false);
-    }
+    } finally { setBlockSearching(false); }
   }
 
   function handleBlocksExtracted(entries: BlockEntry[]) {
     setBlockEntries((prev) => {
       const existingIds = new Set(prev.map((e) => e.id));
-      const newEntries = entries.filter((e) => !existingIds.has(e.id));
-      return [...newEntries, ...prev];
+      return [...entries.filter((e) => !existingIds.has(e.id)), ...prev];
     });
   }
 
-  // ── Card Builder functions ─────────────────────────────────────────────────
-
-  async function loadDrafts(uid: string) {
-    setDraftsLoading(true);
-    try {
-      const data = await apiFetch<CardDraft[]>(`/research/card-drafts?user_id=${uid}&status=draft`);
-      setDrafts(data);
-    } catch {
-      // non-fatal
-    } finally {
-      setDraftsLoading(false);
-    }
-  }
+  // ── Card Builder ───────────────────────────────────────────────────────────
 
   async function handleExtractUrl() {
     if (!userId || !cbUrl.trim()) return;
@@ -207,13 +234,10 @@ export default function EvidencePage() {
         }),
       });
       setCbExtractResult(result);
-      // Now generate draft
       await generateDraftFromSource(result.research_source_id, null, null);
     } catch (e: unknown) {
       setCbError(e instanceof Error ? e.message : "Extraction failed");
-    } finally {
-      setCbLoading(false);
-    }
+    } finally { setCbLoading(false); }
   }
 
   async function handlePasteDraft() {
@@ -224,9 +248,7 @@ export default function EvidencePage() {
       await generateDraftFromSource(null, null, cbPastedText.trim());
     } catch (e: unknown) {
       setCbError(e instanceof Error ? e.message : "Draft generation failed");
-    } finally {
-      setCbLoading(false);
-    }
+    } finally { setCbLoading(false); }
   }
 
   async function handleGenerateCards(claimOverride?: string) {
@@ -238,6 +260,8 @@ export default function EvidencePage() {
     setCbLoading(true);
     setCbError("");
     setCbGenerateResult(null);
+    setSelectedCardId(null);
+    setMobileStageOverride(null);
     try {
       const result = await apiFetch<GenerateCardsResponse>("/research/generate-cards", {
         method: "POST",
@@ -251,13 +275,13 @@ export default function EvidencePage() {
           include_partial_support: true,
         }),
       });
-      setCardFilter("all"); // reset filter when new results arrive
+      setCardFilter("all");
       setCbGenerateResult(result);
+      // Auto-transition mobile to candidates panel when results arrive
+      if (result.cards.length > 0) setMobileStageOverride("candidates");
     } catch (e: unknown) {
       setCbError(e instanceof Error ? e.message : "Search failed");
-    } finally {
-      setCbLoading(false);
-    }
+    } finally { setCbLoading(false); }
   }
 
   async function generateDraftFromSource(
@@ -282,6 +306,9 @@ export default function EvidencePage() {
       body: JSON.stringify(body),
     });
     setDrafts((prev) => [draft, ...prev]);
+    // Auto-select the newly generated draft in the right panel
+    setSelectedCardId(draft.id);
+    setMobileStageOverride("card");
   }
 
   async function handleSaveDraft(draft: CardDraft, confirmed: boolean) {
@@ -289,9 +316,6 @@ export default function EvidencePage() {
     setSavingDraftId(draft.id);
     setSaveError("");
     try {
-      // Patch the draft with any user-modified spans before saving, so the
-      // saved evidence card preserves the user's markup edits. Bold + italic
-      // have no dedicated columns, so the full markup rides in user_markup_json.
       const m = draft.user_markup_json;
       const hasFullMarkup =
         !!m &&
@@ -332,9 +356,7 @@ export default function EvidencePage() {
         ? err.message
         : "Save failed. Check that your account profile is set up and try again.";
       setSaveError(msg);
-    } finally {
-      setSavingDraftId(null);
-    }
+    } finally { setSavingDraftId(null); }
   }
 
   async function handleDiscardDraft(draftId: string) {
@@ -346,9 +368,8 @@ export default function EvidencePage() {
       setCbGenerateResult((prev) =>
         prev ? { ...prev, cards: prev.cards.filter((c) => c.id !== draftId) } : prev,
       );
-    } finally {
-      setDiscardingDraftId(null);
-    }
+      if (selectedCardId === draftId) setSelectedCardId(null);
+    } finally { setDiscardingDraftId(null); }
   }
 
   async function handlePatchDraft(draftId: string, updates: Partial<CardDraft>) {
@@ -360,19 +381,16 @@ export default function EvidencePage() {
         body: JSON.stringify({ user_id: userId, ...updates }),
       });
       setDrafts((prev) => prev.map((d) => d.id === draftId ? updated : d));
-    } catch {
-      // non-fatal patch
-    }
+    } catch { /* non-fatal */ }
   }
 
-  // ── File selection ─────────────────────────────────────────────────────────
+  // ── File handling ──────────────────────────────────────────────────────────
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setFileError("");
     setUploadError("");
     const file = e.target.files?.[0] ?? null;
     if (!file) return;
-
     const ext = extFromFilename(file.name);
     if (!ALLOWED_EVIDENCE_EXTS.includes(ext)) {
       setFileError(`Unsupported file type. Allowed: ${ALLOWED_EVIDENCE_EXTS.join(", ")}`);
@@ -385,41 +403,26 @@ export default function EvidencePage() {
     setSelectedFile(file);
   }
 
-  // ── Upload ─────────────────────────────────────────────────────────────────
-
   async function handleUpload() {
-    if (!selectedFile) return;
-    if (!userId) {
-      setUploadError("Please sign in before uploading evidence.");
+    if (!selectedFile || !userId) {
+      if (!userId) setUploadError("Please sign in before uploading evidence.");
       return;
     }
     setUploading(true);
     setUploadError("");
-
     const sb = createClient();
-    // Sanitize filename: remove characters that can break storage paths
     const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const storagePath = `${userId}/${Date.now()}_${safeName}`;
-
     try {
-      // Step 1: upload file to Supabase Storage "documents" bucket
       const { error: storageErr } = await sb.storage
         .from("documents")
         .upload(storagePath, selectedFile, { upsert: false });
-
       if (storageErr) {
         const msg = storageErr.message ?? "";
         if (msg.includes("row-level security") || msg.includes("policy")) {
-          setUploadError(
-            "Upload blocked by evidence library permissions. " +
-            "Apply migration 20260608110000_fix_document_storage_policies.sql " +
-            "and ensure the 'documents' storage bucket exists."
-          );
+          setUploadError("Upload blocked by evidence library permissions. Apply the documents storage migration and ensure the bucket exists.");
         } else if (msg.includes("Bucket not found") || msg.includes("bucket")) {
-          setUploadError(
-            "The 'documents' storage bucket does not exist. " +
-            "Create it in the Supabase dashboard (Storage → New bucket → 'documents', private)."
-          );
+          setUploadError("The 'documents' storage bucket does not exist. Create it in the Supabase dashboard.");
         } else if (msg.includes("already exists") || msg.includes("duplicate")) {
           setUploadError("A file with that name already exists. Rename the file and try again.");
         } else {
@@ -427,8 +430,6 @@ export default function EvidencePage() {
         }
         return;
       }
-
-      // Step 2: register document with backend (triggers parsing)
       let doc: EvidenceDocument;
       try {
         doc = await apiFetch<EvidenceDocument>("/documents", {
@@ -444,28 +445,21 @@ export default function EvidencePage() {
           }),
         });
       } catch (parseErr: unknown) {
-        // File is stored but parsing failed — show document status from backend if available
         setUploadError(
           parseErr instanceof Error
             ? "File uploaded but parsing failed: " + parseErr.message
             : "File uploaded but the backend could not process it."
         );
-        // Still reload the list so the user can see the failed document
         await loadDocuments(userId);
         return;
       }
-
       setDocuments((prev) => [doc, ...prev]);
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err: unknown) {
       setUploadError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
-      setUploading(false);
-    }
+    } finally { setUploading(false); }
   }
-
-  // ── Search ─────────────────────────────────────────────────────────────────
 
   async function handleSearch(e: React.SyntheticEvent) {
     e.preventDefault();
@@ -482,13 +476,44 @@ export default function EvidencePage() {
       setSearchResults(results);
     } catch (err: unknown) {
       setSearchError(err instanceof Error ? err.message : "Search failed.");
-    } finally {
-      setSearching(false);
-    }
+    } finally { setSearching(false); }
   }
 
   function handleDeleteDoc(id: string) {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+  }
+
+  // ── Select card for right panel ────────────────────────────────────────────
+
+  function handleSelectCard(card: CardDraft, idx?: number) {
+    setSelectedCardId(card.id);
+    setMobileStageOverride("card");
+    if (idx !== undefined) setActiveCardIndex(idx);
+  }
+
+  function handleCandidateKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const cards = filteredCards;
+    if (cards.length === 0) return;
+    let next = activeCardIndex;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      next = Math.min(activeCardIndex + 1, cards.length - 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      next = Math.max(activeCardIndex - 1, 0);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      next = 0;
+    } else if (e.key === "End") {
+      e.preventDefault();
+      next = cards.length - 1;
+    } else {
+      return;
+    }
+    setActiveCardIndex(next);
+    // Move DOM focus to the newly active card button
+    const buttons = candidateListRef.current?.querySelectorAll<HTMLElement>("button[data-candidate]");
+    buttons?.[next]?.focus();
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
@@ -496,7 +521,7 @@ export default function EvidencePage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-hairline border-t-lav" />
+        <div className="h-8 w-8 motion-safe:animate-spin rounded-full border-2 border-hairline border-t-lav" />
       </div>
     );
   }
@@ -505,9 +530,26 @@ export default function EvidencePage() {
 
   const parsedCount = documents.filter((d) => d.status === "parsed").length;
 
+  // Sorted cards for the candidate panel
+  const readinessOrder = { ready: 0, review_needed: 1, weak: 2 } as const;
+  const sortedCards = [...allCards].sort((a, b) => {
+    const ra = computeSaveReadiness(a).level;
+    const rb = computeSaveReadiness(b).level;
+    return (readinessOrder[ra] ?? 1) - (readinessOrder[rb] ?? 1);
+  });
+  const filteredCards = sortedCards.filter((c) => {
+    if (cardFilter === "all") return true;
+    if (cardFilter === "counter") return !!c.is_counter_evidence;
+    const r = computeSaveReadiness(c).level;
+    if (cardFilter === "ready") return r === "ready" && !c.is_counter_evidence;
+    if (cardFilter === "review") return r === "review_needed";
+    if (cardFilter === "weak") return r === "weak";
+    return true;
+  });
+
   return (
     <AppShell maxWidth="7xl">
-      {/* ── Evidence Studio Modal ─────────────────────────────────────────────── */}
+      {/* Evidence Studio Modal (full-screen card editor) */}
       {studioCard && (
         <EvidenceStudioModal
           card={studioCard}
@@ -518,28 +560,35 @@ export default function EvidencePage() {
         />
       )}
 
-      <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-6">
 
-        {/* Header */}
+        {/* Page header */}
         <SectionHeader
           title="Evidence Library"
-          description="Upload your case files. RoundLab checks whether your speech claims are supported by your own evidence."
+          description="Upload case files or cut evidence cards from real sources."
         />
 
-        {/* Tab bar */}
-        <div className="flex items-center gap-0 border-b border-border -mb-2">
+        {/* ── Tab bar ────────────────────────────────────────────────────────── */}
+        <div
+          className="flex items-center gap-0 border-b border-hairline -mb-2"
+          role="tablist"
+          aria-label="Evidence sections"
+        >
           {([
-            { key: "library", label: "Library", icon: <FileText size={13} /> },
-            { key: "builder", label: "Card Builder", icon: <Sparkles size={13} /> },
+            { key: "library", label: "Library", icon: <FileText size={13} aria-hidden="true" /> },
+            { key: "builder", label: "Card Builder", icon: <Sparkles size={13} aria-hidden="true" /> },
           ] as const).map(({ key, label, icon }) => (
             <button
               key={key}
+              role="tab"
+              aria-selected={activeTab === key}
               onClick={() => setActiveTab(key)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav focus-visible:ring-offset-1 rounded-sm ${
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded-t",
                 activeTab === key
-                  ? "border-lav text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-              }`}
+                  ? "border-lav text-ink"
+                  : "border-transparent text-ink-subtle hover:text-ink hover:border-hairline",
+              )}
             >
               {icon}
               {label}
@@ -547,958 +596,994 @@ export default function EvidencePage() {
           ))}
         </div>
 
-        {/* ── Card Builder tab ───────────────────────────────────────────────── */}
+        {/* ── Card Builder tab — 3-column workbench ────────────────────────── */}
         {activeTab === "builder" && (
-          <section className="flex flex-col gap-6">
-            <div>
-              <p className="text-sm text-ink-muted leading-relaxed mb-4">
-                Cut debate evidence cards from real sources. RoundLab extracts the passage — you review and confirm before saving. Body text is always exact source text.
-              </p>
+          <section aria-label="Card Builder workbench">
 
-              {/* Mode selector */}
-              <div className="flex items-center gap-1.5 mb-5 flex-wrap">
-                {([
-                  { key: "url",    label: "From URL",        icon: <Link2 size={12} /> },
-                  { key: "paste",  label: "Paste Text",      icon: <ClipboardPaste size={12} /> },
-                  { key: "search", label: "Research Search", icon: <Globe size={12} /> },
-                ] as const).map(({ key, label, icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => { setBuilderMode(key); setCbError(""); setCbGenerateResult(null); }}
-                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav focus-visible:ring-offset-1 ${
-                      builderMode === key
-                        ? "bg-foreground text-background border-foreground"
-                        : "bg-muted text-muted-foreground border-border hover:text-foreground hover:border-foreground/30"
-                    }`}
-                  >
-                    {icon}{label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Shared fields: topic + claim goal + side */}
-              <div className="rounded-xl border border-border bg-surface-1 p-4 mb-4 flex flex-col gap-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-ink-muted block mb-1">Topic (optional)</label>
-                  <Input
-                    value={cbTopic}
-                    onChange={(e) => setCbTopic(e.target.value)}
-                    placeholder="e.g. US-China trade relations"
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-ink-muted block mb-1">
-                    Claim to support
-                    {builderMode === "search" ? <span className="text-danger ml-1">*</span> : <span className="text-ink-muted/70 ml-1 font-normal">(optional)</span>}
-                  </label>
-                  <Input
-                    value={cbClaimGoal}
-                    onChange={(e) => setCbClaimGoal(e.target.value)}
-                    placeholder="e.g. tariffs hurt economic growth"
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-ink-muted block mb-1">Side (optional)</label>
-                  <select
-                    value={cbSide}
-                    onChange={(e) => setCbSide(e.target.value)}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent/30"
-                  >
-                    <option value="">Not specified</option>
-                    <option value="Pro">Pro</option>
-                    <option value="Con">Con</option>
-                  </select>
-                  </div>
-                </div>
-                <p className="text-[11px] text-ink-muted">
-                  RoundLab searches credible sources, cuts exact evidence, and drafts debate-ready cards.
-                </p>
-              </div>
-
-              {/* URL mode */}
-              {builderMode === "url" && (
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-ink-muted block mb-1">Article URL</label>
-                    <div className="flex gap-2">
-                      <Input
-                        value={cbUrl}
-                        onChange={(e) => setCbUrl(e.target.value)}
-                        placeholder="https://..."
-                        className="flex-1 text-sm font-mono"
-                        type="url"
-                      />
-                      <Button
-                        onClick={handleExtractUrl}
-                        disabled={cbLoading || !cbUrl.trim()}
-                        size="sm"
-                        className="shrink-0"
-                      >
-                        {cbLoading ? <><Loader2 size={13} className="mr-1.5 animate-spin" />Extracting…</> : "Extract + Draft"}
-                      </Button>
-                    </div>
-                  </div>
-                  {cbLoading && (
-                    <EvidenceSearchProgress
-                      active={cbLoading}
-                      durationMs={30_000}
-                      label="Opening source and cutting evidence"
-                    />
-                  )}
-                  {cbExtractResult && (
-                    <div className="flex items-center gap-2 text-xs text-ink-muted rounded border border-border bg-surface-faint px-3 py-2">
-                      <CheckCircle2 size={12} className="text-ok shrink-0" />
-                      <span>
-                        Extracted from <strong>{cbExtractResult.article.metadata.publication ?? new URL(cbExtractResult.article.url).hostname}</strong>.
-                        {" "}
-                        <span className={`font-medium ${cbExtractResult.quality.source_quality === "high" ? "text-green-700" : cbExtractResult.quality.source_quality === "medium" ? "text-amber-600" : "text-ink-muted"}`}>
-                          {sourceQualityLabel(cbExtractResult.quality.source_quality)}.
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Paste mode */}
-              {builderMode === "paste" && (
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-ink-muted block mb-1">Paste source text</label>
-                    <textarea
-                      value={cbPastedText}
-                      onChange={(e) => setCbPastedText(e.target.value)}
-                      placeholder="Paste the article or passage you want to cut a card from…"
-                      className="w-full min-h-36 rounded-lg border border-border bg-surface-faint px-3 py-2.5 text-sm text-ink leading-relaxed resize-y focus:border-accent focus:outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: "Author", value: cbPasteAuthor, set: setCbPasteAuthor, placeholder: "Jane Doe" },
-                      { label: "Publication", value: cbPastePublication, set: setCbPastePublication, placeholder: "New York Times" },
-                      { label: "Date", value: cbPasteDate, set: setCbPasteDate, placeholder: "2024-03-15" },
-                    ].map(({ label, value, set, placeholder }) => (
-                      <div key={label}>
-                        <label className="text-xs font-medium text-ink-muted block mb-1">{label} (optional)</label>
-                        <Input value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} className="text-sm" />
-                      </div>
-                    ))}
-                  </div>
-                  <Button
-                    onClick={handlePasteDraft}
-                    disabled={cbLoading || !cbPastedText.trim()}
-                    size="sm"
-                    className="self-start"
-                  >
-                    {cbLoading ? <><Loader2 size={13} className="mr-1.5 animate-spin" />Generating…</> : "Generate Card Draft"}
-                  </Button>
-                  {cbLoading && (
-                    <EvidenceSearchProgress
-                      active={cbLoading}
-                      durationMs={20_000}
-                      label="Cleaning text and cutting evidence"
-                    />
-                  )}
-                </div>
-              )}
-
-              {/* Research Search mode */}
-              {builderMode === "search" && (
-                <div className="flex flex-col gap-3">
-                  {/* Research plan — decompose the claim into angles */}
-                  <ClaimDecomposition
-                    claim={cbClaimGoal}
-                    disabled={cbLoading}
-                    onSearchBranch={(query) => handleGenerateCards(query)}
-                  />
-
-                  {/* Research depth (maps to how many cards we cut) */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-ink-muted">Depth</span>
-                    <div className="flex gap-0.5 rounded-lg border border-border bg-surface-1 p-0.5" role="radiogroup" aria-label="Research depth">
-                      {RESEARCH_DEPTH_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          role="radio"
-                          aria-checked={cbDepth === opt.key}
-                          title={opt.hint}
-                          onClick={() => setCbDepth(opt.key)}
-                          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${cbDepth === opt.key ? "bg-surface-3 text-ink" : "text-ink-subtle hover:text-ink"}`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => handleGenerateCards()}
-                    disabled={cbLoading || !cbClaimGoal.trim()}
-                    size="sm"
-                    className="self-start bg-blue-600 text-white hover:bg-blue-700"
-                  >
-                    {cbLoading
-                      ? <><Loader2 size={13} className="mr-1.5 animate-spin" />Searching sources and drafting candidate cards…</>
-                      : <><Globe size={13} className="mr-1.5" />Find candidate cards</>
-                    }
-                  </Button>
-
-                  {/* Transparent research summary (real stages + rejected sources) */}
-                  {!cbLoading && cbGenerateResult?.search_configured && (
-                    <ResearchSummary result={cbGenerateResult} />
-                  )}
-
-                  {/* Not configured */}
-                  {cbGenerateResult && !cbGenerateResult.search_configured && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col gap-2.5">
-                      <p className="text-xs font-semibold text-amber-900">Research Search not configured</p>
-                      <p className="text-xs text-amber-800 leading-relaxed">
-                        {cbGenerateResult.no_card_reason ?? "A Tavily API key is required for Research Search. Set TAVILY_API_KEY in your backend .env file."}
-                      </p>
-                      {cbGenerateResult.suggestions && cbGenerateResult.suggestions.length > 0 && (
-                        <ul className="text-xs text-amber-800 list-disc list-inside flex flex-col gap-0.5">
-                          {cbGenerateResult.suggestions.map((s) => <li key={s}>{s}</li>)}
-                        </ul>
-                      )}
-                      <div className="flex items-center gap-2 mt-1">
-                        <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
-                          onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}>
-                          <Link2 size={11} /> From URL instead
-                        </Button>
-                        <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
-                          onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}>
-                          <ClipboardPaste size={11} /> Paste Text instead
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Animated progress card (0→100 over ~60s, holds at Finalizing) */}
-                  {cbLoading && <EvidenceSearchProgress active={cbLoading} />}
-
-                  {/* Cards found — summary bar + filters + card list */}
-                  {shouldShowResultsSummary(cbGenerateResult, cbLoading) && cbGenerateResult && (() => {
-                    // Sort cards: ready first, then review_needed, then weak
-                    const readinessOrder = { ready: 0, review_needed: 1, weak: 2 };
-                    const sorted = [...cbGenerateResult.cards].sort((a, b) => {
-                      const ra = computeSaveReadiness(a).level;
-                      const rb = computeSaveReadiness(b).level;
-                      return (readinessOrder[ra] ?? 1) - (readinessOrder[rb] ?? 1);
-                    });
-
-                    // Filter
-                    const filtered = sorted.filter((c) => {
-                      if (cardFilter === "all") return true;
-                      if (cardFilter === "counter") return !!c.is_counter_evidence;
-                      const r = computeSaveReadiness(c).level;
-                      if (cardFilter === "ready") return r === "ready" && !c.is_counter_evidence;
-                      if (cardFilter === "review") return r === "review_needed";
-                      if (cardFilter === "weak") return r === "weak";
-                      return true;
-                    });
-
-                    // Count by level
-                    const readyCt = sorted.filter((c) => computeSaveReadiness(c).level === "ready" && !c.is_counter_evidence).length;
-                    const reviewCt = sorted.filter((c) => computeSaveReadiness(c).level === "review_needed").length;
-                    const weakCt = sorted.filter((c) => computeSaveReadiness(c).level === "weak").length;
-                    const counterCt = sorted.filter((c) => !!c.is_counter_evidence).length;
-
-                    const plan = cbGenerateResult.evidence_set_plan;
-
-                    // Map slot_label → best readiness of cards filling that slot
-                    const slotReadiness = new Map<string, "ready" | "review_needed" | "weak">();
-                    for (const c of sorted) {
-                      if (!c.slot_label) continue;
-                      const r = computeSaveReadiness(c).level;
-                      const existing = slotReadiness.get(c.slot_label);
-                      const order = { ready: 0, review_needed: 1, weak: 2 } as const;
-                      if (!existing || order[r] < order[existing]) {
-                        slotReadiness.set(c.slot_label, r);
-                      }
-                    }
-
-                    const filledSlots = slotReadiness.size;
-                    const totalSlots = plan?.slots?.length ?? 0;
-                    const slotPct = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 100) : 0;
-
-                    return (
-                      <div className="flex flex-col gap-4">
-                        {/* Evidence packet header — clean count + thin progress, no bubbles */}
-                        <div className="flex items-center justify-between gap-4 flex-wrap">
-                          <div className="flex flex-col gap-1.5">
-                            <h3 className="text-[15px] font-semibold text-gray-900">
-                              Evidence packet
-                              <span className="ml-2 text-[12px] font-normal text-gray-400">
-                                {sorted.length} card{sorted.length === 1 ? "" : "s"}
-                              </span>
-                            </h3>
-                            {totalSlots > 0 && (
-                              <div className="flex items-center gap-2">
-                                <div className="h-1 w-28 rounded-full bg-gray-100 overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full bg-gray-800 transition-all"
-                                    style={{ width: `${slotPct}%` }}
-                                  />
-                                </div>
-                                <span className="text-[11px] text-gray-400">
-                                  {filledSlots} of {totalSlots} slots filled
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                          {/* Filter — calm segmented control, only shown when there's a mix */}
-                          {sorted.length > 1 && (
-                            <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5 text-[11px]">
-                              {(
-                                [
-                                  { key: "all" as const, label: "All", n: sorted.length },
-                                  { key: "ready" as const, label: "Ready", n: readyCt },
-                                  { key: "review" as const, label: "Review", n: reviewCt },
-                                  { key: "weak" as const, label: "Verify", n: weakCt },
-                                  ...(counterCt > 0 ? [{ key: "counter" as const, label: "Counter", n: counterCt }] : []),
-                                ]
-                              )
-                                .filter((f) => f.key === "all" || f.n > 0)
-                                .map(({ key, label, n }) => (
-                                  <button
-                                    key={key}
-                                    onClick={() => setCardFilter(key)}
-                                    className={`px-2.5 py-1 rounded-md transition-colors ${
-                                      cardFilter === key
-                                        ? "bg-gray-900 text-white font-medium"
-                                        : "text-gray-500 hover:text-gray-800"
-                                    }`}
-                                  >
-                                    {label} <span className="opacity-60">{n}</span>
-                                  </button>
-                                ))}
-                            </div>
-                          )}
-                        </div>
-                        {cbGenerateResult.usable_indirect_support_found &&
-                          !cbGenerateResult.direct_support_found && (
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                              No direct evidence found, but mechanism/example cards support your argument&apos;s warrant.
-                            </div>
-                          )}
-                        <div className="flex flex-col gap-3">
-                          {filtered.map((card, idx) => (
-                            <div key={card.id} className="relative">
-                              {idx === 0 && readyCt > 0 && cardFilter === "all" && (
-                                <span className="absolute -top-2 left-3 z-10 text-[9px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-gray-900 text-white shadow-sm">
-                                  Best match
-                                </span>
-                              )}
-                              <EvidenceCardDraft
-                                card={card}
-                                claimGoal={cbClaimGoal.trim()}
-                                onSave={(c) => handleSaveDraft(c, true)}
-                                onDiscard={handleDiscardDraft}
-                                onOpenStudio={() => setStudioCard(card)}
-                              />
-                              <div className="mt-1.5">
-                                <ProvenanceTrail card={card} />
-                              </div>
-                            </div>
-                          ))}
-                          {filtered.length === 0 && (
-                            <p className="text-[11px] text-ink-muted text-center py-4">
-                              No cards match this filter.
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Unfilled slots — strategic gaps with helpful CTAs */}
-                        {cbGenerateResult.unfilled_slots &&
-                          cbGenerateResult.unfilled_slots.length > 0 && (
-                            <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2.5 flex flex-col gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-semibold text-amber-800">
-                                  Could not fill {cbGenerateResult.unfilled_slots.length} slot{cbGenerateResult.unfilled_slots.length > 1 ? "s" : ""}
-                                </span>
-                                <div className="flex flex-wrap gap-1">
-                                  {cbGenerateResult.unfilled_slots.map((label) => (
-                                    <span
-                                      key={label}
-                                      className="text-[9px] px-1.5 py-px rounded border border-amber-300 bg-white text-amber-700"
-                                    >
-                                      {label}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                              <p className="text-[10px] text-amber-700/80">
-                                No strong card was found automatically. Cut one manually:
-                              </p>
-                              <div className="flex gap-1.5 flex-wrap">
-                                <button
-                                  onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}
-                                  className="text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 flex items-center gap-1"
-                                >
-                                  <Link2 size={10} /> Try source URL
-                                </button>
-                                <button
-                                  onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}
-                                  className="text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 flex items-center gap-1"
-                                >
-                                  <ClipboardPaste size={10} /> Paste source text
-                                </button>
-                                <button
-                                  onClick={() => handleGenerateCards()}
-                                  disabled={cbLoading}
-                                  className="text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100"
-                                >
-                                  Search again
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                        {/* Weak leads — separate from main cards, styled as leads not cards */}
-                        {cbGenerateResult.weak_leads &&
-                          cbGenerateResult.weak_leads.length > 0 && (
-                            <div className="rounded-md border border-border/50 bg-surface-faint/20 px-3 py-2.5 flex flex-col gap-2">
-                              <p className="text-[10px] font-semibold text-ink-muted">
-                                Source leads — verify manually before cutting
-                              </p>
-                              <div className="flex flex-col gap-2">
-                                {cbGenerateResult.weak_leads.map((lead, i) => (
-                                  <div
-                                    key={lead.url ?? i}
-                                    className="flex items-start gap-2 border-l-2 border-amber-200 pl-2"
-                                  >
-                                    <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                      {lead.slot_label && (
-                                        <span className="text-[8px] uppercase tracking-wide text-ink-muted font-semibold">
-                                          {lead.slot_label}
-                                        </span>
-                                      )}
-                                      {lead.tag && (
-                                        <p className="text-[10px] font-medium text-ink leading-snug">{lead.tag}</p>
-                                      )}
-                                      {lead.short_cite && (
-                                        <p className="text-[9px] text-ink-muted">{lead.short_cite}</p>
-                                      )}
-                                      {lead.reason && (
-                                        <p className="text-[9px] text-amber-700">{lead.reason}</p>
-                                      )}
-                                    </div>
-                                    <div className="flex gap-1 shrink-0 flex-wrap">
-                                      {lead.url && (
-                                        <>
-                                          <a
-                                            href={lead.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-[9px] px-1.5 py-px rounded border border-border text-blue-600 hover:bg-surface-faint"
-                                          >
-                                            Open ↗
-                                          </a>
-                                          <button
-                                            onClick={() => { setBuilderMode("url"); setCbUrl(lead.url!); setCbGenerateResult(null); }}
-                                            className="text-[9px] px-1.5 py-px rounded border border-border text-ink-muted hover:bg-surface-faint"
-                                          >
-                                            Extract
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* No cards found — clean minimal state */}
-                  {!cbLoading && cbGenerateResult && cbGenerateResult.search_configured && cbGenerateResult.cards.length === 0 && (() => {
-                    const diag = cbGenerateResult.diagnostics;
-                    const hasCounterEvidence = (diag?.rejected_as_counter_evidence ?? 0) > 0;
-                    const hasIndirectSupport = cbGenerateResult.usable_indirect_support_found === true;
-                    const leadUrls = diag?.possible_lead_urls ?? [];
-
-                    return (
-                      <div className="rounded-lg border border-gray-200 px-4 py-3 flex flex-col gap-2.5 bg-gray-50">
-                        <p className="text-sm font-semibold text-gray-700">
-                          {hasCounterEvidence
-                            ? "Sources found argue against this claim"
-                            : hasIndirectSupport
-                            ? "Indirect support found — needs a link card"
-                            : "No cards found for this claim"}
-                        </p>
-
-                        {cbGenerateResult.no_card_reason && (
-                          <p className="text-xs text-gray-500 leading-relaxed">{cbGenerateResult.no_card_reason}</p>
-                        )}
-
-                        {hasIndirectSupport && cbGenerateResult.indirect_support_explanation && (
-                          <div className="rounded bg-blue-50 border border-blue-200 px-3 py-2">
-                            <p className="text-[11px] text-blue-800 leading-relaxed">
-                              <strong>Tip:</strong> {cbGenerateResult.indirect_support_explanation}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Counter-evidence hint */}
-                        {hasCounterEvidence && (
-                          <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2">
-                            <p className="text-[11px] text-amber-800 leading-relaxed">
-                              <strong>Pre-empt opportunity:</strong> The sources found argue the other side. Consider cutting these as answers to prepare your pre-empts.
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Possible lead URLs */}
-                        {leadUrls.length > 0 && (
-                          <div className="flex flex-col gap-1">
-                            <p className="text-[11px] font-medium text-ink-muted">Worth checking manually ({leadUrls.length}):</p>
-                            <div className="flex flex-col gap-0.5">
-                              {leadUrls.slice(0, 3).map((u) => (
-                                <button
-                                  key={u}
-                                  type="button"
-                                  onClick={() => { setBuilderMode("url"); setCbUrl(u); setCbGenerateResult(null); }}
-                                  className="text-[11px] text-accent hover:underline text-left truncate"
-                                >
-                                  {u}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Normalized claim info */}
-                        {cbGenerateResult.normalized_claim && cbGenerateResult.normalized_claim !== cbClaimGoal.trim() && (
-                          <p className="text-[11px] text-ink-muted">Searched for: <em>{cbGenerateResult.normalized_claim}</em></p>
-                        )}
-                        {cbGenerateResult.corrections_applied && cbGenerateResult.corrections_applied.length > 0 && (
-                          <p className="text-[11px] text-amber-700">Fixed: {cbGenerateResult.corrections_applied.join("; ")}</p>
-                        )}
-
-                        {/* Candidates by role info */}
-                        {cbGenerateResult.candidates_by_role && Object.keys(cbGenerateResult.candidates_by_role).length > 0 && (() => {
-                          const roleEntries = Object.entries(cbGenerateResult.candidates_by_role).filter(([, v]) => v > 0);
-                          if (roleEntries.length === 0) return null;
-                          const summary = roleEntries.map(([role, count]) => `${count} ${role.replace(/_/g, " ")}`).join(", ");
-                          return (
-                            <p className="text-[11px] text-ink-muted">Found passage(s) scored as: {summary} — but below usefulness threshold.</p>
-                          );
-                        })()}
-
-                        {/* Suggested revised claims — clickable chips */}
-                        {cbGenerateResult.suggested_revised_claims && cbGenerateResult.suggested_revised_claims.length > 0 && (
-                          <div className="flex flex-col gap-1.5">
-                            <p className="text-[11px] font-medium text-ink-muted">Try a narrower claim instead:</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {cbGenerateResult.suggested_revised_claims.map((claim) => (
-                                <button
-                                  key={claim}
-                                  type="button"
-                                  onClick={() => { setCbClaimGoal(claim); setCbGenerateResult(null); }}
-                                  className="text-[11px] px-2 py-1 rounded-full border border-accent text-accent bg-transparent hover:bg-accent/10 transition-colors"
-                                >
-                                  {claim}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {cbGenerateResult.suggestions && cbGenerateResult.suggestions.length > 0 && (
-                          <ul className="text-xs text-ink-muted list-disc list-inside flex flex-col gap-0.5">
-                            {cbGenerateResult.suggestions.map((s) => <li key={s}>{s}</li>)}
-                          </ul>
-                        )}
-
-                        <div className="flex items-center gap-2 mt-1">
-                          <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
-                            onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}>
-                            <Link2 size={11} /> Try a specific URL
-                          </Button>
-                          <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
-                            onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}>
-                            <ClipboardPaste size={11} /> Paste source text
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {saveError && (
-                <p className="mt-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                  ⚠ Save failed: {saveError}
-                </p>
-              )}
-              {cbError && (
-                <p className="mt-2 text-xs text-danger">{cbError}</p>
-              )}
-            </div>
-
-            {/* Draft list — saved/other drafts NOT already shown in the search results above */}
-            {(() => {
-              const searchCardIds = new Set(
-                (cbGenerateResult?.cards ?? []).map((c) => c.id),
-              );
-              const visibleDrafts = drafts.filter(
-                (d) => d.status !== "discarded" && !searchCardIds.has(d.id),
-              );
-              // Empty state ONLY when there are no search results and no saved drafts.
-              const showEmptyState = shouldShowEmptyState(cbGenerateResult, drafts, cbLoading);
-
-              if (draftsLoading) {
-                return (
-                  <div className="flex flex-col gap-3">
-                    {[1, 2].map((i) => <Skeleton key={i} className="h-32 w-full rounded-lg" />)}
-                  </div>
-                );
-              }
-
-              if (visibleDrafts.length > 0) {
-                return (
-                  <div className="flex flex-col gap-2.5">
-                    {visibleDrafts.map((draft) => (
-                      <CardDraftReview
-                        key={draft.id}
-                        draft={draft}
-                        onSave={handleSaveDraft}
-                        onDiscard={handleDiscardDraft}
-                        onPatch={handlePatchDraft}
-                        saving={savingDraftId === draft.id}
-                        discarding={discardingDraftId === draft.id}
-                      />
-                    ))}
-                  </div>
-                );
-              }
-
-              if (showEmptyState) {
-                return (
-                  <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-8 py-10 text-center">
-                    <Sparkles size={16} className="text-ink-muted" />
-                    <div>
-                      <p className="text-sm font-semibold text-ink">No card drafts yet</p>
-                      <p className="text-xs text-ink-muted mt-0.5">
-                        Enter a URL, paste text, or run a research search above to generate your first card draft.
-                      </p>
-                    </div>
-                  </div>
-                );
-              }
-
-              return null;
-            })()}
-          </section>
-        )}
-
-        {/* ── Library tab content ────────────────────────────────────────────── */}
-        {activeTab === "library" && <>
-
-        {/* Upload panel */}
-        <section>
-          <span className="section-stamp mb-3 block">Upload document</span>
-          <div className="rounded-[3px] border border-hairline bg-surface-1 p-4 flex flex-col gap-4">
-            {/* Drop zone */}
-            <label className="file-tray flex cursor-pointer flex-col items-center gap-3 p-8 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-hairline bg-surface-2">
-                <Upload size={16} className="text-ink-subtle" />
-              </div>
-              {selectedFile ? (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium text-ink">{selectedFile.name}</span>
-                  <span className="text-xs text-ink-subtle">{fileSizeLabel(selectedFile.size)}</span>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium text-ink">Click to select a file</span>
-                  <span className="text-xs text-ink-subtle">
-                    {ALLOWED_EVIDENCE_EXTS.join(", ")} · max {MAX_EVIDENCE_MB} MB
-                  </span>
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={ALLOWED_EVIDENCE_EXTS.map((e) => `.${e}`).join(",")}
-                onChange={handleFileChange}
-                disabled={uploading}
-                className="sr-only"
-              />
-            </label>
-
-            {fileError && <p className="text-xs text-danger">{fileError}</p>}
-            {uploadError && <p className="text-xs text-danger">{uploadError}</p>}
-
-            {selectedFile && (
-              <div className="flex flex-wrap items-center gap-3">
-                <select
-                  value={docType}
-                  onChange={(e) => setDocType(e.target.value)}
-                  disabled={uploading}
-                  className="h-9 rounded-lg border border-hairline bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-lav/40"
-                >
-                  <option value="case">Case file</option>
-                  <option value="evidence">Evidence packet</option>
-                  <option value="brief">Brief</option>
-                  <option value="other">Other</option>
-                </select>
-
-                <select
-                  value={documentRole}
-                  onChange={(e) => setDocumentRole(e.target.value)}
-                  disabled={uploading}
-                  className="h-9 rounded-lg border border-hairline bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-lav/40"
-                >
-                  <option value="evidence">Evidence</option>
-                  <option value="case">Case file</option>
-                  <option value="blockfile">Blockfile</option>
-                  <option value="frontline">Frontline</option>
-                  <option value="mixed">Mixed</option>
-                </select>
-
-                <Button onClick={handleUpload} disabled={uploading} size="sm" className="flex-1">
-                  {uploading ? "Uploading and parsing…" : "Upload"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={uploading}
-                  onClick={() => {
-                    setSelectedFile(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
-                  className="gap-1"
-                >
-                  <X size={12} /> Clear
-                </Button>
-              </div>
-            )}
-          </div>
-          <p className="mt-2 text-xs text-ink-muted">
-            RoundLab extracts evidence cards from your file. It never invents citations.
-          </p>
-        </section>
-
-        {/* Search */}
-        {parsedCount > 0 && (
-          <section>
-            <span className="section-stamp mb-3 block">Search evidence</span>
-
-            {/* Search mode toggle */}
-            <div className="mb-2 flex items-center gap-1">
-              {(["keyword", "semantic", "hybrid"] as const).map((m) => (
+            {/* Mobile stage nav */}
+            <nav
+              className="md:hidden flex border-b border-hairline mb-4 -mx-4 px-4"
+              aria-label="Workbench sections"
+            >
+              {(["search", "candidates", "card"] as MobileStage[]).map((stage) => (
                 <button
-                  key={m}
+                  key={stage}
                   type="button"
-                  onClick={() => setSearchMode(m)}
-                  className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
-                    searchMode === m
-                      ? "border-lav/40 bg-lav/10 text-lav"
-                      : "border-hairline bg-surface-2 text-ink-muted hover:text-ink"
-                  }`}
+                  onClick={() => setMobileStageOverride(stage)}
+                  aria-current={mobileStage === stage ? "step" : undefined}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                    mobileStage === stage
+                      ? "border-lav text-ink"
+                      : "border-transparent text-ink-subtle hover:text-ink",
+                  )}
                 >
-                  {m}
+                  {MOBILE_STAGE_LABELS[stage]}
                 </button>
               ))}
-            </div>
-            <p className="mb-2 text-[10px] text-ink-faint">
-              {searchMode === "keyword" && "Matches exact words. Fast and deterministic."}
-              {searchMode === "semantic" && "Finds conceptually related evidence even when the wording differs. Uses AI embeddings."}
-              {searchMode === "hybrid" && "Semantic results first, then keyword results to fill any gaps. Recommended."}
-            </p>
+            </nav>
 
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g. deterrence fiscal burden alliance credibility"
-                className="flex-1 text-sm"
-                disabled={searching}
-              />
-              <Button type="submit" size="sm" disabled={searching || !searchQuery.trim()}>
-                <Search size={14} className="mr-1.5" />
-                {searching ? "Searching…" : "Search"}
-              </Button>
-            </form>
+            {/* 3-column grid */}
+            <div className="grid grid-cols-1 md:grid-cols-[280px_1fr_340px] gap-0 md:border md:border-hairline md:rounded-xl md:overflow-hidden">
 
-            {searchError && <p className="mt-2 text-xs text-danger">{searchError}</p>}
+              {/* ── Left panel: search controls ────────────────────────────────── */}
+              <aside
+                className={cn(
+                  "flex flex-col gap-4 p-4 md:border-r md:border-hairline md:overflow-y-auto",
+                  mobileStage !== "search" ? "hidden md:flex" : "flex",
+                )}
+                aria-label="Search controls"
+              >
+                <div>
+                  <h2 className="text-eyebrow text-ink-subtle mb-3">Research claim</h2>
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <label htmlFor="cb-claim" className="text-xs font-medium text-ink-subtle block mb-1">
+                        Claim to support <span className="text-danger">*</span>
+                      </label>
+                      <textarea
+                        id="cb-claim"
+                        value={cbClaimGoal}
+                        onChange={(e) => setCbClaimGoal(e.target.value)}
+                        placeholder="e.g. tariffs reduce economic growth"
+                        rows={3}
+                        className="w-full rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-sm text-ink leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-lav/30 focus:border-lav/50"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="cb-topic" className="text-xs font-medium text-ink-subtle block mb-1">
+                        Topic <span className="text-ink-faint font-normal">(optional)</span>
+                      </label>
+                      <Input
+                        id="cb-topic"
+                        value={cbTopic}
+                        onChange={(e) => setCbTopic(e.target.value)}
+                        placeholder="e.g. US-China trade"
+                        className="text-sm h-8"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="cb-side" className="text-xs font-medium text-ink-subtle block mb-1">
+                        Side <span className="text-ink-faint font-normal">(optional)</span>
+                      </label>
+                      <select
+                        id="cb-side"
+                        value={cbSide}
+                        onChange={(e) => setCbSide(e.target.value)}
+                        className="h-8 w-full rounded-lg border border-hairline bg-surface-2 px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-lav/30"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="Pro">Pro</option>
+                        <option value="Con">Con</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
 
-            {searchResults !== null && (
-              <div className="mt-3 flex flex-col gap-2">
-                {searchResults.length === 0 ? (
-                  <div className="text-sm text-ink-subtle">
-                    <p>No matching evidence found in your library.</p>
-                    {searchMode !== "keyword" && (
-                      <p className="mt-1 text-xs text-ink-faint">
-                        If documents were uploaded before semantic search was enabled, try re-embedding them or switch to Keyword mode.
-                      </p>
+                <div className="border-t border-hairline pt-4">
+                  <h2 className="text-eyebrow text-ink-subtle mb-3">Source mode</h2>
+                  {/* Mode selector */}
+                  <div
+                    className="flex flex-col gap-0.5 rounded-lg border border-hairline bg-surface-2 p-0.5"
+                    role="radiogroup"
+                    aria-label="Evidence source mode"
+                  >
+                    {([
+                      { key: "url",    label: "From URL",        icon: <Link2 size={12} aria-hidden="true" /> },
+                      { key: "paste",  label: "Paste text",      icon: <ClipboardPaste size={12} aria-hidden="true" /> },
+                      { key: "search", label: "Research search", icon: <Globe size={12} aria-hidden="true" /> },
+                    ] as const).map(({ key, label, icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="radio"
+                        aria-checked={builderMode === key}
+                        onClick={() => { setBuilderMode(key); setCbError(""); setCbGenerateResult(null); setSelectedCardId(null); }}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                          builderMode === key
+                            ? "bg-surface-1 text-ink shadow-xs"
+                            : "text-ink-subtle hover:text-ink",
+                        )}
+                      >
+                        {icon}{label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* URL mode input */}
+                {builderMode === "url" && (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label htmlFor="cb-url" className="text-xs font-medium text-ink-subtle block mb-1">
+                        Article URL
+                      </label>
+                      <Input
+                        id="cb-url"
+                        value={cbUrl}
+                        onChange={(e) => setCbUrl(e.target.value)}
+                        placeholder="https://…"
+                        type="url"
+                        className="text-sm h-8 font-mono"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleExtractUrl}
+                      disabled={cbLoading || !cbUrl.trim()}
+                      size="sm"
+                      className="w-full"
+                    >
+                      {cbLoading
+                        ? <><Loader2 size={13} className="mr-1.5 motion-safe:animate-spin" aria-hidden="true" />Extracting…</>
+                        : <>Extract + Draft<ChevronRight size={13} className="ml-1.5" aria-hidden="true" /></>}
+                    </Button>
+                    {cbLoading && (
+                      <EvidenceSearchProgress active={cbLoading} durationMs={30_000} label="Opening source and cutting evidence" />
+                    )}
+                    {cbExtractResult && (
+                      <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-ok/5 px-3 py-2 text-xs text-ink-subtle">
+                        <CheckCircle2 size={12} className="text-ok mt-0.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          Extracted from <strong>{cbExtractResult.article.metadata.publication ?? new URL(cbExtractResult.article.url).hostname}</strong>.{" "}
+                          <span className={sourceQualityColor(cbExtractResult.quality.source_quality)}>
+                            {sourceQualityLabel(cbExtractResult.quality.source_quality)}.
+                          </span>
+                        </span>
+                      </div>
                     )}
                   </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-ink-subtle">
-                        {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
-                      </p>
-                      {searchResults.some((r) => r.retrieval_mode === "semantic" || r.retrieval_mode === "hybrid") && (
-                        <span className="text-[10px] text-lav font-medium">semantic</span>
-                      )}
+                )}
+
+                {/* Paste mode input */}
+                {builderMode === "paste" && (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label htmlFor="cb-paste" className="text-xs font-medium text-ink-subtle block mb-1">
+                        Source text
+                      </label>
+                      <textarea
+                        id="cb-paste"
+                        value={cbPastedText}
+                        onChange={(e) => setCbPastedText(e.target.value)}
+                        placeholder="Paste the article or passage…"
+                        rows={6}
+                        className="w-full rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-sm text-ink leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-lav/30 focus:border-lav/50"
+                      />
                     </div>
-                    {searchResults.map((item, i) => (
-                      <SearchResultCard key={item.chunk.id ?? i} item={item} />
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        { id: "cb-paste-author", label: "Author", value: cbPasteAuthor, set: setCbPasteAuthor, placeholder: "Jane Doe" },
+                        { id: "cb-paste-pub", label: "Publication", value: cbPastePublication, set: setCbPastePublication, placeholder: "New York Times" },
+                        { id: "cb-paste-date", label: "Date", value: cbPasteDate, set: setCbPasteDate, placeholder: "2024-03-15" },
+                      ].map(({ id, label, value, set, placeholder }) => (
+                        <div key={id}>
+                          <label htmlFor={id} className="text-xs font-medium text-ink-subtle block mb-1">
+                            {label} <span className="text-ink-faint font-normal">(optional)</span>
+                          </label>
+                          <Input id={id} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} className="text-sm h-8" />
+                        </div>
+                      ))}
+                    </div>
+                    <Button
+                      onClick={handlePasteDraft}
+                      disabled={cbLoading || !cbPastedText.trim()}
+                      size="sm"
+                      className="w-full"
+                    >
+                      {cbLoading
+                        ? <><Loader2 size={13} className="mr-1.5 motion-safe:animate-spin" aria-hidden="true" />Generating…</>
+                        : "Generate Card Draft"}
+                    </Button>
+                    {cbLoading && (
+                      <EvidenceSearchProgress active={cbLoading} durationMs={20_000} label="Cleaning text and cutting evidence" />
+                    )}
+                  </div>
+                )}
+
+                {/* Search mode controls */}
+                {builderMode === "search" && (
+                  <div className="flex flex-col gap-3">
+                    <ClaimDecomposition
+                      claim={cbClaimGoal}
+                      disabled={cbLoading}
+                      onSearchBranch={(query) => handleGenerateCards(query)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-ink-subtle">Depth</span>
+                      <div
+                        className="flex gap-0.5 rounded-lg border border-hairline bg-surface-2 p-0.5"
+                        role="radiogroup"
+                        aria-label="Research depth"
+                      >
+                        {RESEARCH_DEPTH_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            role="radio"
+                            aria-checked={cbDepth === opt.key}
+                            title={opt.hint}
+                            onClick={() => setCbDepth(opt.key)}
+                            className={cn(
+                              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                              cbDepth === opt.key ? "bg-surface-1 text-ink shadow-xs" : "text-ink-subtle hover:text-ink",
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <Button
+                      onClick={() => handleGenerateCards()}
+                      disabled={cbLoading || !cbClaimGoal.trim()}
+                      size="sm"
+                      className="w-full"
+                    >
+                      {cbLoading
+                        ? <><Loader2 size={13} className="mr-1.5 motion-safe:animate-spin" aria-hidden="true" />Searching…</>
+                        : <><Globe size={13} className="mr-1.5" aria-hidden="true" />Find candidate cards</>}
+                    </Button>
+                    {cbLoading && <EvidenceSearchProgress active={cbLoading} />}
+                  </div>
+                )}
+
+                {cbError && (
+                  <p className="rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-xs text-danger" role="alert">
+                    {cbError}
+                  </p>
+                )}
+              </aside>
+
+              {/* ── Center panel: source candidates ────────────────────────────── */}
+              <section
+                className={cn(
+                  "flex flex-col gap-3 p-4 md:border-r md:border-hairline md:max-h-[calc(100vh-220px)] md:overflow-y-auto",
+                  mobileStage !== "candidates" ? "hidden md:flex" : "flex",
+                )}
+                aria-label="Source candidates"
+                aria-live="polite"
+                aria-busy={cbLoading}
+              >
+                {/* Loading skeletons — shaped like source cards */}
+                {cbLoading && (
+                  <>
+                    <p className="sr-only">Searching for evidence sources…</p>
+                    {Array.from({ length: deriveSkeletonCount(builderMode) }).map((_, i) => (
+                      <div key={i} className="rounded-xl border border-hairline bg-surface-1 p-4 flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <Skeleton className="h-4 w-3/4 rounded" />
+                          <Skeleton className="h-5 w-14 rounded-full" />
+                        </div>
+                        <Skeleton className="h-3 w-1/2 rounded" />
+                        <Skeleton className="h-3 w-full rounded" />
+                        <Skeleton className="h-3 w-5/6 rounded" />
+                        <Skeleton className="h-3 w-2/3 rounded" />
+                      </div>
                     ))}
                   </>
                 )}
-              </div>
-            )}
+
+                {/* Research not configured */}
+                {!cbLoading && cbGenerateResult && !cbGenerateResult.search_configured && (
+                  <div className="rounded-xl border border-warn/25 bg-warn/5 px-4 py-4 flex flex-col gap-3">
+                    <p className="text-sm font-semibold text-warn-dark">Research Search not configured</p>
+                    <p className="text-xs text-ink-subtle leading-relaxed">
+                      {cbGenerateResult.no_card_reason ?? "A Tavily API key is required. Set TAVILY_API_KEY in your backend .env file."}
+                    </p>
+                    {cbGenerateResult.suggestions && cbGenerateResult.suggestions.length > 0 && (
+                      <ul className="text-xs text-ink-subtle list-disc list-inside flex flex-col gap-0.5">
+                        {cbGenerateResult.suggestions.map((s) => <li key={s}>{s}</li>)}
+                      </ul>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
+                        onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}>
+                        <Link2 size={11} aria-hidden="true" /> From URL
+                      </Button>
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
+                        onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}>
+                        <ClipboardPaste size={11} aria-hidden="true" /> Paste text
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Research summary (transparent pipeline stages + rejected sources) */}
+                {!cbLoading && cbGenerateResult?.search_configured && (
+                  <ResearchSummary result={cbGenerateResult} />
+                )}
+
+                {/* Indirect support notice */}
+                {!cbLoading && cbGenerateResult?.usable_indirect_support_found && !cbGenerateResult?.direct_support_found && (
+                  <div className="rounded-lg border border-lav/25 bg-lav/5 px-3 py-2 text-xs text-ink-subtle">
+                    No direct evidence found, but mechanism/example cards support your argument&apos;s warrant.
+                  </div>
+                )}
+
+                {/* Candidate cards */}
+                {shouldShowResultsSummary(cbGenerateResult, cbLoading) && cbGenerateResult && (
+                  <div className="flex flex-col gap-4">
+                    {/* Header + filter chips */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-baseline gap-2">
+                        <h3 className="text-sm font-semibold text-ink">Evidence packet</h3>
+                        <span className="text-xs text-ink-faint">{sortedCards.length} card{sortedCards.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      {sortedCards.length > 1 && (
+                        <div
+                          className="flex items-center rounded-lg border border-hairline bg-surface-2 p-0.5"
+                          role="group"
+                          aria-label="Filter candidates"
+                        >
+                          {candidateFilterChips.map(({ key, label, count, active }) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setCardFilter(key)}
+                              aria-pressed={active}
+                              className={cn(
+                                "px-2.5 py-1 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                                active ? "bg-ink text-canvas" : "text-ink-subtle hover:text-ink",
+                              )}
+                            >
+                              {label} <span className="opacity-60 tabular-nums">{count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Slot progress bar (when set planner active) */}
+                    {cbGenerateResult.evidence_set_plan && (() => {
+                      const plan = cbGenerateResult.evidence_set_plan;
+                      const slotLabels = plan?.slots?.map((s) => s.slot_label) ?? [];
+                      const filledSlots = new Set(sortedCards.map((c) => c.slot_label).filter(Boolean)).size;
+                      const total = slotLabels.length;
+                      if (total === 0) return null;
+                      const pct = Math.round((filledSlots / total) * 100);
+                      return (
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-1 flex-1 rounded-full bg-hairline overflow-hidden"
+                            role="progressbar"
+                            aria-valuenow={pct}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label={`${filledSlots} of ${total} evidence slots filled`}
+                          >
+                            <div className="h-full rounded-full bg-lav transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="text-eyebrow text-ink-subtle tabular-nums whitespace-nowrap">
+                            {filledSlots}/{total} slots
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Card list — roving tabindex for keyboard navigation */}
+                    <div
+                      ref={candidateListRef}
+                      className="flex flex-col gap-3"
+                      role="listbox"
+                      aria-label="Evidence candidates"
+                      onKeyDown={handleCandidateKeyDown}
+                    >
+                      {filteredCards.map((card, idx) => (
+                        <div
+                          key={card.id}
+                          role="option"
+                          aria-selected={selectedCardId === card.id}
+                          className={cn(
+                            "relative rounded-xl border transition-all",
+                            selectedCardId === card.id
+                              ? "border-lav/40 ring-1 ring-lav/20"
+                              : "border-hairline hover:border-hairline-strong",
+                          )}
+                        >
+                          {idx === 0 && computeSaveReadiness(card).level === "ready" && cardFilter === "all" && (
+                            <span className="absolute -top-2 left-3 z-10 text-eyebrow font-semibold px-2 py-0.5 rounded-full bg-ink text-canvas">
+                              Best match
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            data-candidate="true"
+                            tabIndex={activeCardIndex === idx ? 0 : -1}
+                            className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded-xl"
+                            onClick={() => handleSelectCard(card, idx)}
+                            aria-label={`${card.tag ?? "Untitled card"}. ${computeSaveReadiness(card).level === "ready" ? "Ready to save." : "Needs review."}`}
+                          >
+                            <EvidenceCardDraft
+                              card={card}
+                              claimGoal={cbClaimGoal.trim()}
+                              onSave={(c) => handleSaveDraft(c, true)}
+                              onDiscard={handleDiscardDraft}
+                              onOpenStudio={() => setStudioCard(card)}
+                            />
+                          </button>
+                          <div className="mt-1.5 px-1">
+                            <ProvenanceTrail card={card} />
+                          </div>
+                        </div>
+                      ))}
+                      {filteredCards.length === 0 && (
+                        <p className="text-xs text-ink-subtle text-center py-6">
+                          No cards match this filter.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Unfilled slots — strategic gaps */}
+                    {cbGenerateResult.unfilled_slots && cbGenerateResult.unfilled_slots.length > 0 && (
+                      <div className="rounded-lg border border-warn/25 bg-warn/5 px-3 py-3 flex flex-col gap-2">
+                        <p className="text-xs font-semibold text-warn">
+                          Could not fill {cbGenerateResult.unfilled_slots.length} slot{cbGenerateResult.unfilled_slots.length > 1 ? "s" : ""}: {cbGenerateResult.unfilled_slots.join(", ")}
+                        </p>
+                        <p className="text-xs text-ink-subtle">
+                          No strong card was found automatically. Try a specific URL or paste the source.
+                        </p>
+                        <div className="flex gap-1.5 flex-wrap">
+                          <button
+                            onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}
+                            className="text-xs px-2 py-1 rounded border border-hairline bg-surface-1 text-ink-subtle hover:text-ink flex items-center gap-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
+                          >
+                            <Link2 size={10} aria-hidden="true" /> Try source URL
+                          </button>
+                          <button
+                            onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}
+                            className="text-xs px-2 py-1 rounded border border-hairline bg-surface-1 text-ink-subtle hover:text-ink flex items-center gap-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
+                          >
+                            <ClipboardPaste size={10} aria-hidden="true" /> Paste source
+                          </button>
+                          <button
+                            onClick={() => handleGenerateCards()}
+                            disabled={cbLoading}
+                            className="text-xs px-2 py-1 rounded border border-hairline bg-surface-1 text-ink-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50 disabled:opacity-50"
+                          >
+                            Search again
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Weak leads */}
+                    {cbGenerateResult.weak_leads && cbGenerateResult.weak_leads.length > 0 && (
+                      <div className="rounded-lg border border-hairline bg-surface-1 px-3 py-3 flex flex-col gap-2">
+                        <p className="text-xs font-semibold text-ink-subtle">
+                          Source leads — verify manually before cutting
+                        </p>
+                        <div className="flex flex-col gap-2">
+                          {cbGenerateResult.weak_leads.map((lead, i) => (
+                            <div key={lead.url ?? i} className="flex items-start gap-2 border-l-2 border-hairline-strong pl-2">
+                              <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                {lead.slot_label && (
+                                  <span className="text-eyebrow text-ink-subtle">{lead.slot_label}</span>
+                                )}
+                                {lead.tag && <p className="text-xs font-medium text-ink leading-snug">{lead.tag}</p>}
+                                {lead.short_cite && <p className="text-eyebrow text-ink-subtle">{lead.short_cite}</p>}
+                                {lead.reason && <p className="text-eyebrow text-warn">{lead.reason}</p>}
+                              </div>
+                              {lead.url && (
+                                <div className="flex gap-1 shrink-0">
+                                  <a
+                                    href={lead.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-eyebrow px-1.5 py-px rounded border border-hairline text-ink-subtle hover:text-lav hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
+                                    aria-label={`Open source: ${lead.tag ?? lead.url}`}
+                                  >
+                                    Open ↗
+                                  </a>
+                                  <button
+                                    onClick={() => { setBuilderMode("url"); setCbUrl(lead.url!); setCbGenerateResult(null); }}
+                                    className="text-eyebrow px-1.5 py-px rounded border border-hairline text-ink-subtle hover:text-ink hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
+                                  >
+                                    Extract
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* No cards found */}
+                {!cbLoading && cbGenerateResult && cbGenerateResult.search_configured && cbGenerateResult.cards.length === 0 && (() => {
+                  const diag = cbGenerateResult.diagnostics;
+                  const hasCounterEvidence = (diag?.rejected_as_counter_evidence ?? 0) > 0;
+                  const hasIndirectSupport = cbGenerateResult.usable_indirect_support_found === true;
+                  const leadUrls = diag?.possible_lead_urls ?? [];
+
+                  return (
+                    <div className="rounded-xl border border-hairline bg-surface-1 px-4 py-4 flex flex-col gap-3">
+                      <p className="text-sm font-semibold text-ink">
+                        {hasCounterEvidence
+                          ? "Sources found argue against this claim"
+                          : hasIndirectSupport
+                          ? "Indirect support found — needs a link card"
+                          : "No cards found for this claim"}
+                      </p>
+                      {cbGenerateResult.no_card_reason && (
+                        <p className="text-xs text-ink-subtle leading-relaxed">{cbGenerateResult.no_card_reason}</p>
+                      )}
+                      {hasIndirectSupport && cbGenerateResult.indirect_support_explanation && (
+                        <div className="rounded-lg border border-lav/25 bg-lav/5 px-3 py-2">
+                          <p className="text-xs text-ink-subtle leading-relaxed">
+                            <strong>Tip:</strong> {cbGenerateResult.indirect_support_explanation}
+                          </p>
+                        </div>
+                      )}
+                      {hasCounterEvidence && (
+                        <div className="rounded-lg border border-warn/25 bg-warn/5 px-3 py-2">
+                          <p className="text-xs text-warn leading-relaxed">
+                            <strong>Pre-empt opportunity:</strong> Sources argue the other side. Consider cutting these as pre-empt answers.
+                          </p>
+                        </div>
+                      )}
+                      {leadUrls.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                          <p className="text-xs font-medium text-ink-subtle">Worth checking manually:</p>
+                          {leadUrls.slice(0, 3).map((u) => (
+                            <button
+                              key={u}
+                              type="button"
+                              onClick={() => { setBuilderMode("url"); setCbUrl(u); setCbGenerateResult(null); }}
+                              className="text-xs text-ink-subtle underline underline-offset-2 hover:text-ink text-left truncate focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50 rounded"
+                            >
+                              {u}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {cbGenerateResult.suggested_revised_claims && cbGenerateResult.suggested_revised_claims.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-xs font-medium text-ink-subtle">Try a narrower claim:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {cbGenerateResult.suggested_revised_claims.map((claim) => (
+                              <button
+                                key={claim}
+                                type="button"
+                                onClick={() => { setCbClaimGoal(claim); setCbGenerateResult(null); }}
+                                className="text-xs px-2 py-1 rounded-full border border-hairline text-ink-subtle hover:text-lav hover:border-lav/40 hover:bg-lav/5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
+                              >
+                                {claim}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {cbGenerateResult.suggestions && cbGenerateResult.suggestions.length > 0 && (
+                        <ul className="text-xs text-ink-subtle list-disc list-inside flex flex-col gap-0.5">
+                          {cbGenerateResult.suggestions.map((s) => <li key={s}>{s}</li>)}
+                        </ul>
+                      )}
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
+                          onClick={() => { setBuilderMode("url"); setCbGenerateResult(null); }}>
+                          <Link2 size={11} aria-hidden="true" /> Try a URL
+                        </Button>
+                        <Button size="sm" variant="secondary" className="h-7 px-2 text-xs gap-1"
+                          onClick={() => { setBuilderMode("paste"); setCbGenerateResult(null); }}>
+                          <ClipboardPaste size={11} aria-hidden="true" /> Paste text
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Older drafts not in the current search results */}
+                {(() => {
+                  const searchCardIds = new Set((cbGenerateResult?.cards ?? []).map((c) => c.id));
+                  const visibleDrafts = drafts.filter((d) => d.status !== "discarded" && !searchCardIds.has(d.id));
+                  const showEmpty = shouldShowEmptyState(cbGenerateResult, drafts, cbLoading);
+
+                  if (draftsLoading) {
+                    return (
+                      <div className="flex flex-col gap-2">
+                        {[1, 2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}
+                      </div>
+                    );
+                  }
+                  if (visibleDrafts.length > 0) {
+                    return (
+                      <div className="flex flex-col gap-2.5">
+                        <p className="text-eyebrow text-ink-faint">Previous drafts</p>
+                        {visibleDrafts.map((draft) => (
+                          <CardDraftReview
+                            key={draft.id}
+                            draft={draft}
+                            onSave={handleSaveDraft}
+                            onDiscard={handleDiscardDraft}
+                            onPatch={handlePatchDraft}
+                            saving={savingDraftId === draft.id}
+                            discarding={discardingDraftId === draft.id}
+                          />
+                        ))}
+                      </div>
+                    );
+                  }
+                  if (showEmpty) {
+                    return (
+                      <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-hairline px-8 py-10 text-center">
+                        <Sparkles size={16} className="text-ink-faint" aria-hidden="true" />
+                        <div>
+                          <p className="text-sm font-semibold text-ink">No card drafts yet</p>
+                          <p className="text-xs text-ink-subtle mt-0.5">
+                            Enter a URL, paste text, or run a research search to generate your first card draft.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </section>
+
+              {/* ── Right panel: card draft, citation, save state ──────────────── */}
+              <aside
+                className={cn(
+                  "flex flex-col gap-4 p-4 md:max-h-[calc(100vh-220px)] md:overflow-y-auto",
+                  mobileStage !== "card" ? "hidden md:flex" : "flex",
+                )}
+                aria-label="Card draft and save"
+              >
+                {selectedCard ? (
+                  <>
+                    {/* Save error */}
+                    {saveError && (
+                      <div
+                        className="rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-xs text-danger"
+                        role="alert"
+                      >
+                        Save failed: {saveError}
+                        <button
+                          className="ml-2 underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger/50 rounded"
+                          onClick={() => setSaveError("")}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-eyebrow text-ink-faint">Card draft</h2>
+                      <button
+                        type="button"
+                        onClick={() => setStudioCard(selectedCard)}
+                        className="text-[11px] text-lav hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50 rounded"
+                      >
+                        Open in Studio ↗
+                      </button>
+                    </div>
+                    <EvidenceCardDraft
+                      card={selectedCard}
+                      claimGoal={cbClaimGoal.trim()}
+                      onSave={(c) => handleSaveDraft(c, true)}
+                      onDiscard={handleDiscardDraft}
+                      onOpenStudio={() => setStudioCard(selectedCard)}
+                    />
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center py-12">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-hairline-strong">
+                      <FileText size={16} className="text-ink-faint" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-ink-subtle">Select a candidate</p>
+                      <p className="text-xs text-ink-faint mt-0.5">Click any card in the center panel to preview and save it</p>
+                    </div>
+                  </div>
+                )}
+              </aside>
+            </div>
           </section>
         )}
 
-        {/* Documents list */}
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="section-stamp">Case files</span>
-              {documents.length > 0 && (
-                <span className="rep-badge">{documents.length}</span>
-              )}
-            </div>
-            {parsedCount > 0 && (
-              <span className="section-stamp">{parsedCount} ready</span>
-            )}
-          </div>
+        {/* ── Library tab ───────────────────────────────────────────────────── */}
+        {activeTab === "library" && (
+          <div className="flex flex-col gap-8">
 
-          {docsLoading ? (
-            <div className="flex flex-col gap-3">
-              {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
-            </div>
-          ) : documents.length === 0 ? (
-            <div className="flex flex-col items-center gap-4 rounded-[3px] border border-dashed border-hairline px-8 py-10 text-center">
-              <EmptyEvidenceGlyph className="h-10 w-12 text-ink-faint opacity-60" />
-              <div>
-                <p className="text-sm font-semibold text-ink">No case files yet</p>
-                <p className="text-xs text-ink-subtle mt-0.5">
-                  Upload a case file or evidence packet above. RoundLab will extract evidence cards you can cite.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {documents.map((doc) => (
-                <DocumentCard
-                  key={doc.id}
-                  doc={doc}
-                  onDelete={handleDeleteDoc}
-                  onBlocksExtracted={handleBlocksExtracted}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* ── Blockfile Trainer ────────────────────────────────────────────── */}
-        <section>
-          <div className="mb-3 flex items-center gap-2">
-            <BookOpen size={14} className="text-ink-faint shrink-0" />
-            <span className="section-stamp">Blockfile Trainer</span>
-            {blockEntries.length > 0 && (
-              <span className="rep-badge">{blockEntries.length}</span>
-            )}
-          </div>
-          <p className="mb-3 text-xs text-ink-subtle leading-relaxed">
-            Extract block and frontline entries from uploaded documents using the &ldquo;Extract blocks&rdquo;
-            button above. Then search your block library to find prepared responses.
-            Only your uploaded files are used — no outside knowledge.
-          </p>
-
-          {/* Block entry search */}
-          {blockEntries.length > 0 && (
-            <form onSubmit={handleBlockSearch} className="mb-4 flex gap-2">
-              <Input
-                value={blockSearchQuery}
-                onChange={(e) => setBlockSearchQuery(e.target.value)}
-                placeholder="Search blocks e.g. deterrence privacy rights"
-                className="flex-1 text-sm"
-                disabled={blockSearching}
-              />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={blockSearching || !blockSearchQuery.trim()}
-              >
-                {blockSearching ? (
-                  <><Loader2 size={13} className="mr-1.5 animate-spin" />Searching…</>
-                ) : (
-                  <><Search size={13} className="mr-1.5" />Search blocks</>
-                )}
-              </Button>
-              {blockSearchResults !== null && (
-                <Button
+            {/* Upload panel */}
+            <section aria-labelledby="upload-heading">
+              <h2 id="upload-heading" className="section-stamp mb-3 block">Upload document</h2>
+              <div className="rounded-xl border border-hairline bg-surface-1 p-4 flex flex-col gap-4">
+                <button
                   type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => { setBlockSearchResults(null); setBlockSearchQuery(""); }}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  aria-label={selectedFile ? `Selected: ${selectedFile.name}. Press to change file.` : "Select a file to upload"}
+                  className={cn(
+                    "flex flex-col items-center gap-3 p-8 text-center rounded-lg border-2 border-dashed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                    selectedFile ? "border-lav/30 bg-lav/[0.03]" : "border-hairline-strong hover:border-lav/30",
+                    uploading && "pointer-events-none opacity-50",
+                  )}
                 >
-                  Clear
-                </Button>
-              )}
-            </form>
-          )}
-
-          {blockSearchErr && <p className="mb-2 text-xs text-danger">{blockSearchErr}</p>}
-
-          {/* Block entries list */}
-          {blockEntriesLoading ? (
-            <div className="flex flex-col gap-2">
-              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
-            </div>
-          ) : (blockSearchResults ?? blockEntries).length === 0 ? (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-hairline px-6 py-8 text-center">
-              <Sparkles size={16} className="text-ink-faint" />
-              <div>
-                <p className="text-sm font-semibold text-ink">No block entries yet</p>
-                <p className="text-xs text-ink-subtle mt-0.5">
-                  Upload a blockfile or frontline document above, then click &ldquo;Extract blocks&rdquo;
-                  on a parsed document to populate your block library.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {blockSearchResults !== null && (
-                <p className="text-xs text-ink-subtle">
-                  {blockSearchResults.length} result{blockSearchResults.length !== 1 ? "s" : ""}
-                  {" "}for &ldquo;{blockSearchQuery}&rdquo;
-                </p>
-              )}
-              {(blockSearchResults ?? blockEntries).map((entry) => (
-                <BlockEntryCard
-                  key={entry.id}
-                  entry={entry}
-                  userId={userId}
-                  onDelete={(id) => {
-                    setBlockEntries((prev) => prev.filter((e) => e.id !== id));
-                    if (blockSearchResults) {
-                      setBlockSearchResults((prev) => prev?.filter((e) => e.id !== id) ?? null);
-                    }
-                  }}
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-hairline bg-surface-2">
+                    <Upload size={16} className="text-ink-subtle" aria-hidden="true" />
+                  </div>
+                  {selectedFile ? (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium text-ink">{selectedFile.name}</span>
+                      <span className="text-xs text-ink-subtle">{fileSizeLabel(selectedFile.size)}</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium text-ink">Click or press to select a file</span>
+                      <span className="text-xs text-ink-subtle">
+                        {ALLOWED_EVIDENCE_EXTS.join(", ")} · max {MAX_EVIDENCE_MB} MB
+                      </span>
+                    </div>
+                  )}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ALLOWED_EVIDENCE_EXTS.map((e) => `.${e}`).join(",")}
+                  onChange={handleFileChange}
+                  disabled={uploading}
+                  className="sr-only"
+                  tabIndex={-1}
                 />
-              ))}
-            </div>
-          )}
-        </section>
 
-        </> /* end library tab */}
+                {fileError && <p className="text-xs text-danger" role="alert">{fileError}</p>}
+                {uploadError && <p className="text-xs text-danger" role="alert">{uploadError}</p>}
+
+                {selectedFile && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <select
+                      value={docType}
+                      onChange={(e) => setDocType(e.target.value)}
+                      disabled={uploading}
+                      aria-label="Document type"
+                      className="h-9 rounded-lg border border-hairline bg-surface-1 px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-lav/30"
+                    >
+                      <option value="case">Case file</option>
+                      <option value="evidence">Evidence packet</option>
+                      <option value="brief">Brief</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <select
+                      value={documentRole}
+                      onChange={(e) => setDocumentRole(e.target.value)}
+                      disabled={uploading}
+                      aria-label="Document role"
+                      className="h-9 rounded-lg border border-hairline bg-surface-1 px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-lav/30"
+                    >
+                      <option value="evidence">Evidence</option>
+                      <option value="case">Case file</option>
+                      <option value="blockfile">Blockfile</option>
+                      <option value="frontline">Frontline</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                    <Button onClick={handleUpload} disabled={uploading} size="sm" className="flex-1">
+                      {uploading ? "Uploading and parsing…" : "Upload"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={uploading}
+                      onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                      className="gap-1"
+                    >
+                      <X size={12} aria-hidden="true" /> Clear
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-ink-subtle">
+                RoundLab extracts evidence cards from your file. It never invents citations.
+              </p>
+            </section>
+
+            {/* Library search */}
+            {parsedCount > 0 && (
+              <section aria-labelledby="search-heading">
+                <h2 id="search-heading" className="section-stamp mb-3 block">Search evidence</h2>
+                <div className="mb-2 flex items-center gap-1" role="group" aria-label="Search mode">
+                  {(["keyword", "semantic", "hybrid"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={searchMode === m}
+                      onClick={() => setSearchMode(m)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                        searchMode === m
+                          ? "border-lav/40 bg-lav/10 text-lav"
+                          : "border-hairline bg-surface-2 text-ink-subtle hover:text-ink",
+                      )}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                <p className="mb-2 text-[10px] text-ink-faint">
+                  {searchMode === "keyword" && "Matches exact words. Fast and deterministic."}
+                  {searchMode === "semantic" && "Finds conceptually related evidence even when wording differs."}
+                  {searchMode === "hybrid" && "Semantic results first, then keyword fill. Recommended."}
+                </p>
+                <form onSubmit={handleSearch} className="flex gap-2">
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="e.g. deterrence fiscal burden alliance credibility"
+                    className="flex-1 text-sm"
+                    disabled={searching}
+                    aria-label="Search your evidence library"
+                  />
+                  <Button type="submit" size="sm" disabled={searching || !searchQuery.trim()}>
+                    <Search size={14} className="mr-1.5" aria-hidden="true" />
+                    {searching ? "Searching…" : "Search"}
+                  </Button>
+                </form>
+                {searchError && <p className="mt-2 text-xs text-danger" role="alert">{searchError}</p>}
+                {searchResults !== null && (
+                  <div className="mt-3 flex flex-col gap-2" aria-live="polite">
+                    {searchResults.length === 0 ? (
+                      <p className="text-sm text-ink-subtle">
+                        No matching evidence found in your library.
+                        {searchMode !== "keyword" && (
+                          <span className="block mt-1 text-xs text-ink-faint">
+                            If documents were uploaded before semantic search was enabled, try re-embedding or switch to Keyword mode.
+                          </span>
+                        )}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-xs text-ink-subtle">
+                          {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
+                          {searchResults.some((r) => r.retrieval_mode === "semantic" || r.retrieval_mode === "hybrid") && (
+                            <span className="ml-2 text-lav font-medium">semantic</span>
+                          )}
+                        </p>
+                        {searchResults.map((item, i) => (
+                          <SearchResultCard key={item.chunk.id ?? i} item={item} />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* Documents list */}
+            <section aria-labelledby="docs-heading">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h2 id="docs-heading" className="section-stamp">Case files</h2>
+                  {documents.length > 0 && <span className="rep-badge">{documents.length}</span>}
+                </div>
+                {parsedCount > 0 && <span className="section-stamp">{parsedCount} ready</span>}
+              </div>
+              {docsLoading ? (
+                <div className="flex flex-col gap-3">
+                  {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+                </div>
+              ) : documents.length === 0 ? (
+                <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-hairline px-8 py-10 text-center">
+                  <EmptyEvidenceGlyph className="h-10 w-12 text-ink-faint opacity-60" />
+                  <div>
+                    <p className="text-sm font-semibold text-ink">No case files yet</p>
+                    <p className="text-xs text-ink-subtle mt-0.5">
+                      Upload a case file or evidence packet above. RoundLab will extract evidence cards you can cite.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {documents.map((doc) => (
+                    <DocumentCard
+                      key={doc.id}
+                      doc={doc}
+                      onDelete={handleDeleteDoc}
+                      onBlocksExtracted={handleBlocksExtracted}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Blockfile Trainer */}
+            <section aria-labelledby="blocks-heading">
+              <div className="mb-3 flex items-center gap-2">
+                <BookOpen size={14} className="text-ink-faint shrink-0" aria-hidden="true" />
+                <h2 id="blocks-heading" className="section-stamp">Blockfile Trainer</h2>
+                {blockEntries.length > 0 && <span className="rep-badge">{blockEntries.length}</span>}
+              </div>
+              <p className="mb-3 text-xs text-ink-subtle leading-relaxed">
+                Extract block and frontline entries from uploaded documents using the &ldquo;Extract blocks&rdquo;
+                button above. Then search your block library to find prepared responses.
+                Only your uploaded files are used — no outside knowledge.
+              </p>
+              {blockEntries.length > 0 && (
+                <form onSubmit={handleBlockSearch} className="mb-4 flex gap-2">
+                  <Input
+                    value={blockSearchQuery}
+                    onChange={(e) => setBlockSearchQuery(e.target.value)}
+                    placeholder="Search blocks e.g. deterrence privacy rights"
+                    className="flex-1 text-sm"
+                    disabled={blockSearching}
+                    aria-label="Search block entries"
+                  />
+                  <Button type="submit" size="sm" disabled={blockSearching || !blockSearchQuery.trim()}>
+                    {blockSearching
+                      ? <><Loader2 size={13} className="mr-1.5 motion-safe:animate-spin" aria-hidden="true" />Searching…</>
+                      : <><Search size={13} className="mr-1.5" aria-hidden="true" />Search blocks</>}
+                  </Button>
+                  {blockSearchResults !== null && (
+                    <Button type="button" variant="secondary" size="sm"
+                      onClick={() => { setBlockSearchResults(null); setBlockSearchQuery(""); }}>
+                      Clear
+                    </Button>
+                  )}
+                </form>
+              )}
+              {blockSearchErr && <p className="mb-2 text-xs text-danger" role="alert">{blockSearchErr}</p>}
+              {blockEntriesLoading ? (
+                <div className="flex flex-col gap-2">
+                  {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+                </div>
+              ) : (blockSearchResults ?? blockEntries).length === 0 ? (
+                <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-hairline px-6 py-8 text-center">
+                  <Sparkles size={16} className="text-ink-faint" aria-hidden="true" />
+                  <div>
+                    <p className="text-sm font-semibold text-ink">No block entries yet</p>
+                    <p className="text-xs text-ink-subtle mt-0.5">
+                      Upload a blockfile or frontline document above, then click &ldquo;Extract blocks&rdquo; to populate your block library.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {blockSearchResults !== null && (
+                    <p className="text-xs text-ink-subtle">
+                      {blockSearchResults.length} result{blockSearchResults.length !== 1 ? "s" : ""} for &ldquo;{blockSearchQuery}&rdquo;
+                    </p>
+                  )}
+                  {(blockSearchResults ?? blockEntries).map((entry) => (
+                    <BlockEntryCard
+                      key={entry.id}
+                      entry={entry}
+                      userId={userId}
+                      onDelete={(id) => {
+                        setBlockEntries((prev) => prev.filter((e) => e.id !== id));
+                        if (blockSearchResults) {
+                          setBlockSearchResults((prev) => prev?.filter((e) => e.id !== id) ?? null);
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+          </div>
+        )}
 
       </div>
     </AppShell>
   );
 }
-

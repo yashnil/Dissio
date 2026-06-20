@@ -24,7 +24,7 @@ export default function QuickStartRow() {
               className="card-interactive flex h-full flex-col gap-1 rounded-lg border border-hairline bg-surface-1 px-3.5 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
             >
               <span className="text-sm font-medium text-ink">{opt.label}</span>
-              <span className="font-mono text-[0.6875rem] tabular-nums text-ink-faint">
+              <span className="font-mono text-eyebrow tabular-nums text-ink-subtle">
                 {opt.minutes}
               </span>
             </Link>

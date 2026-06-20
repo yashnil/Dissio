@@ -36,7 +36,7 @@ export default function CoachingFocusCard({
       {focus ? (
         <>
           <div>
-            <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+            <p className="text-eyebrow text-ink-subtle">
               Priority skill
             </p>
             <p className="mt-0.5 text-title font-semibold text-ink">{focus.label}</p>

@@ -13,15 +13,13 @@ import {
 } from "@/components/ui/tooltip";
 import { openCommandMenu } from "@/components/shell/CommandMenu";
 
+const LOOP_LABELS = ["Practice", "Analyze", "Drill", "Improve"] as const;
+
 export default function AppSidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = usePersistentToggle(
     "roundlab-sidebar-collapsed",
   );
-
-  function toggleCollapsed() {
-    setCollapsed(!collapsed);
-  }
 
   return (
     <aside
@@ -31,16 +29,16 @@ export default function AppSidebar() {
         "transition-[width] duration-200 ease-out",
         collapsed ? "w-16" : "w-60",
       )}
-      aria-label="Primary"
+      aria-label="Primary navigation"
     >
       {/* Brand */}
-      <div className="flex h-14 items-center gap-2 px-3">
+      <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         <Link
           href="/dashboard"
-          className="group flex items-center gap-2 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+          className="group flex items-center gap-2.5 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
         >
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-lav transition-colors group-hover:bg-lav-hi">
-            <Mic size={14} className="text-white" />
+            <Mic size={14} className="text-white" aria-hidden="true" />
           </span>
           {!collapsed && (
             <span className="text-sm font-semibold tracking-tight text-ink">
@@ -51,26 +49,28 @@ export default function AppSidebar() {
       </div>
 
       {/* Primary CTA */}
-      <div className="px-3 pb-2">
+      <div className="shrink-0 px-3 pb-2">
         <NavCTA collapsed={collapsed} />
       </div>
 
       {/* Command launcher */}
-      <div className="px-3 pb-2">
+      <div className="shrink-0 px-3 pb-3">
         <button
           type="button"
           onClick={openCommandMenu}
           className={cn(
-            "flex w-full items-center rounded-md border border-hairline bg-surface-1 text-ink-subtle transition-colors hover:text-ink hover:border-hairline-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+            "flex w-full items-center rounded-md border border-hairline bg-surface-1 text-ink-subtle transition-colors",
+            "hover:border-hairline-strong hover:text-ink",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
             collapsed ? "h-9 justify-center" : "h-9 gap-2 px-2.5",
           )}
           aria-label="Open command menu"
         >
-          <Search size={15} aria-hidden="true" />
+          <Search size={14} aria-hidden="true" />
           {!collapsed && (
             <>
               <span className="text-xs">Search…</span>
-              <kbd className="ml-auto rounded border border-hairline px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-faint">
+              <kbd className="ml-auto rounded border border-hairline px-1.5 py-0.5 font-mono text-xs text-ink-subtle">
                 ⌘K
               </kbd>
             </>
@@ -79,15 +79,15 @@ export default function AppSidebar() {
       </div>
 
       {/* Nav groups */}
-      <nav className="flex-1 overflow-y-auto px-3 py-2">
+      <nav className="flex-1 overflow-y-auto px-3" aria-label="App sections">
         {APP_NAV_GROUPS.map((group) => (
-          <div key={group.id} className="mb-4 last:mb-0">
+          <div key={group.id} className="mb-5 last:mb-0">
             {group.label && !collapsed && (
-              <p className="px-2 pb-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+              <p className="text-eyebrow px-2 pb-1.5 text-ink-subtle">
                 {group.label}
               </p>
             )}
-            <ul className="flex flex-col gap-0.5">
+            <ul className="flex flex-col gap-0.5" role="list">
               {group.items.map((item) => {
                 const active = isNavItemActive(item, pathname);
                 const Icon = item.icon;
@@ -96,14 +96,15 @@ export default function AppSidebar() {
                     href={item.href}
                     aria-current={active ? "page" : undefined}
                     className={cn(
-                      "group flex items-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+                      "group flex items-center rounded-md text-sm font-medium transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
                       collapsed ? "h-9 w-9 justify-center" : "h-9 gap-2.5 px-2.5",
                       active
-                        ? "bg-surface-2 text-ink"
+                        ? "bg-lav/8 text-ink"
                         : "text-ink-subtle hover:bg-surface-1 hover:text-ink",
                     )}
                   >
-                    <span className="relative flex items-center">
+                    <span className="relative flex shrink-0 items-center">
                       {active && (
                         <span
                           className="absolute -left-2.5 h-4 w-0.5 rounded-full bg-lav"
@@ -112,7 +113,9 @@ export default function AppSidebar() {
                       )}
                       <Icon size={17} aria-hidden="true" />
                     </span>
-                    {!collapsed && <span className="truncate">{item.label}</span>}
+                    {!collapsed && (
+                      <span className="truncate">{item.label}</span>
+                    )}
                   </Link>
                 );
 
@@ -124,7 +127,9 @@ export default function AppSidebar() {
                         <TooltipContent side="right">
                           {item.label}
                           {item.hint && (
-                            <span className="block text-ink-subtle">{item.hint}</span>
+                            <span className="block text-ink-subtle">
+                              {item.hint}
+                            </span>
                           )}
                         </TooltipContent>
                       </TooltipRoot>
@@ -139,18 +144,41 @@ export default function AppSidebar() {
         ))}
       </nav>
 
+      {/* Loop strip — Practice › Analyze › Drill › Improve */}
+      <div
+        className="shrink-0 border-t border-sidebar-border px-3 py-3"
+        aria-hidden="true"
+      >
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-1.5">
+            {LOOP_LABELS.map((_, i) => (
+              <span key={i} className="h-1 w-1 rounded-full bg-hairline-strong" />
+            ))}
+          </div>
+        ) : (
+          <p className="section-stamp text-ink-subtle">{LOOP_LABELS.join(" › ")}</p>
+        )}
+      </div>
+
       {/* Collapse toggle */}
-      <div className="border-t border-sidebar-border p-3">
+      <div className="shrink-0 border-t border-sidebar-border p-3">
         <button
           type="button"
-          onClick={toggleCollapsed}
+          onClick={() => setCollapsed(!collapsed)}
           className={cn(
-            "flex w-full items-center rounded-md text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+            "flex w-full items-center rounded-md text-ink-subtle transition-colors",
+            "hover:bg-surface-1 hover:text-ink",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
             collapsed ? "h-9 justify-center" : "h-9 gap-2 px-2.5",
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
         >
-          {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          {collapsed ? (
+            <PanelLeftOpen size={17} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={17} aria-hidden="true" />
+          )}
           {!collapsed && <span className="text-xs">Collapse</span>}
         </button>
       </div>
@@ -163,10 +191,14 @@ function NavCTA({ collapsed }: { collapsed: boolean }) {
     <Link
       href="/session"
       className={cn(
-        "flex items-center rounded-md bg-primary text-primary-foreground transition-colors hover:bg-primary/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
-        collapsed ? "h-9 w-9 justify-center" : "h-9 gap-2 px-3 text-sm font-medium",
+        "flex items-center rounded-md bg-primary text-primary-foreground transition-colors",
+        "hover:bg-primary/85",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+        collapsed
+          ? "h-9 w-9 justify-center"
+          : "h-9 gap-2 px-3 text-sm font-medium",
       )}
-      aria-label="Start a new round"
+      aria-label="Start a new practice round"
     >
       <Plus size={16} aria-hidden="true" />
       {!collapsed && <span>New Round</span>}
@@ -176,7 +208,7 @@ function NavCTA({ collapsed }: { collapsed: boolean }) {
   return (
     <TooltipRoot>
       <TooltipTrigger asChild>{cta}</TooltipTrigger>
-      <TooltipContent side="right">Start a new round</TooltipContent>
+      <TooltipContent side="right">Start a new practice round</TooltipContent>
     </TooltipRoot>
   );
 }

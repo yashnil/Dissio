@@ -8,7 +8,7 @@ import {
   Target, Zap, Headphones, ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { T } from "@/lib/motion";
+import { T, reducedSafe } from "@/lib/motion";
 import { apiFetch } from "@/lib/api";
 import type { Drill, DrillAttempt, DrillStatus } from "@/types";
 
@@ -83,9 +83,7 @@ export default function DrillCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.07, ...T.base }}
+      {...reducedSafe({ initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { delay: index * 0.07, ...T.base } })}
       className={[
         "rounded-lg border transition-colors",
         drill.status === "completed"
@@ -105,8 +103,8 @@ export default function DrillCard({
         {/* Order number */}
         <div
           className={[
-            "flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] text-[11px] font-bold",
-            drill.status !== "assigned" ? "bg-lav text-white" : "border border-hairline-strong text-ink-faint",
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-xs font-bold",
+            drill.status !== "assigned" ? "bg-lav text-white" : "border border-hairline-strong text-ink-subtle",
           ].join(" ")}
           style={{ fontFamily: "var(--font-jetbrains-mono)" }}
         >
@@ -141,9 +139,11 @@ export default function DrillCard({
             <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
             {status.label}
           </span>
-          <motion.span animate={{ rotate: expanded ? 180 : 0 }} transition={T.fast}>
-            <ChevronDown size={14} className="text-ink-faint" />
-          </motion.span>
+          <ChevronDown
+            size={14}
+            className={["text-ink-faint transition-transform duration-150", expanded ? "rotate-180" : ""].join(" ")}
+            aria-hidden="true"
+          />
         </div>
       </button>
 
@@ -213,10 +213,10 @@ export default function DrillCard({
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Link
               href={`/drills/${drill.id}`}
-              className="flex items-center gap-1.5 rounded-md bg-lav px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi"
+              className="flex items-center gap-1.5 rounded-md bg-lav px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
             >
               Open drill workspace
-              <ArrowRight size={12} />
+              <ArrowRight size={12} aria-hidden="true" />
             </Link>
           </div>
 

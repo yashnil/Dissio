@@ -94,3 +94,43 @@ export function estimateReadTime(wordCount: number): string {
   const s = (secs % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
 }
+
+// ── Transcript action model ───────────────────────────────────────────────────
+
+export type TranscriptReadiness = "too_short" | "low" | "ready";
+
+export function deriveTranscriptReadiness(wordCount: number | null): TranscriptReadiness {
+  if (wordCount === null || wordCount < 25) return "too_short";
+  if (wordCount < 75) return "low";
+  return "ready";
+}
+
+export interface TranscriptCopyState {
+  label: string;
+  ariaLabel: string;
+}
+
+/** Labels for the copy button in its default and success states. */
+export function deriveTranscriptCopyState(copied: boolean): TranscriptCopyState {
+  return copied
+    ? { label: "Copied", ariaLabel: "Transcript copied to clipboard" }
+    : { label: "Copy", ariaLabel: "Copy transcript to clipboard" };
+}
+
+export interface TranscriptReRecordDecision {
+  show: boolean;
+  isDestructive: boolean;
+  label: string;
+}
+
+/** Derive whether the re-record action should be shown and its display label. */
+export function deriveReRecordDecision(
+  readiness: TranscriptReadiness,
+  canReRecord: boolean,
+): TranscriptReRecordDecision {
+  return {
+    show: canReRecord && readiness === "too_short",
+    isDestructive: true,
+    label: "Delete audio & re-record",
+  };
+}

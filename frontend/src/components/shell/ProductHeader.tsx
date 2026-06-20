@@ -42,7 +42,7 @@ export default function ProductHeader({ leftSlot, rightSlot }: ProductHeaderProp
         >
           <Search size={14} aria-hidden="true" />
           <span className="text-xs">Search</span>
-          <kbd className="rounded border border-hairline px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-faint">
+          <kbd className="rounded border border-hairline px-1.5 py-0.5 font-mono text-xs text-ink-subtle">
             ⌘K
           </kbd>
         </button>
