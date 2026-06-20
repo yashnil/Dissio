@@ -153,7 +153,7 @@ function LoginContent() {
                 <div className="w-full border-t border-hairline" />
               </div>
               <div className="relative flex justify-center text-xs">
-                <span className="bg-surface-1 px-2 text-ink-faint">or continue with email</span>
+                <span className="bg-surface-1 px-2 text-ink-subtle">or continue with email</span>
               </div>
             </div>
 
@@ -229,13 +229,13 @@ function LoginContent() {
         <p className="mt-4 text-center text-xs text-ink-subtle">
           {mode === "signin" ? (
             <>Don&apos;t have an account?{" "}
-              <button type="button" onClick={toggleMode} className="font-medium text-lav transition-colors hover:text-lav-hi">
+              <button type="button" onClick={toggleMode} className="font-semibold text-ink underline underline-offset-2 decoration-lav/70 transition-colors hover:text-lav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded">
                 Sign up
               </button>
             </>
           ) : (
             <>Already have an account?{" "}
-              <button type="button" onClick={toggleMode} className="font-medium text-lav transition-colors hover:text-lav-hi">
+              <button type="button" onClick={toggleMode} className="font-semibold text-ink underline underline-offset-2 decoration-lav/70 transition-colors hover:text-lav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded">
                 Sign in
               </button>
             </>

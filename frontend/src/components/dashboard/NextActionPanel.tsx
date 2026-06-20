@@ -42,7 +42,7 @@ export default function NextActionPanel({ action }: { action: NextAction }) {
             <Icon size={20} className={spin ? "animate-spin" : undefined} aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-lav-hi">
+            <p className="text-eyebrow text-lav-hi">
               {action.eyebrow}
             </p>
             <h2 className="mt-0.5 text-title font-semibold text-ink">{action.title}</h2>

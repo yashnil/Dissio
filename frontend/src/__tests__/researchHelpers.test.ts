@@ -86,42 +86,42 @@ describe("sourceQualityLabel", () => {
 // ── sourceQualityColor ────────────────────────────────────────────────────────
 
 describe("sourceQualityColor", () => {
-  it("returns green for high", () => {
-    expect(sourceQualityColor("high")).toContain("green");
+  it("returns ok token for high", () => {
+    expect(sourceQualityColor("high")).toContain("ok");
   });
 
-  it("returns amber for medium", () => {
-    expect(sourceQualityColor("medium")).toContain("amber");
+  it("returns warn token for medium", () => {
+    expect(sourceQualityColor("medium")).toContain("warn");
   });
 
-  it("returns red for low", () => {
-    expect(sourceQualityColor("low")).toContain("red");
+  it("returns danger token for low", () => {
+    expect(sourceQualityColor("low")).toContain("danger");
   });
 
-  it("returns muted for unknown", () => {
-    expect(sourceQualityColor("unknown")).toContain("muted");
+  it("returns subtle for unknown", () => {
+    expect(sourceQualityColor("unknown")).toContain("subtle");
   });
 });
 
 // ── sourceQualityBadgeStyle ───────────────────────────────────────────────────
 
 describe("sourceQualityBadgeStyle", () => {
-  it("high badge has green colors", () => {
+  it("high badge uses ok semantic token", () => {
     const style = sourceQualityBadgeStyle("high");
-    expect(style).toContain("green");
+    expect(style).toContain("ok");
   });
 
-  it("medium badge has amber colors", () => {
+  it("medium badge uses warn semantic token", () => {
     const style = sourceQualityBadgeStyle("medium");
-    expect(style).toContain("amber");
+    expect(style).toContain("warn");
   });
 
-  it("low badge has red colors", () => {
+  it("low badge uses danger semantic token", () => {
     const style = sourceQualityBadgeStyle("low");
-    expect(style).toContain("red");
+    expect(style).toContain("danger");
   });
 
-  it("unknown badge uses surface colors", () => {
+  it("unknown badge uses surface tokens", () => {
     const style = sourceQualityBadgeStyle("unknown");
     expect(style).toContain("surface");
   });
@@ -368,26 +368,26 @@ describe("supportLevelLabel", () => {
 // ── supportLevelBadgeStyle ────────────────────────────────────────────────────
 
 describe("supportLevelBadgeStyle", () => {
-  it("returns green for strong_support", () => {
-    expect(supportLevelBadgeStyle("strong_support")).toContain("green");
+  it("returns ok token for strong_support", () => {
+    expect(supportLevelBadgeStyle("strong_support")).toContain("ok");
   });
-  it("returns amber for partial_support", () => {
-    expect(supportLevelBadgeStyle("partial_support")).toContain("amber");
+  it("returns warn token for partial_support", () => {
+    expect(supportLevelBadgeStyle("partial_support")).toContain("warn");
   });
-  it("returns orange for weak_support", () => {
-    expect(supportLevelBadgeStyle("weak_support")).toContain("orange");
+  it("returns warn token for weak_support", () => {
+    expect(supportLevelBadgeStyle("weak_support")).toContain("warn");
   });
-  it("returns red for no_support", () => {
-    expect(supportLevelBadgeStyle("no_support")).toContain("red");
+  it("returns danger token for no_support", () => {
+    expect(supportLevelBadgeStyle("no_support")).toContain("danger");
   });
-  it("returns muted fallback for null", () => {
+  it("returns surface fallback for null", () => {
     const style = supportLevelBadgeStyle(null);
     expect(style).toBeTruthy();
-    expect(style).not.toContain("green");
-    expect(style).not.toContain("red");
+    expect(style).not.toContain("ok");
+    expect(style).not.toContain("danger");
   });
-  it("returns different styles for strong vs weak", () => {
-    expect(supportLevelBadgeStyle("strong_support")).not.toBe(supportLevelBadgeStyle("weak_support"));
+  it("returns different styles for strong vs no_support", () => {
+    expect(supportLevelBadgeStyle("strong_support")).not.toBe(supportLevelBadgeStyle("no_support"));
   });
 });
 

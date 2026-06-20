@@ -12,6 +12,7 @@ import { useCopy } from "@/lib/useCopy";
 import { deriveAnalysisRecoveryState } from "@/lib/jobHelpers";
 import AppShell from "@/components/shell/AppShell";
 import SpeechReportWorkspace from "@/components/speech/SpeechReportWorkspace";
+import CoachReviewRail from "@/components/speech/CoachReviewRail";
 import SpeechProcessingWorkspace from "@/components/speech/SpeechProcessingWorkspace";
 import SpeechCaptureWorkspace from "@/components/speech/SpeechCaptureWorkspace";
 import SpeechLoadingState from "@/components/speech/SpeechLoadingState";
@@ -26,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { staggerParent, staggerChild } from "@/lib/motion";
+import { staggerParent, staggerChild, reducedSafe } from "@/lib/motion";
 import PracticeLoopCTA from "@/components/PracticeLoopCTA";
 import ImprovementComparisonCard from "@/components/ImprovementComparisonCard";
 import CoachMarginNote from "@/components/CoachMarginNote";
@@ -65,6 +66,13 @@ export default function SpeechPage() {
   const [pageErr,    setPageErr]    = useState("");
 
   const [mode,       setMode]       = useState<"record" | "upload" | "paste">("record");
+  // Honor the capture mode chosen in setup (/speech/[id]?capture=upload).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const c = new URLSearchParams(window.location.search).get("capture");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time URL init, hydration-safe
+    if (c === "record" || c === "upload" || c === "paste") setMode(c);
+  }, []);
   const rec = useRecorder();
   const upload = useSpeechUpload({ speechId, userId });
   const [resetting,  setResetting]  = useState(false);
@@ -92,7 +100,6 @@ export default function SpeechPage() {
   const [, setFeedbackRated] = useState(false);
   const [copyRFD, rfdCopied] = useCopy();
 
-  const [showTableView, setShowTableView] = useState(false);
   const [judgeViewMode, setJudgeViewMode] = useState<JudgeViewMode>("coach");
 
   const [delOpen,  setDelOpen]  = useState(false);
@@ -558,9 +565,10 @@ export default function SpeechPage() {
     <button
       type="button"
       onClick={() => setDelOpen(true)}
-      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+      aria-label="Delete this session"
     >
-      <Trash2 size={12} />
+      <Trash2 size={12} aria-hidden="true" />
       Delete
     </button>
   );
@@ -573,9 +581,9 @@ export default function SpeechPage() {
           logEvent("share_report_modal_opened", userId, { speech_id: speechId });
           setShowShareModal(true);
         }}
-        className="no-print flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink"
+        className="no-print flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
       >
-        <Share2 size={12} />
+        <Share2 size={12} aria-hidden="true" />
         Share
       </button>
       <button
@@ -584,9 +592,9 @@ export default function SpeechPage() {
           logEvent("report_print_clicked", userId, { speech_id: speechId });
           window.print();
         }}
-        className="no-print flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink"
+        className="no-print flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
       >
-        <Printer size={12} />
+        <Printer size={12} aria-hidden="true" />
         Print
       </button>
       {deleteBtn}
@@ -599,9 +607,7 @@ export default function SpeechPage() {
     <AppShell maxWidth="full" bare headerRight={reportActions}>
         <motion.div
           className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-7 sm:px-6 sm:py-9"
-          variants={staggerParent(0.08, 0.05)}
-          initial="hidden"
-          animate="show"
+          {...reducedSafe({ variants: staggerParent(0.08, 0.05), initial: "hidden", animate: "show" })}
         >
           {/* Header — metadata strip */}
           <motion.div variants={staggerChild} className="flex flex-col gap-3">
@@ -683,6 +689,9 @@ export default function SpeechPage() {
               />
             )}
 
+            {/* Coach/assignment review rail — self-hides when there's no linked assignment */}
+            {isComplete && <CoachReviewRail speechId={speechId} />}
+
             {/* ── For Complete Sessions: Coaching Report → Practice → Arguments → Input ── */}
             {isComplete ? (
               <SpeechReportWorkspace
@@ -693,14 +702,14 @@ export default function SpeechPage() {
                 freshResults={freshResults} savedChecks={savedChecks}
                 blockCoverage={blockCoverage} hasBlockEntries={hasBlockEntries}
                 deliveryLoaded={deliveryLoaded} deliveryMetrics={deliveryMetrics}
-                judgeViewMode={judgeViewMode} showTableView={showTableView}
+                judgeViewMode={judgeViewMode}
                 flowEditMode={flowEditMode} editingArgs={editingArgs}
                 savingCorrection={savingCorrection} correctionErr={correctionErr}
                 regenErr={regenErr} regenerating={regenerating}
                 setFeedbackRated={setFeedbackRated} setWorkout={setWorkout}
                 setBlockCoverage={setBlockCoverage} setJudgeViewMode={setJudgeViewMode}
                 setFlowEditMode={setFlowEditMode} setEditingArgs={setEditingArgs}
-                setCorrectionErr={setCorrectionErr} setShowTableView={setShowTableView}
+                setCorrectionErr={setCorrectionErr}
                 generateFeedback={generateFeedback} generateDrills={generateDrills}
                 updateDrillStatus={updateDrillStatus} saveFlowCorrection={saveFlowCorrection}
                 regenerateFromFlow={regenerateFromFlow} startNewAttempt={startNewAttempt}
@@ -716,7 +725,7 @@ export default function SpeechPage() {
                 flowEditMode={flowEditMode} setFlowEditMode={setFlowEditMode} editingArgs={editingArgs}
                 setEditingArgs={setEditingArgs} setCorrectionErr={setCorrectionErr}
                 saveFlowCorrection={saveFlowCorrection} savingCorrection={savingCorrection}
-                correctionErr={correctionErr} showTableView={showTableView} setShowTableView={setShowTableView}
+                correctionErr={correctionErr}
                 regenErr={regenErr} regenerating={regenerating} regenerateFromFlow={regenerateFromFlow}
                 resetAudio={resetAudio} copyRFD={copyRFD} rfdCopied={rfdCopied} userId={userId}
                 speechId={speechId} setFeedbackRated={setFeedbackRated} drills={drills}
@@ -766,7 +775,7 @@ export default function SpeechPage() {
                       </p>
                       <a
                         href="/evidence"
-                        className="mt-1 inline-flex items-center gap-1 text-xs text-lav underline-offset-2 hover:underline"
+                        className="mt-1 inline-flex items-center gap-1 rounded text-xs text-lav underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                       >
                         Open Evidence Library →
                       </a>
@@ -989,7 +998,7 @@ export default function SpeechPage() {
                     logEvent("practice_plan_copied", userId, { speech_id: speechId });
                   }
                 }}
-                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-2 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink"
+                className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-2 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
               >
                 {practicePlanCopied ? (
                   <><Check size={12} className="text-ok" />Practice plan copied!</>

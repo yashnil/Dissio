@@ -50,7 +50,7 @@ const ISSUE_SEVERITY_COLOR: Record<string, string> = {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <span className="section-stamp">{children}</span>
+      <span className="section-stamp text-ink-subtle">{children}</span>
     </div>
   );
 }
@@ -63,11 +63,11 @@ function HelpNote({ children }: { children: React.ReactNode }) {
       onClick={() => setOpen((v) => !v)}
       className="flex items-start gap-1.5 text-left w-full group"
     >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-lav/30 text-[9px] font-bold text-lav">?</span>
-      <span className={`text-[11px] text-ink-faint leading-relaxed ${open ? "" : "line-clamp-1"} group-hover:text-ink-subtle transition-colors`}>
+      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-lav/15 text-xs font-bold text-lav-hi">?</span>
+      <span className={`text-xs text-ink-subtle leading-relaxed ${open ? "" : "line-clamp-1"} group-hover:text-ink transition-colors`}>
         {children}
       </span>
-      <span className="shrink-0 mt-0.5 text-ink-faint">
+      <span className="shrink-0 mt-0.5 text-ink-subtle">
         {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
       </span>
     </button>
@@ -116,7 +116,7 @@ export default function DemoPage() {
 
           {/* ── Speech header ─────────────────────────────────────────────── */}
           <motion.div {...fadeUp(0)} className="flex flex-col gap-2">
-            <p className="section-stamp">Step 1 — Speech</p>
+            <p className="section-stamp text-ink-subtle">Step 1 — Speech</p>
             <h1 className="text-title text-ink">{speech.title}</h1>
             <div className="flex flex-wrap items-center gap-2">
               {[speech.speech_type, speech.side, speech.judge_type && `${speech.judge_type} judge`]
@@ -128,8 +128,8 @@ export default function DemoPage() {
                 ))}
             </div>
             {speech.topic && (
-              <p className="text-xs text-ink-faint">
-                <span className="font-medium text-ink-subtle">Resolution: </span>{speech.topic}
+              <p className="text-xs text-ink-subtle">
+                <span className="font-medium text-ink">Resolution: </span>{speech.topic}
               </p>
             )}
           </motion.div>
@@ -142,7 +142,7 @@ export default function DemoPage() {
                 {SAMPLE_TRANSCRIPT.text}
               </p>
             </div>
-            <p className="text-[11px] text-ink-faint">{SAMPLE_TRANSCRIPT.word_count} words · transcribed via Whisper</p>
+            <p className="text-xs text-ink-subtle">{SAMPLE_TRANSCRIPT.word_count} words · transcribed via Whisper</p>
           </motion.div>
 
           {/* ── Flow board ────────────────────────────────────────────────── */}
@@ -182,8 +182,8 @@ export default function DemoPage() {
                 return (
                   <div key={s.label} className="flex flex-col items-center gap-0.5 rounded-xl border border-hairline bg-surface-1 py-3">
                     <span className={`text-xl font-bold tabular-nums ${color}`}>{s.value}</span>
-                    <span className="text-[9px] text-ink-faint">/{s.max}</span>
-                    <span className="text-[10px] text-ink-subtle">{s.label}</span>
+                    <span className="text-eyebrow text-ink-subtle">/{s.max}</span>
+                    <span className="text-eyebrow text-ink">{s.label}</span>
                   </div>
                 );
               })}
@@ -192,7 +192,7 @@ export default function DemoPage() {
             {/* Coach ballot summary */}
             {feedback.summary && (
               <div className="rounded-xl border border-lav/20 bg-lav/5 px-5 py-4">
-                <p className="mb-1 text-eyebrow text-lav">Coach ballot</p>
+                <p className="mb-1 text-eyebrow text-ink-subtle">Coach ballot</p>
                 <p className="text-sm leading-relaxed text-ink">{feedback.summary}</p>
               </div>
             )}
@@ -235,18 +235,18 @@ export default function DemoPage() {
             {drills.slice(0, 2).map((drill, i) => (
               <div key={drill.id} className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface-1 p-4">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lav text-[10px] font-bold text-white">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lav text-xs font-bold text-white">
                     {i + 1}
                   </span>
                   <p className="text-sm font-semibold text-ink">{drill.title}</p>
-                  <span className="ml-auto rounded-full border border-hairline bg-surface-2 px-2 py-0.5 text-[10px] text-ink-faint">
+                  <span className="ml-auto rounded-full border border-hairline bg-surface-2 px-2 py-0.5 text-eyebrow text-ink-subtle">
                     {SKILL_LABEL[drill.skill_target] ?? drill.skill_target}
                   </span>
                 </div>
                 <div className="rounded-lg border border-lav/15 bg-lav/5 px-3 py-2">
                   <div className="mb-1 flex items-center gap-1">
                     <Target size={10} className="text-lav" />
-                    <span className="text-[10px] font-semibold text-lav">Exercise prompt</span>
+                    <span className="text-eyebrow text-ink-subtle">Exercise prompt</span>
                   </div>
                   <p className="text-xs leading-relaxed text-ink">{drill.prompt}</p>
                 </div>
@@ -280,12 +280,12 @@ export default function DemoPage() {
                     <FileText size={11} className="shrink-0" />
                     <span className="text-xs font-medium text-ink">{row.label}</span>
                   </div>
-                  <span className="text-[10px] font-semibold capitalize">{row.level.replace("_", " ")}</span>
+                  <span className="text-xs font-semibold capitalize">{row.level.replace("_", " ")}</span>
                 </div>
               ))}
-              <p className="text-[11px] text-ink-faint">
+              <p className="text-xs text-ink-subtle">
                 Evidence checks only use your uploaded files. Upload a case file from{" "}
-                <Link href="/evidence" className="text-lav hover:underline">Evidence Library →</Link>
+                <Link href="/evidence" className="font-medium text-ink underline underline-offset-2 decoration-lav/70 hover:text-lav transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50 rounded">Evidence Library →</Link>
               </p>
             </div>
           </motion.div>
@@ -303,28 +303,28 @@ export default function DemoPage() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-ink">After drill practice — score comparison</p>
-                <p className="text-xs text-ink-faint">Sample data showing what the comparison looks like</p>
+                <p className="text-xs text-ink-subtle">Sample data showing what the comparison looks like</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">Overall score</p>
+                <p className="text-eyebrow text-ink-subtle">Overall score</p>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-ink-subtle">62/100</span>
                   <ArrowRight size={12} className="text-ink-faint" />
                   <span className="text-sm font-bold text-ink">70/100</span>
-                  <span className="inline-flex items-center gap-0.5 rounded-full border border-ok/20 bg-ok/10 px-2 py-0.5 text-[11px] font-semibold text-ok">
+                  <span className="inline-flex items-center gap-0.5 rounded-full border border-ok/20 bg-ok/10 px-2 py-0.5 text-xs font-semibold text-ok">
                     <TrendingUp size={9} />+8
                   </span>
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">Targeted: Weighing</p>
+                <p className="text-eyebrow text-ink-subtle">Targeted: Weighing</p>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-ink-subtle">9/20</span>
                   <ArrowRight size={12} className="text-ink-faint" />
                   <span className="text-sm font-bold text-ink">13/20</span>
-                  <span className="inline-flex items-center gap-0.5 rounded-full border border-ok/20 bg-ok/10 px-2 py-0.5 text-[11px] font-semibold text-ok">
+                  <span className="inline-flex items-center gap-0.5 rounded-full border border-ok/20 bg-ok/10 px-2 py-0.5 text-xs font-semibold text-ok">
                     <TrendingUp size={9} />+4
                   </span>
                 </div>
@@ -340,7 +340,7 @@ export default function DemoPage() {
           {/* ── Sample speech types ────────────────────────────────────────── */}
           <motion.div {...fadeUp(0.25)} className="flex flex-col gap-3">
             <SectionLabel>Sample speech starters</SectionLabel>
-            <p className="text-xs text-ink-faint -mt-1">Not sure what to record? These are common PF openings to practice with.</p>
+            <p className="text-xs text-ink-subtle -mt-1">Not sure what to record? These are common PF openings to practice with.</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {[
                 { label: "Constructive (1AC)",  hint: "Your opening 4-minute case — claim + warrant + evidence + impact for 2 contentions." },
@@ -354,8 +354,8 @@ export default function DemoPage() {
                   className="flex flex-col gap-1.5 rounded-xl border border-hairline bg-surface-1 p-3 hover:border-lav/30 hover:bg-lav/5 transition-colors group"
                 >
                   <p className="text-xs font-semibold text-ink group-hover:text-lav transition-colors">{t.label}</p>
-                  <p className="text-[11px] text-ink-faint leading-relaxed">{t.hint}</p>
-                  <span className="text-[10px] text-lav font-medium mt-auto">Practice this →</span>
+                  <p className="text-xs text-ink-subtle leading-relaxed">{t.hint}</p>
+                  <span className="text-xs text-ink-subtle font-medium mt-auto group-hover:text-lav transition-colors">Practice this →</span>
                 </Link>
               ))}
             </div>

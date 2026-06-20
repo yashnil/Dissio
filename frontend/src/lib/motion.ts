@@ -3,8 +3,11 @@
  * Import from here — never hardcode transition values in components.
  *
  * Usage:
- *   import { fadeUp, T, staggerParent, staggerChild } from "@/lib/motion";
- *   <motion.div {...fadeUp(0.1)} />
+ *   import { fadeUp, T, staggerParent, staggerChild, reducedSafe } from "@/lib/motion";
+ *
+ *   // Always wrap entrance animations with reducedSafe():
+ *   <motion.div {...reducedSafe(fadeUp(0.1))} />
+ *
  *   <motion.ul variants={staggerParent()} initial="hidden" animate="show">
  *     <motion.li variants={staggerChild} />
  *   </motion.ul>
@@ -93,3 +96,32 @@ export const cardHover = {
   whileHover: { y: -2, transition: { duration: 0.15, ease: EASE } },
   whileTap:   { y:  0, scale: 0.99 },
 } as const;
+
+// ── Reduced-motion support ────────────────────────────────────────────────────
+
+/**
+ * No-op motion props — instant, no visual movement.
+ * Spread onto motion.* as a fallback when reduced motion is preferred.
+ */
+export const MOTION_NOOP = {
+  initial: {},
+  animate: {},
+  transition: { duration: 0 },
+} as const;
+
+/**
+ * Wraps any motion prop factory and returns MOTION_NOOP when
+ * `prefers-reduced-motion: reduce` is active.
+ *
+ * Always use on entrance animations (fadeUp, fadeIn, fadeUpInView, stagger, etc.)
+ * to respect user accessibility preferences.
+ *
+ *   <motion.div {...reducedSafe(fadeUp(0.1))} />
+ *   <motion.div {...reducedSafe(fadeUpInView(0.2))} />
+ */
+export function reducedSafe<T extends object>(props: T): T | typeof MOTION_NOOP {
+  if (typeof window === "undefined") return props;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? MOTION_NOOP
+    : props;
+}

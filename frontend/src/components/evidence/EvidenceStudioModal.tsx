@@ -7,6 +7,13 @@ import EvidenceStudioCard from "./EvidenceStudioCard";
 /**
  * Large, focused Evidence Studio modal overlay.
  * Takes up most of the viewport so the card editor feels like a real workspace.
+ *
+ * Accessibility:
+ * - role="dialog" aria-modal="true" aria-label
+ * - Focus moves into modal on open; returns to trigger on close
+ * - Tab/Shift+Tab trapped within focusable elements
+ * - Escape closes; backdrop click closes
+ * - Scroll locked while open
  */
 export function EvidenceStudioModal({
   card,
@@ -22,15 +29,15 @@ export function EvidenceStudioModal({
   onClose: () => void;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  // Close on Escape
+  // Capture the previously-focused element so we can restore it on close
   useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+    previousFocusRef.current = document.activeElement as HTMLElement;
+    return () => {
+      previousFocusRef.current?.focus();
+    };
+  }, []);
 
   // Scroll lock
   useEffect(() => {
@@ -39,10 +46,44 @@ export function EvidenceStudioModal({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  // Focus modal on open
+  // Focus the modal panel on open so screen readers announce the dialog
   useEffect(() => {
     modalRef.current?.focus();
   }, []);
+
+  // Keyboard: Escape closes; Tab/Shift+Tab trapped
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const el = modalRef.current;
+      if (!el) return;
+      const focusable = Array.from(
+        el.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
 
   function handleDiscard(id: string) {
     onDiscard(id);
@@ -63,13 +104,11 @@ export function EvidenceStudioModal({
         aria-hidden="true"
       />
 
-      {/* Modal panel — one-column document editor. The sticky action bar +
-          Close control live inside EvidenceStudioCard so they pin to the
-          scroll container as the document scrolls. */}
+      {/* Modal panel */}
       <div
         ref={modalRef}
         tabIndex={-1}
-        className="relative z-10 flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden focus:outline-none"
+        className="relative z-10 flex flex-col bg-surface-1 rounded-2xl shadow-2xl overflow-hidden focus:outline-none"
         style={{
           width: "min(900px, 96vw)",
           height: "min(940px, 92vh)",

@@ -1,18 +1,20 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import { Swords, ArrowRight, Target, RefreshCw, Pencil, FileText } from "lucide-react";
+import { Swords, ArrowRight, Target, RefreshCw, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CardContent } from "@/components/ui/card";
 import SpeechReportNav from "@/components/speech/SpeechReportNav";
 import {
-  StepHeader, Collapsible, InlineAlert, CoachDiagnosis, WorkspaceCard,
+  StepHeader, InlineAlert, WorkspaceCard,
   FlowSummary, TopIssueCoachNote, FlowLensNote, ContextualHelp, isReportStale,
 } from "@/components/speech/reportPrimitives";
-import ScoreBreakdown from "@/components/ScoreBreakdown";
-import FlowBoard from "@/components/FlowBoard";
-import FlowTable from "@/components/FlowTable";
+import ReportOverview from "@/components/speech/ReportOverview";
+import BallotDecision from "@/components/speech/BallotDecision";
+import SkillsWorkspace from "@/components/speech/SkillsWorkspace";
+import TranscriptReview from "@/components/speech/TranscriptReview";
+import FlowCanvas from "@/components/speech/FlowCanvas";
 import DrillCard from "@/components/DrillCard";
 import JudgeModeSelector, { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import DeliveryCoachPanel, { DeliveryCoachPanelEmpty } from "@/components/DeliveryCoachPanel";
@@ -50,7 +52,6 @@ export interface SpeechReportWorkspaceProps {
   deliveryLoaded: boolean;
   deliveryMetrics: DeliveryMetrics | null;
   judgeViewMode: JudgeViewMode;
-  showTableView: boolean;
   flowEditMode: boolean;
   editingArgs: ArgumentItem[];
   savingCorrection: boolean;
@@ -64,7 +65,6 @@ export interface SpeechReportWorkspaceProps {
   setFlowEditMode: Dispatch<SetStateAction<boolean>>;
   setEditingArgs: Dispatch<SetStateAction<ArgumentItem[]>>;
   setCorrectionErr: Dispatch<SetStateAction<string>>;
-  setShowTableView: Dispatch<SetStateAction<boolean>>;
   generateFeedback: () => void;
   generateDrills: () => void;
   updateDrillStatus: (drillId: string, status: DrillStatus) => void;
@@ -77,9 +77,9 @@ export default function SpeechReportWorkspace({
   speech, feedback, argMap, drills, transcript, userId, speechId, analyzingUnified,
   genFb, genDrills, drillErr, updatingDrill, workout, freshResults, savedChecks,
   blockCoverage, hasBlockEntries, deliveryLoaded, deliveryMetrics, judgeViewMode,
-  showTableView, flowEditMode, editingArgs, savingCorrection, correctionErr, regenErr,
+  flowEditMode, editingArgs, savingCorrection, correctionErr, regenErr,
   regenerating, setFeedbackRated, setWorkout, setBlockCoverage, setJudgeViewMode,
-  setFlowEditMode, setEditingArgs, setCorrectionErr, setShowTableView, generateFeedback,
+  setFlowEditMode, setEditingArgs, setCorrectionErr, generateFeedback,
   generateDrills, updateDrillStatus, saveFlowCorrection, regenerateFromFlow, startNewAttempt,
 }: SpeechReportWorkspaceProps) {
   return (
@@ -122,161 +122,17 @@ export default function SpeechReportWorkspace({
                       {/* Coach annotation — below the top structured issue */}
                       <TopIssueCoachNote issues={feedback.raw_feedback?.structured_issues} />
 
-                      {/* Priority Cards - Top 3 Issues */}
-                      {feedback.raw_feedback?.top_3_priorities?.length ? (
-                        <div className="flex flex-col gap-3">
-                          <div className="section-stamp" style={{ color: "oklch(0.640 0.215 25 / 0.8)" }}>
-                            <span className="h-1.5 w-1.5 rounded-full bg-danger flex-shrink-0" />
-                            Round-Losing Issues
-                          </div>
-                          <div className="grid grid-cols-1 gap-2">
-                            {feedback.raw_feedback.top_3_priorities.map((p, i) => (
-                              <div key={i} className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger/6 px-4 py-3">
-                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-[10px] font-bold text-white mt-0.5">
-                                  {i + 1}
-                                </span>
-                                <p className="text-sm leading-relaxed text-ink">{p}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
+                      {/* Overview — executive coaching diagnosis */}
+                      <ReportOverview feedback={feedback} speech={speech} judgeLabel={speech?.judge_type ?? undefined} />
 
-                      {/* Strengths & Weaknesses as Cards */}
-                      {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          {feedback.strengths.length > 0 && (
-                            <div className="flex flex-col gap-2 rounded-xl border border-ok/20 bg-ok/5 p-4">
-                              <p className="text-sm font-semibold text-ok">✓ What Landed</p>
-                              <ul className="flex flex-col gap-1.5">
-                                {feedback.strengths.map((s, i) => (
-                                  <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink-muted">
-                                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ok" />
-                                    {s}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {feedback.weaknesses.length > 0 && (
-                            <div className="flex flex-col gap-2 rounded-xl border border-warn/25 bg-warn/5 p-4">
-                              <p className="text-sm font-semibold text-warn">⚠ Fix Before Next Round</p>
-                              <ul className="flex flex-col gap-1.5">
-                                {feedback.weaknesses.map((w, i) => (
-                                  <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink-muted">
-                                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-warn" />
-                                    {w}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* Ballot — judge decision + coach translation */}
+                      <BallotDecision feedback={feedback} judgeLabel={speech?.judge_type ?? undefined} />
 
-                      {/* Judge Ballot */}
-                      <div id="ballot" className="flex flex-col gap-3 scroll-mt-20">
-                        <div className="section-stamp" style={{ color: "oklch(0.510 0.156 278 / 0.8)" }}>
-                          <span className="h-1.5 w-1.5 rounded-full bg-lav flex-shrink-0" />
-                          Judge Ballot
-                        </div>
-                        <div id="skills" className="rounded-xl border border-hairline bg-surface-2 p-4 scroll-mt-20">
-                          <ScoreBreakdown
-                            scores={feedback.scores}
-                            speechType={speech?.speech_type}
-                            scoreExplanations={feedback.raw_feedback?.score_explanations}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Contextual help — warranting */}
-                      <ContextualHelp question="Why does warranting matter so much?">
-                        A warrant is the logical mechanism that connects your claim to your evidence. Without it, a judge can simply say &ldquo;so what?&rdquo; and ignore your argument even if the evidence is strong. Flow judges in particular will drop unwarranted arguments — a claim needs a clear &ldquo;because&rdquo; before the evidence or it doesn&apos;t count.
-                      </ContextualHelp>
-
-                      {/* Coach Diagnosis Cards */}
-                      {(feedback.raw_feedback?.dropped_or_undercovered_arguments?.length ||
-                        feedback.raw_feedback?.warranting_diagnostics?.length ||
-                        feedback.raw_feedback?.weighing_diagnostics?.length ||
-                        feedback.raw_feedback?.evidence_diagnostics?.length) ? (
-                        <div className="flex flex-col gap-3">
-                          <div className="section-stamp">
-                            <span className="h-1.5 w-1.5 rounded-full bg-ink-subtle flex-shrink-0" />
-                            Coach Diagnosis
-                          </div>
-
-                          {/* Dropped arguments */}
-                          {feedback.raw_feedback?.dropped_or_undercovered_arguments && feedback.raw_feedback.dropped_or_undercovered_arguments.length > 0 && (
-                            <div className="flex flex-col gap-2 rounded-xl border border-danger/20 bg-danger/5 px-4 py-3">
-                              <p className="text-sm font-semibold text-danger">Drops / Undercovered</p>
-                              <ul className="flex flex-col gap-1.5">
-                                {feedback.raw_feedback.dropped_or_undercovered_arguments.map((item, i) => (
-                                  <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink-muted">
-                                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-danger/60" />
-                                    {item}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          <CoachDiagnosis
-                            category="warranting"
-                            label="Warranting"
-                            items={feedback.raw_feedback?.warranting_diagnostics ?? []}
-                          />
-                          <CoachDiagnosis
-                            category="weighing"
-                            label="Impact Weighing"
-                            items={feedback.raw_feedback?.weighing_diagnostics ?? []}
-                          />
-                          <CoachDiagnosis
-                            category="evidence"
-                            label="Evidence Use"
-                            items={feedback.raw_feedback?.evidence_diagnostics ?? []}
-                          />
-                        </div>
-                      ) : null}
-
-                      {/* Decision Logic (RFD) */}
-                      {feedback.raw_feedback?.decision_logic && (
-                        <div className="flex flex-col gap-2 rounded-xl border border-lav/20 bg-lav/5 px-4 py-3">
-                          <div className="section-stamp" style={{ color: "oklch(0.660 0.130 278)" }}>
-                            <span className="h-1.5 w-1.5 rounded-full bg-lav flex-shrink-0" />
-                            Reason For Decision (RFD)
-                          </div>
-                          <p className="text-sm leading-relaxed text-ink-muted">
-                            {feedback.raw_feedback.decision_logic}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Judge Adaptation Notes */}
-                      {feedback.raw_feedback?.judge_adaptation_notes && (
-                        <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface-2 px-4 py-3">
-                          <p className="text-sm font-semibold text-ink">Judge Adaptation</p>
-                          <p className="text-sm leading-relaxed text-ink-muted">
-                            {feedback.raw_feedback.judge_adaptation_notes}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Action Checklist */}
-                      {feedback.raw_feedback?.recommendations?.length ? (
-                        <div className="flex flex-col gap-3 rounded-xl border border-lav/20 bg-lav/5 p-4">
-                          <p className="text-sm font-semibold text-lav">Before You Re-Record</p>
-                          <ul className="flex flex-col gap-2">
-                            {feedback.raw_feedback.recommendations.map((r, i) => (
-                              <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-ink">
-                                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-lav/30 bg-surface-1 text-[8px] font-bold text-lav/50">
-                                  {i + 1}
-                                </span>
-                                {r}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
+                      {/* Skills — priority skill + grouped matrix */}
+                      <SkillsWorkspace
+                        feedback={feedback}
+                        deliveryScore={deliveryMetrics?.delivery_score ?? null}
+                      />
 
                       {/* Feedback Rating + Confusion Report */}
                       {userId && (
@@ -337,7 +193,7 @@ export default function SpeechReportWorkspace({
                             {action.href && (
                               <a
                                 href={action.href}
-                                className="shrink-0 flex items-center gap-1 rounded-lg border border-hairline bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-3 transition-colors"
+                                className="shrink-0 flex items-center gap-1 rounded-lg border border-hairline bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                               >
                                 Go <ArrowRight size={11} />
                               </a>
@@ -399,82 +255,12 @@ export default function SpeechReportWorkspace({
                   </WorkspaceCard>
                 )}
 
-                {/* Recommended Practice / Drills */}
-                {drills.length > 0 ? (
-                  <WorkspaceCard key="drills-done">
-                    {/* id="drills" is the anchor target for ReportVerdictPanel and PracticeLoopCTA #drills hrefs */}
-                    <CardContent id="drills" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
-                      <StepHeader
-                        title="Recommended Practice"
-                        done
-                        aside={
-                          <Badge variant="indigo">
-                            {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
-                          </Badge>
-                        }
-                      />
-                      <div className="flex items-start gap-3 rounded-lg border border-lav/20 bg-lav/5 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Complete drills to turn feedback into improvement</p>
-                          <p className="text-xs text-ink-subtle">
-                            Each drill targets a specific weakness from your feedback. Practice the exercise, then re-record your speech to track progress.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        {drills.map((drill, i) => (
-                          <DrillCard
-                            key={drill.id}
-                            drill={drill}
-                            index={i}
-                            onStatusChange={updateDrillStatus}
-                            updatingId={updatingDrill}
-                            userId={userId ?? undefined}
-                          />
-                        ))}
-                      </div>
-
-                      {/* Re-record CTA after drills */}
-                      <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
-                          <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={startNewAttempt}
-                          className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
-                        >
-                          <RefreshCw size={11} />
-                          New Attempt
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </WorkspaceCard>
-                ) : feedback && (
-                  <WorkspaceCard key="drills-empty">
-                    <CardContent className="flex flex-col gap-4 px-5 py-5">
-                      <StepHeader title="Recommended Practice" done={false} />
-                      <EmptyStateCard
-                        icon={Target}
-                        title="No practice drills yet"
-                        description="Generate personalized drills based on your feedback to target your weaknesses and improve faster."
-                        actionLabel="Generate Practice Drills"
-                        onAction={generateDrills}
-                      />
-                      {genDrills && <p className="text-xs text-center text-ink-faint">Generating drills...</p>}
-                      {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
-                    </CardContent>
-                  </WorkspaceCard>
-                )}
-
-                {/* Flow */}
+                {/* ── 5. Debate Flow — analytical canvas (moved before drills) ─── */}
                 {argMap && (
                   <WorkspaceCard key="flow-done">
                     <CardContent id="flow" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <StepHeader n={3} title="Flow" done aside={
+                        <StepHeader n={3} title="Debate Flow" done aside={
                           <div className="flex items-center gap-2">
                             {argMap.source_type === "user_corrected" && (
                               <Badge variant="indigo">Flow corrected</Badge>
@@ -484,14 +270,16 @@ export default function SpeechReportWorkspace({
                             </Badge>
                           </div>
                         } />
+                        {/* Judge lens + edit — 6. Judge lens */}
                         <div className="flex items-center gap-2">
                           <JudgeModeSelector value={judgeViewMode} onChange={setJudgeViewMode} />
                           <button
                             type="button"
                             onClick={() => { setFlowEditMode(true); setEditingArgs(initEditArgs(argMap.arguments)); setCorrectionErr(""); }}
-                            className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors"
+                            aria-label="Edit flow arguments"
+                            className="flex items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-ink-faint hover:text-ink-subtle hover:border-hairline-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                           >
-                            <Pencil size={10} />
+                            <Pencil size={10} aria-hidden="true" />
                             Edit
                           </button>
                         </div>
@@ -525,20 +313,14 @@ export default function SpeechReportWorkspace({
 
                           {argMap.arguments.length === 0 ? (
                             <p className="text-sm text-ink-faint">No arguments extracted.</p>
-                          ) : showTableView ? (
-                            <FlowTable args={argMap.arguments} judgeMode={judgeViewMode} />
                           ) : (
-                            <FlowBoard args={argMap.arguments} judgeMode={judgeViewMode} />
+                            <FlowCanvas
+                              args={argMap.arguments}
+                              judgeMode={judgeViewMode}
+                              transcriptHref="#transcript"
+                              drillsHref="#drills"
+                            />
                           )}
-
-                          {/* View toggle — demoted, secondary */}
-                          <button
-                            type="button"
-                            onClick={() => setShowTableView((v) => !v)}
-                            className="self-start text-[10px] text-ink-faint underline-offset-2 hover:text-ink-subtle hover:underline"
-                          >
-                            {showTableView ? "Switch to flow board" : "Switch to table view"}
-                          </button>
                         </>
                       )}
 
@@ -566,31 +348,99 @@ export default function SpeechReportWorkspace({
                   </WorkspaceCard>
                 )}
 
-                {/* View Speech Text - Collapsed (completed session)
-                    TODO: Future feature - Annotated Speech Text
-                    - Highlight claims, warrants, evidence, impacts inline
-                    - Underline weak warrants
-                    - Flag unsupported evidence
-                    - Show strong/weak segments with color coding
-                    - Useful for students who want to see exactly where their speech succeeded/failed
-                */}
+                {/* ── 7. Assigned Drills — connected to flow weaknesses ─────── */}
+                {drills.length > 0 ? (
+                  <WorkspaceCard key="drills-done">
+                    {/* id="drills" is the anchor target for ReportVerdictPanel and PracticeLoopCTA #drills hrefs */}
+                    <CardContent id="drills" className="flex flex-col gap-4 px-5 py-5 scroll-mt-20">
+                      <StepHeader
+                        title="Assigned Practice"
+                        done
+                        aside={
+                          <Badge variant="indigo">
+                            {drills.filter((d) => d.status !== "assigned").length}/{drills.length} attempted
+                          </Badge>
+                        }
+                      />
+                      {/* Weakness → drill → re-record chain */}
+                      <ol className="flex flex-wrap items-center gap-1.5 text-[11px]" aria-label="Practice progression">
+                        {["Speech weakness", "Assigned drill", "Attempt", "Re-record", "Comparison"].map((step, i, arr) => {
+                          const reached =
+                            i === 0 ? true
+                            : i === 1 ? drills.length > 0
+                            : i === 2 ? drills.some((d) => d.status !== "assigned")
+                            : false;
+                          return (
+                            <li key={step} className="flex items-center gap-1.5">
+                              <span className={reached ? "rounded-md border border-lav/30 bg-lav/10 px-2 py-0.5 font-medium text-lav" : "rounded-md border border-hairline bg-surface-1 px-2 py-0.5 text-ink-faint"}>
+                                {step}
+                              </span>
+                              {i < arr.length - 1 && <span className="text-hairline-strong" aria-hidden="true">→</span>}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                      <div className="flex flex-col gap-2">
+                        {drills.map((drill, i) => (
+                          <div key={drill.id} className="flex flex-col gap-1">
+                            {i === 0 && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-lav">Start here — top recommendation</span>
+                            )}
+                            <DrillCard
+                              drill={drill}
+                              index={i}
+                              onStatusChange={updateDrillStatus}
+                              updatingId={updatingDrill}
+                              userId={userId ?? undefined}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Re-record CTA after drills */}
+                      <div className="flex items-center gap-3 rounded-lg border border-hairline bg-surface-2 px-4 py-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-ink">Ready to re-record?</p>
+                          <p className="text-xs text-ink-subtle">Practice a few drills above, then start a fresh attempt to track your progress.</p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={startNewAttempt}
+                          className="shrink-0 gap-1.5 text-lav hover:border-lav/40"
+                        >
+                          <RefreshCw size={11} />
+                          New Attempt
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </WorkspaceCard>
+                ) : feedback && (
+                  <WorkspaceCard key="drills-empty">
+                    <CardContent className="flex flex-col gap-4 px-5 py-5">
+                      <StepHeader title="Assigned Practice" done={false} />
+                      <EmptyStateCard
+                        icon={Target}
+                        title="No practice drills yet"
+                        description="Generate personalized drills based on your feedback to target your weaknesses and improve faster."
+                        actionLabel="Generate Practice Drills"
+                        onAction={generateDrills}
+                      />
+                      {genDrills && <p className="text-xs text-center text-ink-faint">Generating drills...</p>}
+                      {drillErr && <InlineAlert variant="danger">{drillErr}</InlineAlert>}
+                    </CardContent>
+                  </WorkspaceCard>
+                )}
+
+                {/* Transcript */}
                 {transcript && (
                   <WorkspaceCard key="input-details">
                     <CardContent className="flex flex-col gap-3 px-5 py-5">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2">
-                          <FileText size={14} className="text-ink-subtle" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-ink">View Speech Text</p>
-                          <p className="text-xs text-ink-faint">{transcript.word_count} words</p>
-                        </div>
-                      </div>
-                      <Collapsible label="Show full transcript">
-                        <div className="rounded-lg border border-hairline bg-surface-2 p-4">
-                          <p className="text-sm leading-relaxed text-ink whitespace-pre-wrap">{transcript.text}</p>
-                        </div>
-                      </Collapsible>
+                      <TranscriptReview
+                        transcript={transcript}
+                        audioUrl={speech?.audio_url}
+                        flowHref="#flow"
+                      />
                     </CardContent>
                   </WorkspaceCard>
                 )}

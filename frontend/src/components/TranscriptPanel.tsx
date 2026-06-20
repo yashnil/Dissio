@@ -60,7 +60,7 @@ export default function TranscriptPanel({
             <button
               type="button"
               onClick={() => copyText(transcript.text)}
-              className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink"
+              className="flex items-center gap-1 rounded text-xs text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
               title="Copy transcript"
             >
               {copied ? <Check size={11} className="text-ok" /> : <Copy size={11} />}
@@ -70,7 +70,7 @@ export default function TranscriptPanel({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink"
+            className="flex items-center gap-1 rounded text-xs text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
           >
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             {expanded ? "Collapse" : "Read transcript"}
@@ -91,7 +91,7 @@ export default function TranscriptPanel({
                 type="button"
                 onClick={onReRecord}
                 disabled={transcribing}
-                className="flex w-fit items-center gap-1.5 rounded-md border border-danger/25 bg-danger/10 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/15 disabled:opacity-50"
+                className="flex w-fit items-center gap-1.5 rounded-md border border-danger/25 bg-danger/10 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/15 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/50"
               >
                 <RefreshCw size={10} />
                 Delete audio &amp; re-record

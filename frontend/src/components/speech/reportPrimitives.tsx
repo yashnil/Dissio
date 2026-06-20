@@ -61,16 +61,16 @@ export function Collapsible({ label, children, open: defaultOpen = false }: {
     <div className="border-t border-hairline">
       <button
         type="button"
-        className="flex w-full items-center justify-between py-3 text-left"
+        className="flex w-full items-center justify-between py-3 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
       >
         <span className="section-stamp">{label}</span>
-        <motion.span
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={T.fast}
-        >
-          <ChevronDown size={12} className="text-ink-faint" />
-        </motion.span>
+        <ChevronDown
+          size={12}
+          className={["text-ink-faint transition-transform duration-150", open ? "rotate-180" : ""].join(" ")}
+          aria-hidden="true"
+        />
       </button>
       <AnimatePresence>
         {open && (
@@ -157,8 +157,8 @@ export function CoachDiagnosis({ category, items, label }: { category: string; i
 
       {/* Disclaimer for examples */}
       {items.some(item => item.toLowerCase().includes("before:") || item.toLowerCase().includes("after:")) && (
-        <div className="flex items-start gap-2 rounded-md border border-amber/20 bg-amber/5 px-3 py-2">
-          <p className="text-xs text-amber">⚠ Model example only — adapt to your arguments, don&apos;t copy word-for-word</p>
+        <div className="flex items-start gap-2 rounded-md border border-warn/20 bg-warn/5 px-3 py-2">
+          <p className="text-xs text-warn">⚠ Model example only — adapt to your arguments, don&apos;t copy word-for-word</p>
         </div>
       )}
     </div>
@@ -226,8 +226,8 @@ export function FlowSummary({ argMap }: { argMap: ArgumentMap }) {
       )}
 
       {commonWeakness && (
-        <div className="flex flex-col gap-1 rounded-lg border border-amber/20 bg-amber/5 px-4 py-3">
-          <p className="text-xs text-amber">Most Common Issue</p>
+        <div className="flex flex-col gap-1 rounded-lg border border-warn/20 bg-warn/5 px-4 py-3">
+          <p className="text-xs text-warn">Most Common Issue</p>
           <p className="text-sm font-semibold text-ink">{commonWeakness}</p>
           <p className="text-xs text-ink-subtle">{allIssues.length} total issues</p>
         </div>
@@ -297,7 +297,8 @@ export function ContextualHelp({ question, children }: { question: string; child
     <button
       type="button"
       onClick={() => setOpen((v) => !v)}
-      className="flex w-full items-start gap-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2.5 text-left hover:border-hairline-strong hover:bg-surface-3 transition-colors"
+      aria-expanded={open}
+      className="flex w-full items-start gap-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2.5 text-left hover:border-hairline-strong hover:bg-surface-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
     >
       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-lav/30 text-[9px] font-bold text-lav">?</span>
       <div className="flex flex-col gap-1 flex-1 min-w-0">

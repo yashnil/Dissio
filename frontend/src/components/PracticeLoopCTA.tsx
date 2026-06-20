@@ -126,7 +126,7 @@ export default function PracticeLoopCTA({
                     ? `/drills/${assignedDrills[0].id}`
                     : `/speech/${speechId}#drills`
                 }
-                className="flex items-center gap-1.5 rounded-md bg-lav px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi"
+                className="flex items-center gap-1.5 rounded-md bg-lav px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
               >
                 Open drill workspace <ArrowRight size={12} />
               </Link>
@@ -134,7 +134,7 @@ export default function PracticeLoopCTA({
                 <button
                   type="button"
                   onClick={onStartNewAttempt}
-                  className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink"
+                  className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded"
                 >
                   <RefreshCw size={10} /> Re-record instead
                 </button>
@@ -149,7 +149,7 @@ export default function PracticeLoopCTA({
                   ? `/drills/${assignedDrills[0].id}`
                   : `/speech/${speechId}#drills`
               }
-              className="flex items-center gap-1.5 rounded-md bg-lav px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi"
+              className="flex items-center gap-1.5 rounded-md bg-lav px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
             >
               Open drill workspace <ArrowRight size={12} />
             </Link>
@@ -162,7 +162,7 @@ export default function PracticeLoopCTA({
                   <RefreshCw size={12} /> New Attempt
                 </Button>
               )}
-              <Link href="/dashboard" className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink">
+              <Link href="/dashboard" className="flex items-center gap-1 text-xs text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded">
                 Back to dashboard <ArrowRight size={10} />
               </Link>
             </>

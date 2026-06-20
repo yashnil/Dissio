@@ -317,6 +317,103 @@ export interface TeamDashboard {
   students: StudentProgress[];
 }
 
+// ── Assignments ───────────────────────────────────────────────────────────────
+
+export type AssignmentKind = "speech" | "rerecord" | "drill";
+/** Effective status derived from the lifecycle + real analysis state. */
+export type RecipientState =
+  | "assigned"
+  | "started"
+  | "processing"
+  | "ready_for_review"
+  | "failed"
+  | "reviewed"
+  | "revision_requested";
+
+export interface RecipientStatus {
+  id: string;
+  user_id: string;
+  display_name: string | null;
+  status: RecipientState;
+  base_status?: string;
+  submission_speech_id: string | null;
+  coach_feedback: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+}
+
+export interface Assignment {
+  id: string;
+  team_id: string;
+  created_by: string;
+  title: string;
+  kind: AssignmentKind;
+  speech_type: string | null;
+  side: string | null;
+  judge_type: string | null;
+  topic: string | null;
+  goal: string | null;
+  success_criteria: string[];
+  due_date: string | null;
+  created_at: string;
+  recipients: RecipientStatus[];
+}
+
+export interface ReviewQueueItem {
+  recipient_id: string;
+  assignment_id: string;
+  assignment_title: string;
+  student_id: string;
+  student_name: string | null;
+  status: RecipientState;
+  submission_speech_id: string | null;
+  submitted_at: string | null;
+}
+
+export interface TeamReadiness {
+  team_id: string;
+  assignment_count: number;
+  recipient_total: number;
+  assigned: number;
+  in_progress: number;
+  ready_for_review: number;
+  failed: number;
+  reviewed: number;
+  revision_requested: number;
+  review_backlog: number;
+  completion_rate: number | null;
+}
+
+export interface AssignmentForSpeech {
+  viewer_is_coach: boolean;
+  recipient: {
+    id: string;
+    user_id: string;
+    status: RecipientState;
+    base_status: string;
+    coach_feedback: string | null;
+    submission_speech_id: string | null;
+  };
+  assignment: {
+    id: string;
+    title: string;
+    kind: AssignmentKind;
+    goal: string | null;
+    success_criteria: string[];
+    due_date: string | null;
+    team_id: string;
+  } | null;
+}
+
+export interface CoachStudentProfile {
+  student_id: string;
+  display_name: string | null;
+  speech_count: number;
+  feedback_ready_count: number;
+  speeches: { id: string; title: string; speech_type: string; status: string; created_at: string }[];
+  assignments: { recipient_id: string; title: string; status: RecipientState; submission_speech_id: string | null }[];
+}
+
 // ── Analysis Jobs ─────────────────────────────────────────────────────────────
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";

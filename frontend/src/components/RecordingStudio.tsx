@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Mic, Square, Trash2, RotateCcw } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { ArrowRight, Mic, Square, Trash2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { T, EASE } from "@/lib/motion";
+import RecordingMeter from "@/components/practice/RecordingMeter";
+import { countdownAnnouncement, deriveSpeechTimeProgress } from "@/lib/practiceStudioModel";
 
 export type RecordState =
   | "idle"
@@ -20,6 +22,10 @@ interface RecordingStudioProps {
   recordingSeconds: number;
   recordObjectUrl: string | null;
   recordError: string;
+  /** Real 0..1 input level from the recorder's analyser (drives the meter). */
+  level?: number;
+  /** Time target in seconds for the selected speech type (for progress guidance). */
+  targetSeconds?: number;
   onStartRecording: () => void;
   onStopRecording: () => void;
   onSaveRecording: () => void;
@@ -30,43 +36,39 @@ function formatTime(s: number) {
   return `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 }
 
-// Static waveform heights — stable across renders, avoids hydration drift
-const WAVEFORM = [10, 18, 28, 16, 36, 24, 14, 30, 20, 8, 28, 18, 6, 32, 12, 22, 10, 30, 16, 22];
-
 // ── Countdown (3-2-1-Speak) ────────────────────────────────────────────────────
 
 function CountdownView({ count }: { count: number | "go" }) {
   return (
     <div className="flex flex-col items-center gap-5 py-8">
-      <div className="relative flex items-center justify-center">
+      {/* Live region: announces count to screen readers without polluting the visual timer */}
+      <p className="sr-only" aria-live="assertive" aria-atomic="true">
+        {countdownAnnouncement(count)}
+      </p>
+
+      <AnimatePresence mode="wait">
         <motion.div
-          className="absolute rounded-full border-2 border-lav/30"
-          animate={{ width: [60, 100, 60], height: [60, 100, 60], opacity: [0.6, 0, 0.6] }}
-          transition={{ duration: 1, repeat: Infinity, ease: "easeOut" }}
-        />
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={count}
-            initial={{ scale: 1.6, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.6, opacity: 0 }}
-            transition={{ duration: 0.35, ease: EASE }}
-            className="relative flex h-20 w-20 items-center justify-center rounded-full border-2 border-lav/50 bg-lav/10"
-          >
-            {count === "go" ? (
-              <Mic size={28} className="text-lav" />
-            ) : (
-              <span className="text-3xl font-bold tabular-nums text-lav">{count}</span>
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+          key={String(count)}
+          initial={{ scale: 1.4, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.7, opacity: 0 }}
+          transition={{ duration: 0.28, ease: EASE }}
+          className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-lav/50 bg-lav/10"
+        >
+          {count === "go" ? (
+            <Mic size={28} className="text-lav" aria-hidden="true" />
+          ) : (
+            <span className="text-3xl font-bold tabular-nums text-lav">{count}</span>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm font-semibold text-ink">
           {count === "go" ? "Speak!" : "Get ready…"}
         </p>
-        <p className="text-xs text-ink-subtle">Recording starts in a moment</p>
-        <p className="text-[10px] text-ink-faint mt-0.5">
+        <p className="text-xs text-ink-subtle">3 · 2 · 1 · Go</p>
+        <p className="mt-0.5 text-[10px] text-ink-faint">
           <kbd className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[9px]">Esc</kbd>
           {" "}to cancel
         </p>
@@ -80,41 +82,42 @@ function CountdownView({ count }: { count: number | "go" }) {
 function IdleView({
   state, error, onStart,
 }: { state: RecordState; error: string; onStart: () => void }) {
+  const isPermissionError = error.toLowerCase().includes("denied") ||
+    error.toLowerCase().includes("permission") ||
+    error.toLowerCase().includes("not allowed");
+  const isUnsupportedError = error.toLowerCase().includes("not supported") ||
+    error.toLowerCase().includes("mediarecorder");
+
   return (
     <div className="flex flex-col items-center gap-5 py-6">
-      {/* Eyebrow */}
       <p className="text-eyebrow text-ink-subtle">Practice Rep</p>
 
-      {/* Mic button — breathing animation when idle */}
-      <div className="relative flex items-center justify-center">
-        {state === "idle" && (
-          <>
-            <motion.div
-              className="absolute h-28 w-28 rounded-full bg-lav/5"
-              animate={{ scale: [1, 1.18, 1], opacity: [0.3, 0.7, 0.3] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-            />
-            <motion.div
-              className="absolute h-20 w-20 rounded-full bg-lav/8"
-              animate={{ scale: [1, 1.12, 1], opacity: [0.5, 0.9, 0.5] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
-            />
-          </>
-        )}
-        <motion.button
-          type="button"
-          onClick={onStart}
-          disabled={state === "requesting"}
-          whileHover={{ scale: 1.08 }}
-          whileTap={{ scale: 0.92 }}
-          transition={T.fast}
-          className="relative z-10 flex h-16 w-16 cursor-pointer items-center justify-center rounded-full bg-lav disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
-          style={{ boxShadow: "0 0 32px -6px oklch(0.510 0.156 278 / 0.60)" }}
-          aria-label="Start recording"
-        >
-          <Mic size={26} className="text-white" />
-        </motion.button>
-      </div>
+      {/* Live region: announces state transitions to screen readers */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {state === "requesting"
+          ? "Requesting microphone access"
+          : state === "error"
+            ? `Microphone error: ${error}`
+            : "Ready to record. Press Space or the Start button to begin."}
+      </p>
+
+      {/* Mic button — no decorative ambient rings; shape and color carry sufficient meaning */}
+      <button
+        type="button"
+        onClick={onStart}
+        disabled={state === "requesting"}
+        className={[
+          "relative z-10 flex h-16 w-16 cursor-pointer items-center justify-center rounded-full bg-lav",
+          "transition-transform duration-150",
+          "motion-safe:hover:scale-105 motion-safe:active:scale-95",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+        ].join(" ")}
+        style={{ boxShadow: "0 0 32px -6px oklch(0.510 0.156 278 / 0.60)" }}
+        aria-label={state === "requesting" ? "Requesting microphone access" : "Start recording"}
+      >
+        <Mic size={26} className="text-white" aria-hidden="true" />
+      </button>
 
       <div className="flex flex-col items-center gap-2 text-center">
         <p className="text-sm font-semibold text-ink">
@@ -122,7 +125,6 @@ function IdleView({
         </p>
         <p className="text-xs text-ink-subtle">3-second countdown · speak for 30+ seconds</p>
 
-        {/* Keyboard shortcut hints — hidden on touch-primary devices */}
         {state === "idle" && (
           <div className="mt-0.5 hidden items-center gap-2 rounded-full border border-hairline bg-surface-2 px-3 py-1.5 sm:flex">
             <kbd className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">Space</kbd>
@@ -135,13 +137,19 @@ function IdleView({
       </div>
 
       {state === "error" && error && (
-        <motion.p
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-xs text-center text-sm text-danger"
-        >
-          {error}
-        </motion.p>
+        <div className="flex max-w-xs flex-col items-center gap-2 text-center">
+          <p className="text-sm font-semibold text-danger">{error}</p>
+          {isPermissionError && (
+            <p className="text-xs text-ink-subtle">
+              Allow microphone access in your browser settings, then refresh.
+            </p>
+          )}
+          {isUnsupportedError && (
+            <p className="text-xs text-ink-subtle">
+              Try Chrome or Firefox, or use the Upload option instead.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -149,87 +157,82 @@ function IdleView({
 
 // ── Recording ──────────────────────────────────────────────────────────────────
 
-function RecordingView({ seconds, onStop }: { seconds: number; onStop: () => void }) {
+function RecordingView({
+  seconds, level, onStop, targetSeconds = 240,
+}: { seconds: number; level: number; onStop: () => void; targetSeconds?: number }) {
+  const progress = deriveSpeechTimeProgress(seconds, targetSeconds);
+
   return (
     <div className="flex flex-col items-center gap-5 py-5">
+      {/* Live region: periodic announcement (every 30s) to avoid screen-reader spam */}
+      {seconds > 0 && seconds % 30 === 0 && (
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          Recording: {formatTime(seconds)}
+        </p>
+      )}
 
-      {/* LIVE REC badge */}
-      <div className="flex items-center gap-2 rounded-full border border-danger/25 bg-danger/8 px-3 py-1.5">
-        <motion.span
-          className="h-1.5 w-1.5 rounded-full bg-danger"
-          animate={{ opacity: [1, 0.25, 1] }}
-          transition={{ duration: 1, repeat: Infinity }}
+      {/* LIVE badge — CSS pulse, respects prefers-reduced-motion */}
+      <div
+        className="flex items-center gap-2 rounded-full border border-danger/25 bg-danger/8 px-3 py-1.5"
+        role="status"
+        aria-label="Recording active"
+      >
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-danger motion-safe:animate-pulse"
+          aria-hidden="true"
         />
-        <span className="text-[10px] font-bold uppercase tracking-wider text-danger">Live Rec</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-danger">
+          Recording
+        </span>
       </div>
 
-      {/* Timer — dominant focal object */}
+      {/* Timer — dominant focal object; aria-hidden so screen readers don't tick per second */}
       <AnimatePresence mode="popLayout">
         <motion.span
           key={seconds}
-          initial={{ opacity: 0.5, y: -4 }}
+          initial={{ opacity: 0.5, y: -3 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.12, ease: EASE }}
+          transition={{ duration: 0.1, ease: EASE }}
           className="font-mono text-5xl font-bold tabular-nums tracking-tight text-ink"
+          aria-hidden="true"
         >
           {formatTime(seconds)}
         </motion.span>
       </AnimatePresence>
 
-      {/* Waveform — taller, more bars */}
-      <div className="flex items-center gap-0.5 h-16">
-        {WAVEFORM.map((h, i) => (
-          <motion.div
-            key={i}
-            className="w-1.5 rounded-full bg-danger/55"
-            animate={{
-              height: [h, Math.max(4, h * 0.35), h],
-            }}
-            transition={{
-              duration: 0.4 + (i % 5) * 0.08,
-              repeat: Infinity,
-              repeatType: "mirror",
-              delay: i * 0.05,
-              ease: "easeInOut",
-            }}
-            style={{ minHeight: 3 }}
-          />
-        ))}
-      </div>
+      {/* Real input-level meter — reflects live mic, aria-hidden (visual confirmation only) */}
+      <RecordingMeter level={level} bars={18} className="h-16" />
 
-      {/* Stop button with pulsing rings */}
+      {/* Stop button — single CSS ring; no JS-driven 3-ring pulse */}
       <div className="relative flex items-center justify-center">
-        {[0, 1, 2].map((i) => (
-          <motion.div
-            key={i}
-            className="absolute rounded-full border border-danger/15"
-            style={{ width: 72 + i * 28, height: 72 + i * 28 }}
-            animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0, 0.5] }}
-            transition={{ duration: 2.2, repeat: Infinity, delay: i * 0.45, ease: "easeOut" }}
-          />
-        ))}
-        <motion.button
+        <span
+          className="absolute h-[88px] w-[88px] rounded-full border border-danger/15 motion-safe:animate-ping"
+          aria-hidden="true"
+          style={{ animationDuration: "2.2s" }}
+        />
+        <button
           type="button"
           onClick={onStop}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          transition={T.fast}
-          className="relative z-10 flex h-16 w-16 cursor-pointer items-center justify-center rounded-full bg-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/50"
+          className={[
+            "relative z-10 flex h-16 w-16 cursor-pointer items-center justify-center rounded-full bg-danger",
+            "transition-transform duration-150",
+            "motion-safe:hover:scale-105 motion-safe:active:scale-95",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/50",
+          ].join(" ")}
           aria-label="Stop recording"
         >
-          <Square size={20} className="fill-white text-white" />
-        </motion.button>
+          <Square size={20} className="fill-white text-white" aria-hidden="true" />
+        </button>
       </div>
 
-      {/* Status text */}
+      {/* Progress nudge — text only, no fake percentage */}
       <div className="flex flex-col items-center gap-1 text-center">
-        {seconds >= 30 ? (
-          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs font-medium text-ok">
-            ✓ Good length — stop anytime or keep going
-          </motion.p>
+        {progress.meetsMinimum ? (
+          <p className="text-xs font-medium text-ok">{progress.nudge}</p>
         ) : (
           <p className="text-xs text-ink-subtle">
-            Keep speaking · <span className="tabular-nums">{Math.max(0, 30 - seconds)}s</span> to minimum
+            Keep speaking ·{" "}
+            <span className="tabular-nums">{progress.secondsToMinimum}s</span> to minimum
           </p>
         )}
         <p className="hidden text-[10px] text-ink-faint sm:block">
@@ -247,31 +250,38 @@ function RecordedView({
   url, seconds, onSave, onDiscard,
 }: { url: string; seconds: number; onSave: () => void; onDiscard: () => void }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: EASE }}
-      className="flex flex-col gap-4 py-4"
-    >
+    <div className="flex flex-col gap-4 py-4">
+      {/* SR announcement on mount */}
+      <p className="sr-only" role="status" aria-live="polite">
+        Recording complete — {formatTime(seconds)}. Review and save or discard.
+      </p>
+
       <div className="rounded-xl border border-ok/20 bg-ok/5 px-4 py-3">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-ok">✓ Rep complete</span>
+          <span className="text-xs font-semibold text-ok">Rep complete</span>
           <span className="font-mono text-xs text-ink-faint">{formatTime(seconds)}</span>
         </div>
-        <audio src={url} controls className="h-8 w-full" />
+        <audio
+          src={url}
+          controls
+          className="h-8 w-full"
+          aria-label="Recorded speech playback"
+        />
       </div>
 
       <div className="flex gap-2">
-        <motion.div className="flex-1" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-          <Button onClick={onSave} size="sm" className="w-full gap-1.5">
-            Analyze Speech →
-          </Button>
-        </motion.div>
+        <Button onClick={onSave} size="sm" className="flex-1 gap-1.5">
+          Analyze Speech
+          <ArrowRight size={13} aria-hidden="true" />
+        </Button>
         <Button
-          variant="secondary" size="sm" onClick={onDiscard}
-          className="gap-1.5 text-ink-subtle hover:border-danger/30 hover:text-danger"
+          variant="secondary"
+          size="sm"
+          onClick={onDiscard}
+          className="gap-1.5 text-ink-subtle hover:border-danger/30 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+          aria-label="Discard recording and redo"
         >
-          <Trash2 size={12} />
+          <Trash2 size={12} aria-hidden="true" />
           Redo
         </Button>
       </div>
@@ -280,7 +290,7 @@ function RecordedView({
         <kbd className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[9px]">Esc</kbd>
         {" "}to discard and redo
       </p>
-    </motion.div>
+    </div>
   );
 }
 
@@ -289,13 +299,15 @@ function RecordedView({
 function UploadingView() {
   return (
     <div className="flex flex-col items-center gap-4 py-8">
-      <motion.div
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-lav"
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
-      >
-        <RotateCcw size={15} className="text-white" />
-      </motion.div>
+      <p className="sr-only" role="status" aria-live="polite">Saving your recording</p>
+      {/* CSS spin — respects prefers-reduced-motion automatically */}
+      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-lav">
+        <RotateCcw
+          size={15}
+          className="text-white motion-safe:animate-spin"
+          aria-hidden="true"
+        />
+      </div>
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm font-semibold text-ink">Saving your rep…</p>
         <p className="text-xs text-ink-subtle">Analysis starts right after upload</p>
@@ -311,6 +323,8 @@ export default function RecordingStudio({
   recordingSeconds,
   recordObjectUrl,
   recordError,
+  level = 0,
+  targetSeconds = 240,
   onStartRecording,
   onStopRecording,
   onSaveRecording,
@@ -319,7 +333,7 @@ export default function RecordingStudio({
   const [countdown, setCountdown] = useState<number | null>(null);
   const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
   const onStartRef = useRef(onStartRecording);
-  onStartRef.current = onStartRecording;
+  useEffect(() => { onStartRef.current = onStartRecording; });
 
   const isCountingDown = countdown !== null;
 
@@ -342,9 +356,8 @@ export default function RecordingStudio({
 
   // Keep a ref so keyboard handler always calls the latest version
   const handleStartRef = useRef(handleStartWithCountdown);
-  handleStartRef.current = handleStartWithCountdown;
+  useEffect(() => { handleStartRef.current = handleStartWithCountdown; });
 
-  // Cancel countdown helper
   function cancelCountdown() {
     timerRefs.current.forEach(clearTimeout);
     timerRefs.current = [];
@@ -356,8 +369,8 @@ export default function RecordingStudio({
     function handleKey(e: KeyboardEvent) {
       const el = e.target as HTMLElement;
       const tag = el?.tagName?.toUpperCase();
-      // Never intercept when user is typing or a button is focused
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return;
+      // Never intercept when the user is typing in a form field or a button/link is focused
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || tag === "A") return;
 
       if (e.code === "Space") {
         e.preventDefault();
@@ -378,7 +391,6 @@ export default function RecordingStudio({
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCountingDown, recordState, onStopRecording, onDiscardRecording]);
 
   return (
@@ -389,7 +401,7 @@ export default function RecordingStudio({
         </motion.div>
       ) : recordState === "recording" ? (
         <motion.div key="recording" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={T.fast}>
-          <RecordingView seconds={recordingSeconds} onStop={onStopRecording} />
+          <RecordingView seconds={recordingSeconds} level={level} onStop={onStopRecording} targetSeconds={targetSeconds} />
         </motion.div>
       ) : recordState === "recorded" && recordObjectUrl ? (
         <motion.div key="recorded" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={T.fast}>

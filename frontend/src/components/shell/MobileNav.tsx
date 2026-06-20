@@ -18,9 +18,9 @@ import ThemeToggle from "@/components/shell/ThemeToggle";
 import { openCommandMenu } from "@/components/shell/CommandMenu";
 
 const PRIMARY = [
-  { href: "/dashboard", label: "Home", icon: LayoutDashboard, match: ["/dashboard"] },
-  { href: "/session", label: "Practice", icon: Mic, match: ["/session", "/speech"] },
-  { href: "/evidence", label: "Evidence", icon: BookMarked, match: ["/evidence"] },
+  { href: "/dashboard", label: "Home",     icon: LayoutDashboard, match: ["/dashboard"] },
+  { href: "/session",   label: "Practice", icon: Mic,             match: ["/session", "/speech"] },
+  { href: "/evidence",  label: "Evidence", icon: BookMarked,      match: ["/evidence"] },
 ];
 
 export default function MobileNav() {
@@ -41,7 +41,8 @@ export default function MobileNav() {
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex flex-1 flex-col items-center justify-center gap-0.5 text-[0.625rem] font-medium transition-colors",
+              "flex flex-1 flex-col items-center justify-center gap-0.5 text-eyebrow font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:rounded-sm",
               active ? "text-lav-hi" : "text-ink-subtle hover:text-ink",
             )}
           >
@@ -55,8 +56,12 @@ export default function MobileNav() {
         <SheetTrigger asChild>
           <button
             type="button"
-            className="flex flex-1 flex-col items-center justify-center gap-0.5 text-[0.625rem] font-medium text-ink-subtle transition-colors hover:text-ink"
-            aria-label="More navigation"
+            className={cn(
+              "flex flex-1 flex-col items-center justify-center gap-0.5 text-eyebrow font-medium text-ink-subtle transition-colors hover:text-ink",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:rounded-sm",
+            )}
+            aria-label="More navigation options"
+            aria-expanded={open}
           >
             <Menu size={20} aria-hidden="true" />
             <span>More</span>
@@ -74,7 +79,10 @@ export default function MobileNav() {
                 setOpen(false);
                 openCommandMenu();
               }}
-              className="mb-3 flex w-full items-center gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2 text-sm text-ink-subtle"
+              className={cn(
+                "mb-3 flex w-full items-center gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2 text-sm text-ink-subtle transition-colors hover:text-ink",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
+              )}
             >
               <Search size={15} aria-hidden="true" />
               Search actions…
@@ -82,11 +90,11 @@ export default function MobileNav() {
             {APP_NAV_GROUPS.map((group) => (
               <div key={group.id} className="mb-4 last:mb-0">
                 {group.label && (
-                  <p className="px-2 pb-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+                  <p className="text-eyebrow px-2 pb-1.5 text-ink-subtle">
                     {group.label}
                   </p>
                 )}
-                <ul className="flex flex-col gap-0.5">
+                <ul className="flex flex-col gap-0.5" role="list">
                   {group.items.map((item) => {
                     const active = isNavItemActive(item, pathname);
                     const Icon = item.icon;
@@ -98,8 +106,9 @@ export default function MobileNav() {
                             aria-current={active ? "page" : undefined}
                             className={cn(
                               "flex items-center gap-2.5 rounded-md px-2.5 py-2.5 text-sm font-medium transition-colors",
+                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50",
                               active
-                                ? "bg-surface-2 text-ink"
+                                ? "bg-lav/8 text-ink"
                                 : "text-ink-subtle hover:bg-surface-1 hover:text-ink",
                             )}
                           >

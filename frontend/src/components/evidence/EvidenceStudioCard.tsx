@@ -88,8 +88,8 @@ export function showSnippetBadge(card: Pick<CardDraft, "is_snippet_source">): bo
 /** Left-accent border class applied to counter-evidence cards. */
 export function cardBorderClass(card: Pick<CardDraft, "is_counter_evidence">): string {
   return card.is_counter_evidence
-    ? "border-orange-300 border-l-4 border-l-orange-400"
-    : "border-border";
+    ? "border-warn/40 border-l-4 border-l-warn/60"
+    : "border-hairline";
 }
 
 // ── CutStyleControls — two styles only (Medium / High) ───────────────────────
@@ -146,25 +146,31 @@ function CutStyleControls({
 
   return (
     <div className="flex items-center gap-2.5 flex-wrap">
-      <span className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">Cut</span>
-      <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
+      <span className="text-[10px] text-ink-faint uppercase tracking-wide font-medium">Cut</span>
+      <div
+        className="inline-flex items-center rounded-lg border border-hairline bg-surface-2 p-0.5"
+        role="radiogroup"
+        aria-label="Cut density"
+      >
         {styles.map(({ key, label, hint }) => (
           <button
             key={key}
+            role="radio"
+            aria-checked={activeStyle === key}
             title={hint}
             disabled={!!loading}
             onClick={() => handleStyleChange(key)}
-            className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
+            className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 ${
               activeStyle === key
-                ? "bg-gray-900 text-white"
-                : "text-gray-500 hover:text-gray-800"
+                ? "bg-ink text-canvas"
+                : "text-ink-subtle hover:text-ink"
             }`}
           >
             {loading === key ? "…" : label}
           </button>
         ))}
       </div>
-      <span className="text-[10px] text-gray-400">
+      <span className="text-[10px] text-ink-faint">
         {styles.find((s) => s.key === activeStyle)?.hint}
       </span>
     </div>
@@ -175,9 +181,9 @@ function CutStyleControls({
 
 function ReadinessPill({ readiness }: { readiness: "ready" | "review_needed" | "weak" }) {
   const cfg = {
-    ready: { label: "Ready to save", dot: "bg-emerald-500", cls: "bg-emerald-50 border-emerald-200 text-emerald-700" },
-    review_needed: { label: "Review needed", dot: "bg-amber-500", cls: "bg-amber-50 border-amber-200 text-amber-700" },
-    weak: { label: "Verify source", dot: "bg-rose-500", cls: "bg-rose-50 border-rose-200 text-rose-700" },
+    ready: { label: "Ready to save", dot: "bg-ok", cls: "bg-ok/10 border-ok/30 text-ok" },
+    review_needed: { label: "Review needed", dot: "bg-warn", cls: "bg-warn/10 border-warn/30 text-warn" },
+    weak: { label: "Verify source", dot: "bg-danger", cls: "bg-danger/10 border-danger/30 text-danger" },
   }[readiness];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${cfg.cls}`}>
@@ -199,11 +205,11 @@ function ActionIconButton({
   active?: boolean;
 }) {
   const toneCls = active
-    ? "text-emerald-600 bg-emerald-50"
+    ? "text-ok bg-ok/10"
     : tone === "danger"
-      ? "text-gray-400 hover:text-rose-600 hover:bg-rose-50"
-      : "text-gray-500 hover:text-gray-900 hover:bg-gray-100";
-  const cls = `inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 ${toneCls}`;
+      ? "text-ink-faint hover:text-danger hover:bg-danger/10"
+      : "text-ink-subtle hover:text-ink hover:bg-surface-2";
+  const cls = `inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 ${toneCls}`;
   if (href) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label} title={label} className={cls}>
@@ -317,8 +323,8 @@ export default function EvidenceStudioCard({
   if (!expanded) {
     // Readiness dot
     const readinessDot =
-      readiness === "ready" ? "bg-green-500" :
-      readiness === "review_needed" ? "bg-amber-400" : "bg-red-400";
+      readiness === "ready" ? "bg-ok" :
+      readiness === "review_needed" ? "bg-warn" : "bg-danger";
     const readinessLabel =
       readiness === "ready" ? "Ready" :
       readiness === "review_needed" ? "Review needed" : "Verify source";
@@ -329,8 +335,8 @@ export default function EvidenceStudioCard({
 
     return (
       <div
-        className={`min-w-0 w-full rounded-xl border bg-white hover:shadow-sm transition-shadow ${
-          card.is_counter_evidence ? "border-l-4 border-l-orange-400 border-orange-200" : "border-gray-200"
+        className={`min-w-0 w-full rounded-xl border bg-surface-1 hover:shadow-sm transition-shadow ${
+          card.is_counter_evidence ? "border-l-4 border-l-warn/60 border-warn/30" : "border-hairline"
         }`}
       >
         <div className="flex items-stretch gap-0">
@@ -339,37 +345,37 @@ export default function EvidenceStudioCard({
             {/* Slot label as subtle text */}
             <div className="flex items-center gap-2">
               {card.slot_label && (
-                <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
+                <span className="text-[10px] text-ink-faint font-medium uppercase tracking-wide">
                   {card.slot_label}
                 </span>
               )}
               {card.is_counter_evidence && (
-                <span className="text-[10px] text-orange-600 font-medium">⚡ Counter</span>
+                <span className="text-[10px] text-warn font-medium">⚡ Counter</span>
               )}
               {card.is_snippet_source && (
-                <span className="text-[10px] text-amber-600">⚠ Snippet</span>
+                <span className="text-[10px] text-warn">⚠ Snippet</span>
               )}
             </div>
             {/* Tag — clear and large */}
             <p
-              className="text-[15px] font-semibold text-gray-900 leading-snug break-words"
+              className="text-[15px] font-semibold text-ink leading-snug break-words"
               style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}
             >
               {displayTag}
             </p>
             {/* Cite line */}
-            <p className="text-[12px] text-gray-500 truncate"
+            <p className="text-[12px] text-ink-subtle truncate"
                style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}>
               {card.short_cite || card.citation?.short_cite || "No citation"}
               {(card.citation?.container_title || card.citation?.publication_name) && (
-                <span className="text-gray-400">
+                <span className="text-ink-faint">
                   {" — "}{card.citation?.container_title || card.citation?.publication_name}
                 </span>
               )}
             </p>
             {/* Evidence preview */}
             {evidencePreview && (
-              <p className="text-[12px] text-gray-400 leading-relaxed line-clamp-2 mt-0.5"
+              <p className="text-[12px] text-ink-faint leading-relaxed line-clamp-2 mt-0.5"
                  style={{ fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif' }}>
                 {evidencePreview}{evidencePreview.length >= 130 ? "…" : ""}
               </p>
@@ -377,19 +383,19 @@ export default function EvidenceStudioCard({
           </div>
 
           {/* Right column: actions */}
-          <div className="flex flex-col items-end justify-between px-3 py-3 gap-2 shrink-0 border-l border-gray-100">
+          <div className="flex flex-col items-end justify-between px-3 py-3 gap-2 shrink-0 border-l border-hairline">
             <div className="flex items-center gap-2">
               {/* Readiness dot + label */}
               <div className="flex items-center gap-1.5">
-                <div className={`w-1.5 h-1.5 rounded-full ${readinessDot}`} />
-                <span className="text-[10px] text-gray-500">{readinessLabel}</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${readinessDot}`} aria-hidden="true" />
+                <span className="text-[10px] text-ink-subtle">{readinessLabel}</span>
               </div>
-              {/* Discard — polished icon button (replaces the raw ✕) */}
+              {/* Discard */}
               <button
                 onClick={() => onDiscard(card.id)}
                 aria-label="Discard card"
                 title="Discard card"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/30"
               >
                 <Trash2 size={13} />
               </button>
@@ -399,7 +405,7 @@ export default function EvidenceStudioCard({
               {card.status === "draft" && !card.is_counter_evidence && readiness === "ready" && (
                 <button
                   onClick={() => onSave(card)}
-                  className="text-[11px] px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors font-medium"
+                  className="text-[11px] px-2.5 py-1.5 rounded-lg border border-ok/40 text-ok hover:bg-ok/10 transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/40"
                 >
                   Save
                 </button>
@@ -408,7 +414,7 @@ export default function EvidenceStudioCard({
               <button
                 onClick={() => onOpenStudio?.()}
                 disabled={!onOpenStudio}
-                className="text-[11px] px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors font-medium disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-ink text-canvas hover:bg-ink/80 transition-colors font-medium disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
               >
                 Open Studio
               </button>
@@ -467,9 +473,9 @@ export default function EvidenceStudioCard({
 
   // ── One-column document editor with a sticky top action bar ────────────────
   return (
-    <div className={`min-w-0 w-full bg-white ${forceExpanded ? "" : `rounded-xl border-2 ${cardBorderClass(card)} shadow-sm`}`}>
+    <div className={`min-w-0 w-full bg-surface-1 ${forceExpanded ? "" : `rounded-xl border-2 ${cardBorderClass(card)} shadow-sm`}`}>
       {/* Sticky action bar — stays visible while the document scrolls */}
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-gray-100 bg-white/95 px-4 sm:px-6 py-2.5 backdrop-blur">
+      <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-hairline bg-surface-1/95 px-4 sm:px-6 py-2.5 backdrop-blur">
         <div className="flex items-center gap-3 min-w-0">
           <ReadinessPill readiness={readiness} />
           <CutStyleControls card={card} activeStyle={activeStyle} onStyleChange={handleStyleChange} />
@@ -481,7 +487,7 @@ export default function EvidenceStudioCard({
               onClick={() => handleSaveWithMarkup(card)}
               disabled={!canSave}
               title={canSave ? "Save to library" : "Verify the source before saving"}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-[12px] font-semibold text-canvas transition-colors hover:bg-ink/80 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
             >
               <Save size={13} /> Save
             </button>
@@ -507,7 +513,7 @@ export default function EvidenceStudioCard({
           <ActionIconButton icon={<Trash2 size={15} />} label="Discard card" onClick={() => onDiscard(card.id)} tone="danger" />
           {onClose && (
             <>
-              <span className="mx-0.5 h-5 w-px bg-gray-200" />
+              <span className="mx-0.5 h-5 w-px bg-hairline" aria-hidden="true" />
               <ActionIconButton icon={<X size={16} />} label="Close" onClick={onClose} />
             </>
           )}
@@ -518,8 +524,8 @@ export default function EvidenceStudioCard({
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 sm:px-6 py-5 sm:py-6 min-w-0">
 
         {card.is_counter_evidence && (
-          <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2">
-            <p className="text-[11px] text-orange-700">
+          <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2">
+            <p className="text-[11px] text-warn">
               ⚡ Counter-evidence — use as a pre-empt, not support.
             </p>
           </div>
@@ -555,14 +561,14 @@ export default function EvidenceStudioCard({
         />
 
         {cutWarnings.length > 0 && (
-          <p className="text-[10px] text-amber-600/90 leading-snug">{cutWarnings[0]}</p>
+          <p className="text-[10px] text-warn leading-snug" role="alert">{cutWarnings[0]}</p>
         )}
 
         {/* RoundLab analysis (warrant + impact) directly under the card */}
         <CardAnalysis intelligence={card.intelligence} />
 
         {/* Debate prep, full-width below the analysis (not cramped in a rail) */}
-        <DebatePrepPanel intelligence={card.intelligence} className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5" />
+        <DebatePrepPanel intelligence={card.intelligence} className="rounded-xl border border-hairline bg-surface-1 p-4 sm:p-5" />
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ export default function NotFound() {
         <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full border border-hairline-strong bg-surface-2 text-ink-subtle">
           <Compass size={22} aria-hidden="true" />
         </div>
-        <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-ink-faint">
+        <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-ink-subtle">
           404
         </p>
         <h1 className="mt-1 text-title font-semibold text-ink">Page not found</h1>

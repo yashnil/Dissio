@@ -114,7 +114,7 @@ export default function DrillAttemptRecorder({
               onClick={handleStart}
               disabled={status === "requesting-permission"}
               aria-label="Start recording your attempt"
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-lav transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 disabled:opacity-50"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-lav transition-transform duration-150 motion-safe:hover:scale-105 motion-safe:active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 disabled:opacity-50"
             >
               <Mic size={20} className="text-white" aria-hidden="true" />
             </button>
@@ -127,15 +127,23 @@ export default function DrillAttemptRecorder({
           </div>
         ) : status === "recording" || status === "stopping" ? (
           <div className="flex flex-col items-center gap-3 py-4">
-            <button
-              type="button"
-              onClick={rec.stop}
-              disabled={status === "stopping"}
-              aria-label="Stop recording"
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-danger transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/50 disabled:opacity-60"
-            >
-              <Square size={14} className="fill-white text-white" aria-hidden="true" />
-            </button>
+            <div className="relative flex items-center justify-center">
+              {/* Single CSS ping ring — shows mic is active, disabled by reduced-motion */}
+              <span
+                className="absolute h-14 w-14 rounded-full border border-danger/15 motion-safe:animate-ping"
+                style={{ animationDuration: "2.2s" }}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                onClick={rec.stop}
+                disabled={status === "stopping"}
+                aria-label="Stop recording"
+                className="relative flex h-12 w-12 items-center justify-center rounded-full bg-danger transition-transform duration-150 motion-safe:hover:scale-105 motion-safe:active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/50 disabled:opacity-60"
+              >
+                <Square size={14} className="fill-white text-white" aria-hidden="true" />
+              </button>
+            </div>
             <RecordingTimer ms={rec.state.durationMs} active={status === "recording"} />
             <RecordingMeter level={rec.level} />
             <p className="text-xs text-ink-subtle">
@@ -174,7 +182,7 @@ export default function DrillAttemptRecorder({
           </div>
         ) : status === "uploading" ? (
           <div className="flex flex-col items-center gap-2 py-4">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-lav border-t-transparent" aria-hidden="true" />
+            <div className="h-5 w-5 motion-safe:animate-spin rounded-full border-2 border-lav border-t-transparent" aria-hidden="true" />
             <p className="text-xs text-ink-subtle">Saving &amp; analyzing attempt…</p>
             <p className="text-[10px] text-ink-faint">This may take 15–20 seconds</p>
           </div>
