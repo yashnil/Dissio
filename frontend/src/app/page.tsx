@@ -12,7 +12,7 @@ import { HOME_PROOF_POINTS } from "@/lib/marketing";
 import PipelineShowcase from "@/components/PipelineShowcase";
 import HeroDebateConsole from "@/components/HeroDebateConsole";
 import ArgumentHealthMatrix from "@/components/ArgumentHealthMatrix";
-import JudgeLensComparison from "@/components/JudgeLensComparison";
+import JudgeLensSection from "@/components/marketing/JudgeLensSection";
 import MarketingNav from "@/components/marketing/MarketingNav";
 import MarketingFooter from "@/components/marketing/MarketingFooter";
 import WorkflowRail from "@/components/marketing/WorkflowRail";
@@ -21,6 +21,8 @@ import EvidenceProvenanceStrip from "@/components/marketing/EvidenceProvenanceSt
 import TeamWorkflowStrip from "@/components/marketing/TeamWorkflowStrip";
 import TrustGrid from "@/components/marketing/TrustGrid";
 import SupportedTodayGrid from "@/components/marketing/SupportedTodayGrid";
+import SpeechFlowSection from "@/components/marketing/SpeechFlowSection";
+import DebateProofSection from "@/components/marketing/DebateProofSection";
 import { useInViewOnce } from "@/hooks/useInViewOnce";
 
 const PROOF_ACCENT: Record<string, string> = {
@@ -141,22 +143,29 @@ export default function LandingPage() {
 
       {/* ── Hero — the full promise ─────────────────────────────────────── */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-dots opacity-20" aria-hidden />
+        {/* Coordinate grid texture — structural depth without dot noise */}
+        <div
+          className="absolute inset-0 bg-grid pointer-events-none"
+          style={{ opacity: 0.10 }}
+          aria-hidden
+        />
+        {/* Top hairline accent */}
         <div
           className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-lav/40 to-transparent"
           aria-hidden
         />
+        {/* Radial glow — top-right, near the console */}
         <div
-          className="pointer-events-none absolute right-0 top-0 h-96 w-96 opacity-60 blur-3xl"
+          className="pointer-events-none absolute right-0 top-0 h-[520px] w-[520px] opacity-50 blur-3xl"
           style={{
             background:
-              "radial-gradient(ellipse at 100% 0%, oklch(0.510 0.156 278 / 0.12) 0%, transparent 70%)",
+              "radial-gradient(ellipse at 90% 10%, oklch(0.510 0.156 278 / 0.14) 0%, transparent 65%)",
           }}
           aria-hidden
         />
 
         <div className="relative mx-auto max-w-6xl px-6 pb-20 pt-16 lg:pb-28 lg:pt-24">
-          <div className="grid grid-cols-1 items-start gap-12 lg:grid-cols-[1fr_1fr] lg:gap-16 xl:grid-cols-[1fr_480px]">
+          <div className="grid grid-cols-1 items-start gap-10 lg:grid-cols-[1fr_420px] lg:gap-10 xl:grid-cols-[1fr_520px] xl:gap-14">
             <div className="flex flex-col gap-8">
               {isLoggedIn ? (
                 <>
@@ -175,13 +184,13 @@ export default function LandingPage() {
                   <motion.div {...fadeUp(0.14)} className="flex flex-wrap items-center gap-3">
                     <Link
                       href="/session"
-                      className="glow-lav flex items-center gap-2 rounded-xl bg-lav px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-lav-hi"
+                      className="glow-lav flex items-center gap-2 rounded-xl bg-lav px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:ring-offset-2"
                     >
-                      Start a practice speech <ArrowRight size={14} />
+                      Start a practice speech <ArrowRight size={14} aria-hidden />
                     </Link>
                     <Link
                       href="/dashboard"
-                      className="rounded-xl border border-hairline px-5 py-3 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink"
+                      className="rounded-xl border border-hairline px-5 py-3 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:ring-offset-2"
                     >
                       Open dashboard
                     </Link>
@@ -194,15 +203,15 @@ export default function LandingPage() {
                       AI flow coach · Public Forum debate
                     </span>
 
-                    <h1 className="flex flex-col gap-1">
+                    <h1 className="flex flex-col gap-0.5">
                       <span className="block text-[2.75rem] font-bold leading-[1.0] tracking-[-0.04em] text-ink sm:text-[4rem] lg:text-[4.5rem]">
                         Speak.
                       </span>
                       <span className="block text-[2.75rem] font-bold leading-[1.0] tracking-[-0.04em] text-lav sm:text-[4rem] lg:text-[4.5rem]">
                         Get flowed.
                       </span>
-                      <span className="block text-[2.75rem] font-bold leading-[1.0] tracking-[-0.04em] text-ink/70 sm:text-[4rem] lg:text-[4.5rem]">
-                        Drill what<br className="sm:hidden" /> matters.
+                      <span className="block text-[2.75rem] font-bold leading-[1.0] tracking-[-0.04em] text-ink-muted sm:text-[4rem] lg:text-[4.5rem]">
+                        Drill what matters.
                       </span>
                     </h1>
 
@@ -215,13 +224,13 @@ export default function LandingPage() {
                   <motion.div {...fadeUp(0.18)} className="flex flex-wrap items-center gap-3">
                     <Link
                       href="/login"
-                      className="glow-lav flex items-center gap-2 rounded-xl bg-lav px-6 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-lav-hi"
+                      className="glow-lav flex items-center gap-2 rounded-xl bg-lav px-6 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:ring-offset-2"
                     >
-                      Start practicing <ArrowRight size={14} />
+                      Start practicing <ArrowRight size={14} aria-hidden />
                     </Link>
                     <Link
                       href="/demo"
-                      className="rounded-xl border border-hairline px-6 py-3.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink"
+                      className="rounded-xl border border-hairline px-6 py-3.5 text-sm font-medium text-ink-muted transition-colors hover:border-hairline-strong hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:ring-offset-2"
                     >
                       See a real report
                     </Link>
@@ -231,17 +240,17 @@ export default function LandingPage() {
                     {["Free to start", "No coach required", "Coaching, not cheating"].map((t) => (
                       <div key={t} className="flex items-center gap-1.5 text-xs">
                         <Check size={10} className="shrink-0 text-ok" aria-hidden />
-                        <span className="text-ink-faint">{t}</span>
+                        <span className="text-ink-subtle">{t}</span>
                       </div>
                     ))}
                   </motion.div>
 
-                  <motion.div {...fadeUp(0.3)} className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-ink-faint">Reads for:</span>
+                  <motion.div {...fadeUp(0.30)} className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-ink-subtle">Reads for:</span>
                     {["Lay judge", "Flow judge", "Tech judge", "Coach"].map((j) => (
                       <span
                         key={j}
-                        className="rounded-full border border-hairline bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-ink-subtle"
+                        className="rounded-full border border-hairline bg-surface-2 px-2.5 py-1 text-eyebrow font-medium text-ink-subtle"
                       >
                         {j}
                       </span>
@@ -256,14 +265,14 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Proof strip — real product facts only ───────────────────────── */}
-      <section className="border-y border-hairline bg-surface-1/70 backdrop-blur-sm">
-        <div className="mx-auto grid max-w-4xl grid-cols-2 divide-x divide-hairline sm:grid-cols-4">
+      {/* ── Proof rail — grounded, not floating ─────────────────────────── */}
+      <section className="border-y border-hairline bg-surface-1">
+        <div className="mx-auto grid max-w-4xl grid-cols-1 divide-y divide-hairline sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           {HOME_PROOF_POINTS.map((p, i) => (
             <motion.div
               key={p.label}
               {...fadeUpInView(i * 0.06)}
-              className="flex flex-col items-center gap-1 px-4 py-6 text-center"
+              className="flex flex-col items-center gap-1 px-6 py-5 text-center"
             >
               <span className={`text-title tabular-nums ${PROOF_ACCENT[p.accent]}`}>{p.value}</span>
               <span className="text-xs text-ink-subtle">{p.label}</span>
@@ -284,6 +293,15 @@ export default function LandingPage() {
           <WorkflowRail />
         </motion.div>
       </section>
+
+      {/* ── Speech-to-flow — interactive transcript annotation ──────────── */}
+      <SpeechFlowSection />
+
+      {/* ── Judge lens — same C1 speech, three judge perspectives ────────── */}
+      <JudgeLensSection />
+
+      {/* ── Coaching story — decisive moment, drill, transformation ─────── */}
+      <DebateProofSection />
 
       {/* ── Practice — capture + analysis ───────────────────────────────── */}
       <section id="practice" className="scroll-mt-16 border-t border-hairline bg-surface-1/40">
@@ -338,23 +356,6 @@ export default function LandingPage() {
               <span className="text-[10px] text-ink-faint">● strong · ⚠ weak · ✗ missing</span>
             </div>
             <ArgumentHealthMatrix />
-          </motion.div>
-        </div>
-      </section>
-
-      {/* ── Judge lens — same speech, four readings ─────────────────────── */}
-      <section id="judge" className="scroll-mt-16 border-t border-hairline bg-surface-1/40">
-        <div className="mx-auto max-w-6xl px-6 py-20">
-          <SectionHead
-            stamp="Judge lens"
-            title="One speech, four judges"
-            blurb="The lens reorders what matters and rewrites the feedback — lay, flow, tech, or coach. Not a swapped badge."
-          />
-          <motion.div
-            {...fadeUpInView(0.06)}
-            className="rounded-2xl border border-hairline bg-surface-1 p-5"
-          >
-            <JudgeLensComparison />
           </motion.div>
         </div>
       </section>

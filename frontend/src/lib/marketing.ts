@@ -32,9 +32,11 @@ export const EXISTING_ROUTE_PREFIXES = [
 
 /** On-page section anchors the homepage defines. */
 export const HOME_ANCHORS = [
+  "#speech-to-flow",
+  "#judge",
+  "#product-proof",
   "#practice",
   "#flow",
-  "#judge",
   "#improve",
   "#evidence",
   "#team",
@@ -92,9 +94,8 @@ export interface ProofPoint {
 
 export const HOME_PROOF_POINTS: ProofPoint[] = [
   { value: "<60s", label: "speech to full report", accent: "lav" },
-  { value: "5", label: "ballot scoring dimensions", accent: "ink" },
-  { value: "4", label: "PF speech types covered", accent: "cyan" },
-  { value: "3", label: "targeted drills per round", accent: "ok" },
+  { value: "5",    label: "judge scoring dimensions", accent: "ink" },
+  { value: "3",    label: "targeted drills per speech", accent: "ok" },
 ];
 
 // ── Interactive workflow rail — each step reveals something different ─────────────

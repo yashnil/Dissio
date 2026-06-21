@@ -3,6 +3,27 @@ import { createClient } from "@/lib/supabase";
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/**
+ * Typed API error. `isNetworkError` is true when the backend is unreachable
+ * (fetch threw before any HTTP response was received). `status` is 0 in that
+ * case; for HTTP errors it carries the actual status code.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly isNetworkError: boolean;
+
+  constructor(message: string, status: number, isNetworkError = false) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.isNetworkError = isNetworkError;
+  }
+}
+
+export function isBackendUnreachable(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.isNetworkError;
+}
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
@@ -25,15 +46,40 @@ export async function apiFetch<T>(
     // No session — request proceeds unauthenticated.
   }
 
-  let res = await send(token);
+  let res: Response;
+  try {
+    res = await send(token);
+  } catch (cause) {
+    // fetch() itself threw — the backend is unreachable (server not running,
+    // DNS failure, CORS preflight rejected, etc.).
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[api] network error — is the backend running at ${API_BASE}?\n` +
+          `  Path:  ${path}\n` +
+          `  Cause: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+    throw new ApiError(
+      `Cannot reach the backend at ${API_BASE}. ` +
+        `Start the FastAPI server and refresh.`,
+      0,
+      true,
+    );
+  }
 
-  // On a 401 with a token, the access token is likely stale: refresh the session
-  // once and retry before surfacing the error.
+  // On a 401 with a token, the access token is likely stale: refresh the
+  // session once and retry before surfacing the error.
   if (res.status === 401 && token && !callerSetAuth) {
     try {
-      const refreshed = (await supabase.auth.refreshSession()).data.session?.access_token ?? null;
+      const refreshed =
+        (await supabase.auth.refreshSession()).data.session?.access_token ??
+        null;
       if (refreshed && refreshed !== token) {
-        res = await send(refreshed);
+        try {
+          res = await send(refreshed);
+        } catch {
+          // Retry send failed — fall through to the original 401.
+        }
       }
     } catch {
       // Refresh failed — fall through to the original 401.
@@ -48,7 +94,11 @@ export async function apiFetch<T>(
     } catch {
       // response body wasn't JSON — keep the default message
     }
-    throw new Error(message);
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(`[api] ${message}`);
+    }
+    throw new ApiError(message, res.status, false);
   }
+
   return res.json() as Promise<T>;
 }

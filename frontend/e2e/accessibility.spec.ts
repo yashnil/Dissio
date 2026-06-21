@@ -125,12 +125,11 @@ test.describe("Reduced motion", () => {
 // ── Focus management ─────────────────────────────────────────────────────────
 
 test.describe("Focus management", () => {
-  test("skip-to-main-content link is the first focusable element on login", async ({ page }) => {
+  test("first Tab focuses the first interactive element on login", async ({ page }) => {
     await goTo(page, "/login");
-    // Tab once from body
+    // Tab once from body — should reach the first interactive element
     await page.keyboard.press("Tab");
     const activeTag = await page.evaluate(() => document.activeElement?.tagName.toLowerCase());
-    // Either a skip link or the first interactive element
     expect(["a", "button", "input"]).toContain(activeTag);
   });
 

@@ -9,7 +9,7 @@ import EmptyState from "@/components/EmptyState";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isBackendUnreachable } from "@/lib/api";
 import {
   deriveCurrentFocus, deriveSkillLevels, derivePracticeCoverage, deriveMilestones,
   deriveWeeklyPlan, drillEffectivenessNote, progressDataState,
@@ -43,7 +43,13 @@ export default function ProgressPage() {
         ]);
         setProgress(p); setSpeeches(s);
       })
-      .catch(() => setErr("We couldn't load your progress. Refresh to try again."))
+      .catch((e) =>
+        setErr(
+          isBackendUnreachable(e)
+            ? "Could not reach the server. Start the backend and refresh."
+            : "We couldn't load your progress. Refresh to try again.",
+        ),
+      )
       .finally(() => setLoading(false));
   }, [router]);
 

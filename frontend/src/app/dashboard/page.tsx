@@ -18,7 +18,7 @@ import {
   DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { createClient } from "@/lib/supabase";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isBackendUnreachable } from "@/lib/api";
 import { reducedSafe, staggerParent, staggerChild } from "@/lib/motion";
 import { getSpeechStatusConfig } from "@/lib/debateHelpers";
 import { motion } from "motion/react";
@@ -195,7 +195,13 @@ export default function DashboardPage() {
           .then((ws) => { if (ws.length > 0) setLatestWorkout(ws[0]); })
           .catch(() => {});
       })
-      .catch(() => setErr("Could not load your data. Please refresh and try again."))
+      .catch((e) =>
+        setErr(
+          isBackendUnreachable(e)
+            ? "Could not reach the server. Start the backend and refresh."
+            : "Could not load your data. Please refresh and try again.",
+        ),
+      )
       .finally(() => setLoading(false));
   }, [router]);
 

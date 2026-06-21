@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { User, Users, Plus, Trophy } from "lucide-react";
+import { AlertTriangle, User, Users } from "lucide-react";
 import AppShell from "@/components/shell/AppShell";
 import ActionCard from "@/components/ActionCard";
 import SectionHeader from "@/components/SectionHeader";
 import { createClient } from "@/lib/supabase";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isBackendUnreachable } from "@/lib/api";
 import { staggerParent, staggerChild } from "@/lib/motion";
 import type { ProgressSummary, UserTeam } from "@/types";
 
@@ -18,6 +18,7 @@ export default function LearnPage() {
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
   const [teamCount, setTeamCount] = useState<number>(0);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     createClient().auth.getUser()
@@ -29,17 +30,19 @@ export default function LearnPage() {
 
         setUserId(data.user.id);
 
-        // Fetch progress and teams in parallel
         try {
           const [progressData, userTeams] = await Promise.all([
             apiFetch<ProgressSummary>(`/users/${data.user.id}/progress`),
             apiFetch<UserTeam[]>(`/teams/users/${data.user.id}`),
           ]);
-
           setProgress(progressData);
           setTeamCount(userTeams.length);
-        } catch (err) {
-          console.error("Failed to fetch user data:", err);
+        } catch (e) {
+          setErr(
+            isBackendUnreachable(e)
+              ? "Could not reach the server. Start the backend and refresh."
+              : "Could not load your data. Please refresh and try again.",
+          );
         }
       })
       .catch(() => router.replace("/login"))
@@ -59,6 +62,14 @@ export default function LearnPage() {
   return (
     <AppShell maxWidth="5xl">
       <div className="flex flex-col gap-8 py-12">
+        {/* API error banner */}
+        {err && (
+          <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden="true" />
+            <p className="text-sm text-danger">{err}</p>
+          </div>
+        )}
+
         {/* Header */}
         <div className="text-center">
           <SectionHeader
