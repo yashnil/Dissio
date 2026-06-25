@@ -6,6 +6,7 @@ from app.services.evidence_candidate_ranker import (
     CandidateWindow,
     _BM25_WEIGHT,
     _SEM_WEIGHT,
+    _weighted_score,
 )
 
 
@@ -141,30 +142,24 @@ class TestSemanticRerankerSeam:
         assert [w.score for w in a] == [w.score for w in b]
         self._reset(r)
 
-    def test_weak_semantic_does_not_override_strong_bm25(self, monkeypatch):
+    def test_weak_semantic_does_not_override_strong_bm25(self):
         """A low semantic score must not flip a candidate with a clear BM25 advantage.
 
-        sem=0.5 gives 0.5 * _SEM_WEIGHT extra for cand[1], but cand[0] has a
-        perfect BM25 match worth _BM25_WEIGHT — the BM25 advantage exceeds the
-        weak semantic boost so cand[0] must still win.
+        Tests the invariant directly via _weighted_score with explicit subscores so
+        the result is independent of BM25 corpus statistics for specific text strings.
+        Invariant: rel=1.0 (perfect BM25) with sem=0.0 must beat rel=0.0 with sem=0.5.
         """
-        import app.services.evidence_candidate_ranker as r
-        from app.config import settings
-        cands = [
-            # Strong lexical match: "policy" appears in query and candidate.
-            "Policy changes enabled significant improvements in overall effectiveness.",
-            # No lexical overlap with the query at all.
-            "Something entirely different with no connection to the subject here.",
-        ]
-        self._reset(r)
-        monkeypatch.setattr(settings, "use_semantic_reranker", True, raising=False)
-        r.set_semantic_scorer(lambda c, q: [0.0, 0.5])
-        ranked = r.rank_candidate_windows(cands, claim="policy", role="direct_support")
-        assert ranked[0].text == cands[0], (
+        # Shared heuristic subscores (same for both candidates in this scenario).
+        extras = dict(entity=0.0, role_sc=0.0, coherence=1.5, source_authority=0.0)
+
+        score_strong_bm25 = _weighted_score(rel=1.0, sem=0.0, **extras)
+        score_weak_sem = _weighted_score(rel=0.0, sem=0.5, **extras)
+
+        assert score_strong_bm25 > score_weak_sem, (
             f"Weak semantic (0.5 * {_SEM_WEIGHT}={0.5 * _SEM_WEIGHT}) should not override "
-            f"strong BM25 (≈1.0 * {_BM25_WEIGHT}={_BM25_WEIGHT}). Got: {ranked[0].text!r}"
+            f"strong BM25 (1.0 * {_BM25_WEIGHT}={_BM25_WEIGHT}). "
+            f"Got score_strong_bm25={score_strong_bm25}, score_weak_sem={score_weak_sem}"
         )
-        self._reset(r)
 
     def test_strong_semantic_can_flip_bm25_ranking(self, monkeypatch):
         """sem=1.0 must be able to override a strong-but-not-dominant BM25 candidate."""

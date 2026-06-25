@@ -8,6 +8,7 @@ for all tests here; the refiner's own tests re-enable it and mock the LLM call.
 import pytest
 
 from app.config import settings
+from tests import REPO_ROOT  # noqa: F401  (re-exported for backwards compat)
 
 
 @pytest.fixture(autouse=True)

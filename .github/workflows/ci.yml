@@ -45,6 +45,7 @@ jobs:
             -q \
             --disable-socket \
             --allow-hosts=localhost,127.0.0.1 \
+            --allow-unix-socket \
             tests/ \
             2>&1
         continue-on-error: false

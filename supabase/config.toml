@@ -108,8 +108,6 @@ otp_expiry = 86400
 enable_signup = false
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
-# Sets the SMS OTP to be valid for, in seconds. Defaults to 60 seconds.
-otp_expiry = 60
 
 [auth.mfa]
 # Control how many MFA factors can be enrolled at a time per user.

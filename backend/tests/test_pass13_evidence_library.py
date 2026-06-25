@@ -58,12 +58,14 @@ from app.models.evidence_library import (
 import app.services.evidence_library_service as svc
 from app.services.library_export import (
     _build_bibliography,
+    export_blockfile_docx,
     export_blockfile_json,
     export_blockfile_markdown,
     export_frontline_json,
     export_frontline_markdown,
     _bib_key,
 )
+from tests import REPO_ROOT
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1322,63 +1324,45 @@ class TestCitationFieldEdit:
 
 class TestCitationDetailsPanelIntegration:
     def test_citation_details_panel_exists(self):
-        from pathlib import Path
-        panel = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/CitationDetailsPanel.tsx"
-        )
+        panel = REPO_ROOT / "frontend/src/components/evidence/CitationDetailsPanel.tsx"
         assert panel.exists()
 
     def test_card_metadata_rail_imports_citation_panel(self):
-        from pathlib import Path
-        rail = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/CardMetadataRail.tsx"
-        )
+        rail = REPO_ROOT / "frontend/src/components/evidence/CardMetadataRail.tsx"
         content = rail.read_text()
         assert "CitationDetailsPanel" in content
 
     def test_evidence_studio_card_imports_citation_panel(self):
-        from pathlib import Path
-        card = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/EvidenceStudioCard.tsx"
-        )
+        card = REPO_ROOT / "frontend/src/components/evidence/EvidenceStudioCard.tsx"
         content = card.read_text()
         assert "CitationDetailsPanel" in content
 
     def test_citation_panel_collapsed_by_default_in_rail(self):
-        from pathlib import Path
-        rail = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/CardMetadataRail.tsx"
-        )
+        rail = REPO_ROOT / "frontend/src/components/evidence/CardMetadataRail.tsx"
         content = rail.read_text()
         assert "defaultOpen={false}" in content
 
     def test_citation_panel_collapsed_by_default_in_studio_card(self):
-        from pathlib import Path
-        card = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/EvidenceStudioCard.tsx"
-        )
+        card = REPO_ROOT / "frontend/src/components/evidence/EvidenceStudioCard.tsx"
         content = card.read_text()
         assert "defaultOpen={false}" in content
 
     def test_citation_panel_only_shown_when_citation_record_exists(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/EvidenceStudioCard.tsx"
+        content = (
+            REPO_ROOT / "frontend/src/components/evidence/EvidenceStudioCard.tsx"
         ).read_text()
         # Should be gated on citation_record presence
         assert "citation_record" in content
 
     def test_citation_panel_uses_legacy_mla_fallback(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/EvidenceStudioCard.tsx"
+        content = (
+            REPO_ROOT / "frontend/src/components/evidence/EvidenceStudioCard.tsx"
         ).read_text()
         assert "legacyMla" in content
 
     def test_citation_field_edit_endpoint_wired(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/evidence/EvidenceStudioCard.tsx"
+        content = (
+            REPO_ROOT / "frontend/src/components/evidence/EvidenceStudioCard.tsx"
         ).read_text()
         assert "citation-field" in content
 
@@ -1481,21 +1465,17 @@ class TestModelValidation:
 # 17. Migration SQL integrity
 # ══════════════════════════════════════════════════════════════════════════════
 
+_PASS13_MIGRATION = (
+    REPO_ROOT / "supabase/migrations/20260622010000_pass13_evidence_library.sql"
+)
+
+
 class TestMigrationSQL:
     def test_migration_file_exists(self):
-        from pathlib import Path
-        migration = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/backend/migrations/"
-            "20260622_pass13_evidence_library.sql"
-        )
-        assert migration.exists()
+        assert _PASS13_MIGRATION.exists()
 
     def test_migration_contains_all_tables(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/backend/migrations/"
-            "20260622_pass13_evidence_library.sql"
-        ).read_text()
+        content = _PASS13_MIGRATION.read_text()
         required_tables = [
             "resolutions",
             "arguments",
@@ -1515,21 +1495,14 @@ class TestMigrationSQL:
                 f"Table {table} not found in migration"
 
     def test_migration_has_rls_policies(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/backend/migrations/"
-            "20260622_pass13_evidence_library.sql"
-        ).read_text()
+        content = _PASS13_MIGRATION.read_text()
         assert "ROW LEVEL SECURITY" in content
         assert "CREATE POLICY" in content
 
-    def test_migration_has_rollback_section(self):
-        from pathlib import Path
-        content = Path(
-            "/Users/yashnilmohanty/Desktop/RoundLab/backend/migrations/"
-            "20260622_pass13_evidence_library.sql"
-        ).read_text()
-        assert "DROP TABLE" in content
+    def test_migration_is_forward_only_and_non_destructive(self):
+        content = _PASS13_MIGRATION.read_text()
+        assert "CREATE TABLE" in content
+        assert "DROP TABLE" not in content
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1606,28 +1579,25 @@ class TestRegressionPreviousPasses:
 # 19. CI workflow
 # ══════════════════════════════════════════════════════════════════════════════
 
+_CI_YML = REPO_ROOT / ".github/workflows/ci.yml"
+
+
 class TestCIWorkflow:
     def test_ci_yml_exists(self):
-        from pathlib import Path
-        ci = Path("/Users/yashnilmohanty/Desktop/RoundLab/.github/workflows/ci.yml")
-        assert ci.exists()
+        assert _CI_YML.exists()
 
     def test_ci_runs_backend_tests(self):
-        from pathlib import Path
-        content = Path("/Users/yashnilmohanty/Desktop/RoundLab/.github/workflows/ci.yml").read_text()
+        content = _CI_YML.read_text()
         assert "pytest" in content
 
     def test_ci_runs_frontend_tests(self):
-        from pathlib import Path
-        content = Path("/Users/yashnilmohanty/Desktop/RoundLab/.github/workflows/ci.yml").read_text()
+        content = _CI_YML.read_text()
         assert "jest" in content
 
     def test_ci_runs_typescript_check(self):
-        from pathlib import Path
-        content = Path("/Users/yashnilmohanty/Desktop/RoundLab/.github/workflows/ci.yml").read_text()
+        content = _CI_YML.read_text()
         assert "tsc" in content
 
     def test_ci_installs_pymupdf(self):
-        from pathlib import Path
-        content = Path("/Users/yashnilmohanty/Desktop/RoundLab/.github/workflows/ci.yml").read_text()
+        content = _CI_YML.read_text()
         assert "requirements.txt" in content

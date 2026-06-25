@@ -196,6 +196,25 @@ def _semantic_score(candidates: list[str], query: str) -> list[float] | None:
     return None
 
 
+def _weighted_score(
+    rel: float,
+    sem: float,
+    entity: float = 0.0,
+    role_sc: float = 0.0,
+    coherence: float = 0.0,
+    source_authority: float = 0.0,
+) -> float:
+    """Final scoring formula used in rank_candidate_windows. Exposed for unit tests."""
+    return (
+        rel * _BM25_WEIGHT
+        + sem * _SEM_WEIGHT
+        + entity
+        + role_sc
+        + coherence
+        + source_authority * 0.5
+    )
+
+
 def rank_candidate_windows(
     candidates: list[str],
     topic: str = "",
@@ -249,14 +268,7 @@ def rank_candidate_windows(
         if not _has_finite_verb(text) and sum(1 for w in text.split() if w[:1].isupper()) > n_words * 0.6:
             coherence -= 0.8
 
-        score = (
-            rel * _BM25_WEIGHT
-            + sem * _SEM_WEIGHT
-            + entity
-            + role_sc
-            + coherence
-            + source_authority * 0.5
-        )
+        score = _weighted_score(rel, sem, entity, role_sc, coherence, source_authority)
         windows.append(CandidateWindow(
             text=text, score=round(score, 4),
             subscores={

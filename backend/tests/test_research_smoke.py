@@ -382,7 +382,7 @@ class TestClaimLadder:
         )
 
         with (
-            patch.object(wae, "extract_article", return_value=mock_article),
+            patch("app.services.research_search.extract_article", return_value=mock_article),
             patch("app.services.research_search._classify_role_with_llm", return_value=None),
             patch("app.services.research_search._classify_role_deterministic", return_value=mechanism_role),
             patch("app.services.research_search._validate_card_tag", return_value=(

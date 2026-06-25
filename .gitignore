@@ -18,3 +18,6 @@ frontend/.env.local
 test-results/
 frontend/test-results/
 frontend/playwright-report/
+
+# Supabase CLI local state
+supabase/.branches/

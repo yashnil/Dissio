@@ -1,6 +1,5 @@
-import type { Config } from "jest";
-
-const config: Config = {
+/** @type {import('jest').Config} */
+const config = {
   preset: "ts-jest",
   testEnvironment: "node",
   // Only run tests in src/__tests__ (pure helpers — no React/DOM needed)
@@ -22,4 +21,4 @@ const config: Config = {
   testPathIgnorePatterns: ["/node_modules/", "/.next/"],
 };
 
-export default config;
+module.exports = config;

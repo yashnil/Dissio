@@ -13,6 +13,8 @@ Safety invariants tested:
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -63,13 +65,30 @@ def make_article(text: str = "Sample article text " * 30, **kwargs) -> Extracted
 
 # ── URL validation ─────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def public_dns(monkeypatch):
+    """Patch socket.getaddrinfo in web_article_extraction to return a public IP.
+
+    Needed because pytest-socket blocks all DNS resolution, but validate_url must
+    confirm a hostname resolves to a non-private IP before allowing it.
+    """
+    import app.services.web_article_extraction as _wae
+    monkeypatch.setattr(
+        _wae.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
+        ],
+    )
+
+
 class TestValidateUrl:
-    def test_allows_https(self):
+    def test_allows_https(self, public_dns):
         safe, reason = validate_url("https://nytimes.com/article")
         assert safe is True
         assert reason == ""
 
-    def test_allows_http(self):
+    def test_allows_http(self, public_dns):
         safe, reason = validate_url("http://brookings.edu/report")
         assert safe is True
 

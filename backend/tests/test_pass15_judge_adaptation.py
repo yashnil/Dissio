@@ -26,6 +26,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch
 
+from tests import REPO_ROOT
+
 
 # ── Judge profiles ─────────────────────────────────────────────────────────────
 
@@ -967,30 +969,23 @@ def test_pass14_freshness_preserved_not_upgraded():
 
 def test_frontend_types_file_exists():
     """Verify types file was created."""
-    import os
-    path = "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/types/judgeAdaptation.ts"
-    assert os.path.exists(path)
+    assert (REPO_ROOT / "frontend/src/types/judgeAdaptation.ts").exists()
 
 
 def test_judge_adaptation_page_exists():
     """Verify judge adaptation page was created."""
-    import os
-    path = "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/app/judge-adaptation/page.tsx"
-    assert os.path.exists(path)
+    assert (REPO_ROOT / "frontend/src/app/judge-adaptation/page.tsx").exists()
 
 
 def test_nav_items_has_judge_adaptation():
     """Verify navItems.ts includes judge-adaptation."""
-    path = "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/lib/navItems.ts"
-    with open(path) as f:
-        content = f.read()
+    content = (REPO_ROOT / "frontend/src/lib/navItems.ts").read_text()
     assert "judge-adaptation" in content
 
 
 def test_judge_adaptation_components_exist():
     """Verify all 5 judge adaptation components were created."""
-    import os
-    base = "/Users/yashnilmohanty/Desktop/RoundLab/frontend/src/components/judge-adaptation"
+    base = REPO_ROOT / "frontend/src/components/judge-adaptation"
     required = [
         "JudgeProfileSelector.tsx",
         "AdaptationChangesPanel.tsx",
@@ -999,4 +994,4 @@ def test_judge_adaptation_components_exist():
         "JudgeReadinessCard.tsx",
     ]
     for fname in required:
-        assert os.path.exists(os.path.join(base, fname)), f"Missing: {fname}"
+        assert (base / fname).exists(), f"Missing: {fname}"
