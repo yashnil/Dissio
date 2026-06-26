@@ -28,7 +28,7 @@ function readSrc(rel: string): string {
 
 describe("No PLACEHOLDER_USER_ID in round simulation code", () => {
   const roundFiles = [
-    "app/round-simulation/page.tsx",
+    "app/(workspace)/round-simulation/page.tsx",
     "lib/roundApi.ts",
     "components/round/RoundSpeechCapture.tsx",
     "components/round/RoundPhaseHeader.tsx",
@@ -57,12 +57,12 @@ describe("Components use roundApi instead of raw fetch()", () => {
   });
 
   it("round page does not use raw fetch()", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).not.toMatch(/\bfetch\(/);
   });
 
   it("round page imports roundApi", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("roundApi");
   });
 
@@ -226,45 +226,45 @@ describe("RoundSpeechCapture recorder integration", () => {
 
 describe("Round simulation page auth gate", () => {
   it("page checks Supabase session before showing round UI", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("auth.getSession");
   });
 
   it("page shows loading state while auth is being determined", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain('"loading"');
     expect(src).toContain("Loading");
   });
 
   it("page shows sign-in prompt when signed out", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain('"signed-out"');
     expect(src).toContain("Sign in");
   });
 
   it("page recovers active round from localStorage", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("roundlab_active_round");
     expect(src).toContain("localStorage");
   });
 
   it("page clears localStorage when round is completed or not found", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("localStorage.removeItem");
   });
 
   it("page saves round id to localStorage on creation", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("localStorage.setItem");
   });
 
   it("page subscribes to auth state changes", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("onAuthStateChange");
   });
 
   it("page unsubscribes from auth on unmount", () => {
-    const src = readSrc("app/round-simulation/page.tsx");
+    const src = readSrc("app/(workspace)/round-simulation/page.tsx");
     expect(src).toContain("unsubscribe");
   });
 });
