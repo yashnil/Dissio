@@ -29,7 +29,8 @@ import LoopStageCard from "@/components/dashboard/LoopStageCard";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { deriveDashboardState } from "@/lib/dashboardModel";
 import { deriveWorkoutProgress, getNextIncompleteStep } from "@/lib/workoutHelpers";
-import type { Speech, ProgressSummary, PilotSummary, Workout } from "@/types";
+import NextMissionCard from "@/components/dashboard/NextMissionCard";
+import type { Speech, ProgressSummary, PilotSummary, Workout, StudentMission } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -167,6 +168,9 @@ export default function DashboardPage() {
   const [progress,      setProgress]     = useState<ProgressSummary | null>(null);
   const [pilotSummary,  setPilotSummary] = useState<PilotSummary | null>(null);
   const [latestWorkout, setLatestWorkout] = useState<Workout | null>(null);
+  const [mission,       setMission]      = useState<StudentMission | null>(null);
+  const [missionLoading, setMissionLoading] = useState(true);
+  const [missionErr,    setMissionErr]   = useState("");
   const [loading,       setLoading]      = useState(true);
   const [err,           setErr]          = useState("");
   const [del,           setDel]          = useState<Speech | null>(null);
@@ -194,6 +198,12 @@ export default function DashboardPage() {
         apiFetch<Workout[]>(`/workouts?user_id=${data.user.id}`)
           .then((ws) => { if (ws.length > 0) setLatestWorkout(ws[0]); })
           .catch(() => {});
+
+        // Next Mission — non-blocking, shown as its own card
+        apiFetch<StudentMission | null>(`/missions/next?user_id=${data.user.id}`)
+          .then((m) => { setMission(m); })
+          .catch(() => { setMissionErr("Mission unavailable"); })
+          .finally(() => { setMissionLoading(false); });
       })
       .catch((e) =>
         setErr(
@@ -252,6 +262,21 @@ export default function DashboardPage() {
             {/* 1. Next Best Action — dominant hero ───────────────────── */}
             <motion.div variants={child}>
               <NextActionPanel action={state.nextAction} />
+            </motion.div>
+
+            {/* 1b. Next Mission coaching card */}
+            <motion.div variants={child}>
+              <section aria-label="Next mission">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-eyebrow text-ink-subtle">Next mission</span>
+                </div>
+                <NextMissionCard
+                  loading={missionLoading}
+                  error={missionErr || null}
+                  mission={mission}
+                  hasSpeech={speeches.length > 0}
+                />
+              </section>
             </motion.div>
 
             {/* 2. Recent speech insight — priority skill from latest data */}

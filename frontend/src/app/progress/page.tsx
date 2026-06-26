@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Target, TrendingUp, Calendar, Flag, ArrowRight, CheckCircle2, Circle, Sparkles } from "lucide-react";
+import { Target, TrendingUp, Calendar, Flag, ArrowRight, CheckCircle2, Circle, Sparkles, Zap } from "lucide-react";
 import AppShell from "@/components/shell/AppShell";
 import EmptyState from "@/components/EmptyState";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +15,8 @@ import {
   deriveWeeklyPlan, drillEffectivenessNote, progressDataState,
 } from "@/lib/progressModel";
 import { deriveRecentActivity } from "@/lib/dashboardActivity";
-import type { ProgressSummary, Speech } from "@/types";
+import { MISSION_SKILL_LABELS } from "@/lib/missionModel";
+import type { ProgressSummary, Speech, StudentMission } from "@/types";
 
 function SectionTitle({ icon: Icon, children }: { icon: typeof Target; children: React.ReactNode }) {
   return (
@@ -30,6 +31,7 @@ export default function ProgressPage() {
   const router = useRouter();
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
   const [speeches, setSpeeches] = useState<Speech[]>([]);
+  const [missions, setMissions] = useState<StudentMission[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -42,6 +44,10 @@ export default function ProgressPage() {
           apiFetch<Speech[]>(`/speeches?user_id=${data.user.id}`),
         ]);
         setProgress(p); setSpeeches(s);
+        // Mission history — non-critical
+        apiFetch<StudentMission[]>(`/missions?user_id=${data.user.id}`)
+          .then(setMissions)
+          .catch(() => {});
       })
       .catch((e) =>
         setErr(
@@ -195,6 +201,50 @@ export default function ProgressPage() {
                 </ul>
               </CardContent>
             </Card>
+
+            {/* Mission history */}
+            {missions.length > 0 && (
+              <Card>
+                <CardContent className="flex flex-col gap-3 px-5 py-5">
+                  <SectionTitle icon={Zap}>Mission history</SectionTitle>
+                  <ul className="flex flex-col gap-1.5">
+                    {missions.slice(0, 8).map((m) => {
+                      const statusColor =
+                        m.status === "completed"   ? "text-ok"
+                        : m.status === "in_progress" ? "text-warn"
+                        : "text-ink-faint";
+                      const statusLabel =
+                        m.status === "completed"   ? "Done"
+                        : m.status === "in_progress" ? "In progress"
+                        : m.status === "expired"     ? "Expired"
+                        : "Ready";
+                      const resultSuffix =
+                        m.completion_result === "improved"  ? " · improved"
+                        : m.completion_result === "regressed" ? " · needs work"
+                        : "";
+                      return (
+                        <li key={m.id}>
+                          <Link
+                            href={`/missions/${m.id}`}
+                            className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:rounded"
+                          >
+                            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                              <span className="truncate font-medium text-ink">{m.title}</span>
+                              <span className="text-[10px] text-ink-faint">
+                                {MISSION_SKILL_LABELS[m.skill] ?? m.skill}
+                              </span>
+                            </div>
+                            <span className={`shrink-0 text-[10px] font-medium ${statusColor}`}>
+                              {statusLabel}{resultSuffix}
+                            </span>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Practice rhythm */}
             {rhythm.length > 0 && (

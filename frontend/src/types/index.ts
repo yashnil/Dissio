@@ -1487,3 +1487,60 @@ export interface ResearchConfigResponse {
   url_extraction_available: boolean;
   card_builder_available: boolean;
 }
+
+// ── Next Mission coaching loop ────────────────────────────────────────────────
+
+export type MissionSkill =
+  | "warranting"
+  | "weighing"
+  | "extensions"
+  | "drops"
+  | "evidence_use"
+  | "clash"
+  | "judge_adaptation"
+  | "delivery"
+  | "organization";
+
+export type MissionStatus = "ready" | "in_progress" | "paused" | "completed" | "expired";
+
+export type MissionCompletionResult = "improved" | "unchanged" | "regressed" | "completed";
+
+export interface StudentMission {
+  id: string;
+  user_id: string;
+  mission_type: string;
+  skill: MissionSkill;
+  title: string;
+  reason: string;
+  evidence: string;
+  source_speech_id: string | null;
+  source_report_id: string | null;
+  recommended_drill_id: string | null;
+  priority_score: number;
+  priority_factors: Record<string, unknown>;
+  status: MissionStatus;
+  before_score: Record<string, number> | null;
+  after_score: Record<string, number> | null;
+  score_delta: Record<string, number> | null;
+  remaining_issue: string | null;
+  success_criteria: string[];
+  completion_result: MissionCompletionResult | null;
+  estimated_minutes: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface MissionAttempt {
+  id: string;
+  mission_id: string;
+  user_id: string;
+  attempt_type: "drill" | "rerecord" | "progress_save";
+  drill_attempt_id: string | null;
+  speech_id: string | null;
+  score_snapshot: Record<string, number> | null;
+  criteria_met: string[];
+  result: "incomplete" | "passed" | "failed";
+  notes: string | null;
+  created_at: string;
+}
