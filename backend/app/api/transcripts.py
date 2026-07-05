@@ -162,7 +162,7 @@ async def create_transcript_from_text(
             )
             .execute()
         )
-        supabase.table("speeches").update({"status": "done"}).eq("id", speech_id).execute()
+        supabase.table("speeches").update({"status": "pending"}).eq("id", speech_id).execute()
         logger.info("create_transcript_from_text: success | speech_id=%s", speech_id)
         return transcript_result.data[0]
     except Exception as exc:

@@ -313,6 +313,8 @@ export default function SpeechPage() {
       // Update speech status
       const updatedSpeech = await apiFetch<Speech>(`/speeches/${speechId}?user_id=${userId}`);
       setSpeech(updatedSpeech);
+      // Now start the full analysis pipeline
+      await processing.startAnalysis();
       setPastedText("");
     } catch (err: unknown) {
       setPasteErr(err instanceof Error ? err.message : "Failed to save transcript.");
