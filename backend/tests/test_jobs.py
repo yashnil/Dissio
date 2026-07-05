@@ -562,3 +562,51 @@ class TestStaleConvergenceEndpoints:
         result = job_svc.retry_job(sb, JOB_ID, USER_ID)
         assert result["status"] == "queued"
         assert result["attempt_count"] == 2
+
+
+class TestRetryStaleJobEndpoint:
+    def test_retry_converges_stale_running_job_then_requeues(self):
+        """One-click retry on a stale running job: converge → failed → queued."""
+        stale = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        state = {"status": "running"}
+
+        def table_fn(name):
+            t = MagicMock()
+            for m in ("select", "eq", "in_", "limit", "order"):
+                getattr(t, m).return_value = t
+
+            def update_fn(payload):
+                if name == "analysis_jobs" and "status" in payload:
+                    state["status"] = payload["status"]
+                return t
+
+            t.update = update_fn
+
+            def execute_fn():
+                r = MagicMock()
+                if name == "analysis_jobs":
+                    r.data = [{**stale, "status": state["status"],
+                               "error_code": "worker_lost" if state["status"] == "failed" else None}]
+                else:
+                    r.data = [FAKE_SPEECH]
+                return r
+
+            t.execute = execute_fn
+            return t
+
+        with (
+            patch("app.api.jobs.get_supabase") as mock_sb,
+            patch("app.services.analysis_pipeline.run_speech_analysis_pipeline"),
+        ):
+            mock_sb.return_value.table = table_fn
+            r = client.post(f"/jobs/{JOB_ID}/retry?user_id={USER_ID}")
+        assert r.status_code == 200
+        assert r.json()["status"] == "queued"
+
+    def test_retry_still_refuses_fresh_running_job(self):
+        fresh = {**FAKE_JOB, "status": "running", "updated_at": _ts(1)}
+        with patch("app.api.jobs.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _make_table_fn(jobs_data=[fresh])
+            r = client.post(f"/jobs/{JOB_ID}/retry?user_id={USER_ID}")
+        assert r.status_code == 400
+        assert "running" in r.json()["detail"]

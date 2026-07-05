@@ -198,40 +198,57 @@ describe("ISSUE_TYPE_LABELS", () => {
   });
 });
 
-// ── getSpeechStatusConfig ──────────────────────────────────────────────────────
+// ── getSpeechStatusConfig (compat shim over practiceReadiness) ────────────────
 
 describe("getSpeechStatusConfig", () => {
-  it("returns correct config for done", () => {
+  it("never labels a speech 'Feedback ready' from status alone", () => {
+    for (const status of ["done", "pending", "analyzing", "transcribing", "error", "xyz"]) {
+      expect(getSpeechStatusConfig(status).label).not.toBe("Feedback ready");
+    }
+  });
+
+  it("done maps to the conservative Ready label (green, terminal)", () => {
     const cfg = getSpeechStatusConfig("done");
-    expect(cfg.label).toBe("Feedback ready");
+    expect(cfg.label).toBe("Ready");
     expect(cfg.badge).toBe("green");
     expect(cfg.isTerminal).toBe(true);
     expect(cfg.isProcessing).toBe(false);
   });
 
-  it("returns correct config for analyzing", () => {
+  it("analyzing is amber and processing", () => {
     const cfg = getSpeechStatusConfig("analyzing");
+    expect(cfg.label).toBe("Analyzing arguments");
     expect(cfg.badge).toBe("amber");
+    expect(cfg.isProcessing).toBe(true);
+    expect(cfg.isTerminal).toBe(false);
+  });
+
+  it("transcribing keeps its indigo/lav treatment", () => {
+    const cfg = getSpeechStatusConfig("transcribing");
+    expect(cfg.badge).toBe("indigo");
+    expect(cfg.color).toBe("lav");
     expect(cfg.isProcessing).toBe(true);
   });
 
-  it("returns correct config for error", () => {
+  it("error is red, terminal, and retry-worded", () => {
     const cfg = getSpeechStatusConfig("error");
+    expect(cfg.label).toBe("Needs retry");
     expect(cfg.badge).toBe("red");
     expect(cfg.isTerminal).toBe(true);
   });
 
-  it("returns fallback for unknown status", () => {
+  it("returns neutral Unknown for unrecognized status", () => {
     const cfg = getSpeechStatusConfig("mystery_status");
     expect(cfg.label).toBe("Unknown");
     expect(cfg.badge).toBe("default");
+    expect(cfg.isTerminal).toBe(false);
   });
 });
 
 describe("getSpeechStatusLabel", () => {
-  it("returns label for known status", () => {
-    expect(getSpeechStatusLabel("pending")).toBe("Pending");
-    expect(getSpeechStatusLabel("done")).toBe("Feedback ready");
+  it("returns the conservative labels for known statuses", () => {
+    expect(getSpeechStatusLabel("pending")).toBe("Draft");
+    expect(getSpeechStatusLabel("done")).toBe("Ready");
   });
 
   it("returns Unknown for unrecognized status", () => {
@@ -246,6 +263,11 @@ describe("getSpeechStatusColor", () => {
 
   it("maps error to danger", () => {
     expect(getSpeechStatusColor("error")).toBe("danger");
+  });
+
+  it("maps pending/unknown to default", () => {
+    expect(getSpeechStatusColor("pending")).toBe("default");
+    expect(getSpeechStatusColor("xyz")).toBe("default");
   });
 });
 

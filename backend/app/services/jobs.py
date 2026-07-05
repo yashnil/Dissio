@@ -89,11 +89,35 @@ def converge_stale_job(sb, job: dict, now: datetime | None = None) -> dict | Non
                 .in_("status", _CONVERGIBLE_SPEECH_STATUSES)
                 .execute()
             )
-        converged_at = (now or datetime.now(timezone.utc)).isoformat()
-        logger.info(
-            "converge_stale_job: job_id=%s speech_id=%s last_moved=%s",
-            job.get("id"), speech_id, job.get("updated_at") or job.get("created_at"),
+        moment = now or datetime.now(timezone.utc)
+        converged_at = moment.isoformat()
+        last_moved = _parse_ts(job.get("updated_at")) or _parse_ts(job.get("created_at"))
+        stale_age_seconds = (
+            int((moment - last_moved).total_seconds()) if last_moved else None
         )
+        logger.info(
+            "converge_stale_job: job_id=%s speech_id=%s error_code=%s "
+            "stale_age_seconds=%s last_moved=%s",
+            job.get("id"), speech_id, STALE_ERROR_CODE,
+            stale_age_seconds, job.get("updated_at") or job.get("created_at"),
+        )
+        # Observability: reuse the existing funnel-drop event so worker-loss
+        # frequency shows up in pilot analytics. Best-effort by contract —
+        # track_product_event never raises.
+        if job.get("user_id"):
+            from app.services.product_events import PilotEvent, track_product_event
+
+            track_product_event(
+                user_id=job["user_id"],
+                event_name=PilotEvent.WORKFLOW_STAGE_FAILED,
+                speech_id=speech_id,
+                metadata={
+                    "job_id": job.get("id"),
+                    "stage": job.get("current_step"),
+                    "error_code": STALE_ERROR_CODE,
+                    "stale_age_seconds": stale_age_seconds,
+                },
+            )
         return {
             "status": "failed",
             "error_code": STALE_ERROR_CODE,

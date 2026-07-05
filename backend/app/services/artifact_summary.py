@@ -35,6 +35,7 @@ def _empty_summary() -> dict:
         "has_ballot": False,
         "has_feedback": False,
         "drill_count": None,
+        "latest_job_id": None,
         "latest_job_status": None,
         "latest_job_current_step": None,
         "latest_job_error": None,
@@ -127,6 +128,7 @@ def build_artifact_summaries(sb, speech_ids: list[str]) -> dict[str, dict]:
                 converged = converge_stale_job(sb, job)
                 if converged:
                     job = {**job, **converged}
+            summaries[sid]["latest_job_id"] = job.get("id")
             summaries[sid]["latest_job_status"] = job.get("status")
             summaries[sid]["latest_job_current_step"] = job.get("current_step")
             summaries[sid]["latest_job_error_code"] = job.get("error_code")

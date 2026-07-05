@@ -71,6 +71,16 @@ async def retry_job_endpoint(
     from app.services.analysis_pipeline import run_speech_analysis_pipeline
 
     sb = get_supabase()
+
+    # A stale queued/running job (dead worker) is converged to failed first so
+    # it becomes retryable in one click. Fresh active jobs still refuse retry.
+    try:
+        existing = get_job(sb, job_id, user_id)
+        if existing:
+            _converged(sb, existing)
+    except Exception:
+        pass  # best-effort — retry_job re-validates below
+
     try:
         updated = _retry_job(sb, job_id, user_id)
     except ValueError as exc:

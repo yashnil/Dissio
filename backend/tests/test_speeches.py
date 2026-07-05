@@ -808,3 +808,42 @@ def test_artifact_summary_terminal_jobs_not_converged():
     s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
     assert s["latest_job_status"] == "succeeded"
     assert s["latest_job_error_code"] is None
+
+
+# ── Phase 5E: latest_job_id in artifact summaries ────────────────────────────
+
+def test_artifact_summary_includes_latest_job_id():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(jobs=[_job_row(updated_at=_job_ts(2))])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_id"] == "cccccccc-0000-0000-0000-0000000000c1"
+
+
+def test_artifact_summary_latest_job_id_null_without_job():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(transcripts=[{"speech_id": SPEECH_A}])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_id"] is None
+
+
+def test_artifact_summary_converged_worker_lost_job_keeps_job_id():
+    """After stale convergence, latest_job_id still points at the retryable job."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(jobs=[_job_row(updated_at=_job_ts(30))])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "failed"
+    assert s["latest_job_error_code"] == "worker_lost"
+    assert s["latest_job_id"] == "cccccccc-0000-0000-0000-0000000000c1"
+
+
+def test_artifact_summary_latest_job_id_is_newest_job():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[  # newest first, as the endpoint orders
+            _job_row(id="cccccccc-0000-0000-0000-0000000000c9", updated_at=_job_ts(1)),
+            _job_row(id="cccccccc-0000-0000-0000-0000000000c1", status="failed",
+                     updated_at=_job_ts(90)),
+        ],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_id"] == "cccccccc-0000-0000-0000-0000000000c9"

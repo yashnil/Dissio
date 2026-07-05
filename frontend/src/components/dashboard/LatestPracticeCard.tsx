@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Mic, ArrowRight, Check, Circle, Minus } from "lucide-react";
+import { Mic, ArrowRight, Check, Circle, Minus, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,9 +19,22 @@ function fmtDate(iso: string) {
 /**
  * Cockpit preview of the student's most recent practice: truthful status
  * badge, which artifacts genuinely exist, and one button pointing at the
- * correct next destination for that practice.
+ * correct next action. When the latest analysis failed or stalled and its
+ * job id is known, that single button retries in place (same endpoint the
+ * speech page uses); otherwise it links to the right destination.
  */
-export default function LatestPracticeCard({ summary }: { summary: LatestPracticeSummary }) {
+export default function LatestPracticeCard({
+  summary,
+  onRetry,
+  retrying = false,
+  retryError = null,
+}: {
+  summary: LatestPracticeSummary;
+  /** Present only when the row is directly retryable (job id known). */
+  onRetry?: () => void;
+  retrying?: boolean;
+  retryError?: string | null;
+}) {
   const { speech, readiness, href, ctaLabel, pipeline } = summary;
 
   return (
@@ -80,12 +93,29 @@ export default function LatestPracticeCard({ summary }: { summary: LatestPractic
           ))}
         </ul>
 
-        <div className="mt-auto pt-1">
-          <Button asChild size="sm" className="gap-1.5">
-            <Link href={href}>
-              {ctaLabel} <ArrowRight size={11} aria-hidden="true" />
-            </Link>
-          </Button>
+        <div className="mt-auto flex flex-col gap-1.5 pt-1">
+          {onRetry ? (
+            <Button
+              size="sm"
+              className="gap-1.5 self-start"
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              <RotateCcw size={11} aria-hidden="true" />
+              {retrying ? "Retrying…" : "Retry analysis"}
+            </Button>
+          ) : (
+            <Button asChild size="sm" className="gap-1.5 self-start">
+              <Link href={href}>
+                {ctaLabel} <ArrowRight size={11} aria-hidden="true" />
+              </Link>
+            </Button>
+          )}
+          {retryError && (
+            <p role="alert" className="text-xs text-danger">
+              {retryError}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -4,7 +4,8 @@
  * All functions are side-effect-free and depend only on their arguments.
  */
 
-import type { SkillAverages, DebateIssueType, DebateIssue, SpeechStatus, ProgressSummary, Speech, FeedbackReport, FeedbackScores, SpeechComparisonResult, ArgumentItem, ClaimEvidenceCheck, EvidenceSupportLevel } from "@/types";
+import type { SkillAverages, DebateIssueType, DebateIssue, ProgressSummary, Speech, FeedbackReport, FeedbackScores, SpeechComparisonResult, ArgumentItem, ClaimEvidenceCheck, EvidenceSupportLevel } from "@/types";
+import { mapSpeechStatusToDisplay } from "./practiceReadiness";
 
 // ── Skill analysis ─────────────────────────────────────────────────────────────
 
@@ -84,25 +85,30 @@ export interface SpeechStatusConfig {
   isProcessing: boolean;
 }
 
-const STATUS_CONFIGS: Record<string, SpeechStatusConfig> = {
-  pending:      { label: "Pending",       color: "default", badge: "default", isTerminal: false, isProcessing: false },
-  transcribing: { label: "Transcribing",  color: "lav",     badge: "indigo",  isTerminal: false, isProcessing: true  },
-  analyzing:    { label: "Analyzing",     color: "warn",    badge: "amber",   isTerminal: false, isProcessing: true  },
-  done:         { label: "Feedback ready",color: "ok",      badge: "green",   isTerminal: true,  isProcessing: false },
-  error:        { label: "Error",         color: "danger",  badge: "red",     isTerminal: true,  isProcessing: false },
+const TONE_COLOR: Record<string, SpeechStatusConfig["color"]> = {
+  green: "ok",
+  amber: "warn",
+  red: "danger",
+  neutral: "default",
 };
 
-const FALLBACK_STATUS: SpeechStatusConfig = {
-  label: "Unknown",
-  color: "default",
-  badge: "default",
-  isTerminal: false,
-  isProcessing: false,
-};
-
-/** Normalize a raw status string into a structured config object. */
+/**
+ * Normalize a raw status string into a structured config object.
+ *
+ * Compatibility shim only — delegates to the Phase 5 readiness model in
+ * practiceReadiness.ts so no code path can label a speech "Feedback ready"
+ * from status alone. Prefer getSpeechListReadiness/mapSpeechStatusToDisplay
+ * in new code.
+ */
 export function getSpeechStatusConfig(status: string): SpeechStatusConfig {
-  return STATUS_CONFIGS[status] ?? FALLBACK_STATUS;
+  const r = mapSpeechStatusToDisplay(status);
+  return {
+    label: r.label,
+    color: r.badge === "indigo" ? "lav" : TONE_COLOR[r.tone],
+    badge: r.badge,
+    isTerminal: status === "done" || status === "error",
+    isProcessing: r.isProcessing,
+  };
 }
 
 /** Human-readable status label. */

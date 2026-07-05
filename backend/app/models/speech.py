@@ -35,6 +35,8 @@ class SpeechArtifactSummary(BaseModel):
     has_ballot: bool = False
     has_feedback: bool = False
     drill_count: Optional[int] = None
+    # The latest speech_analysis job's id — enables direct retry from lists.
+    latest_job_id: Optional[str] = None
     latest_job_status: Optional[str] = None
     latest_job_current_step: Optional[str] = None
     # Combined error string (message or code) — kept for Phase 5B clients.

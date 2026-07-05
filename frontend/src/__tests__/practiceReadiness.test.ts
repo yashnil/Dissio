@@ -180,10 +180,10 @@ describe("getLatestPracticeSummary", () => {
     expect(s.ctaLabel).toBe("Retry analysis");
   });
 
-  it("ready report → Open report; processing → Check progress; draft → Record speech", () => {
+  it("ready report → Open report; processing → Check progress; draft → Start practice", () => {
     expect(getLatestPracticeSummary([speech({ status: "done" })])!.ctaLabel).toBe("Open report");
     expect(getLatestPracticeSummary([speech({ status: "analyzing" })])!.ctaLabel).toBe("Check progress");
-    expect(getLatestPracticeSummary([speech({ status: "pending" })])!.ctaLabel).toBe("Record speech");
+    expect(getLatestPracticeSummary([speech({ status: "pending" })])!.ctaLabel).toBe("Start practice");
   });
 });
 
@@ -613,13 +613,13 @@ describe("getLatestPracticeSummary — readiness transitions (polling updates)",
     expect(after.ctaLabel).toBe("Retry analysis");
   });
 
-  it("processing → stale: amber with an Open & retry CTA", () => {
+  it("processing → stale: amber with a Retry analysis CTA", () => {
     const after = getLatestPracticeSummary([speech({
       ...base,
       artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: STALE_TS }),
     })], NOW)!;
     expect(after.readiness.key).toBe("stale");
-    expect(after.ctaLabel).toBe("Open & retry");
+    expect(after.ctaLabel).toBe("Retry analysis");
   });
 });
 
@@ -689,5 +689,180 @@ describe("getLatestPracticeSummary — stalled analysis (worker_lost)", () => {
     expect(s.ctaLabel).toBe("Retry analysis");
     // The saved transcript is still shown as present — nothing was lost.
     expect(s.pipeline.find((p) => p.key === "transcript")!.done).toBe(true);
+  });
+});
+
+// ── Phase 5E: one-click dashboard retry ──────────────────────────────────────
+
+import {
+  getDashboardRetryAction,
+  getRetryJobId,
+  isRetryableSpeech,
+  getRetryFailureMessage,
+} from "@/lib/practiceReadiness";
+
+const JOB_ID = "job-123";
+
+describe("getDashboardRetryAction / getRetryJobId / isRetryableSpeech", () => {
+  it("failed worker_lost job with latest_job_id → direct retry", () => {
+    const s = speech({
+      status: "error",
+      artifact_summary: summary({
+        has_transcript: true,
+        latest_job_id: JOB_ID,
+        latest_job_status: "failed",
+        latest_job_error_code: "worker_lost",
+      }),
+    });
+    expect(getDashboardRetryAction(s, NOW)).toEqual({ kind: "direct-retry", jobId: JOB_ID });
+    expect(getRetryJobId(s, NOW)).toBe(JOB_ID);
+    expect(isRetryableSpeech(s, NOW)).toBe(true);
+  });
+
+  it("failed job without a job id → open the speech page instead", () => {
+    const s = speech({
+      status: "error",
+      artifact_summary: summary({ latest_job_status: "failed", latest_job_id: null }),
+    });
+    expect(getDashboardRetryAction(s, NOW)).toEqual({ kind: "open-speech" });
+    expect(getRetryJobId(s, NOW)).toBeNull();
+    expect(isRetryableSpeech(s, NOW)).toBe(false);
+  });
+
+  it("error status without any summary → open speech (Phase 5A fallback)", () => {
+    const s = speech({ status: "error" });
+    expect(getDashboardRetryAction(s, NOW)).toEqual({ kind: "open-speech" });
+  });
+
+  it("ready speech with an old failed job is never retryable", () => {
+    const s = speech({
+      status: "done",
+      artifact_summary: summary({
+        has_transcript: true, has_flow: true, has_ballot: true,
+        latest_job_id: JOB_ID, latest_job_status: "failed",
+        latest_job_error_code: "worker_lost",
+      }),
+    });
+    expect(getDashboardRetryAction(s, NOW)).toEqual({ kind: "none" });
+    expect(isRetryableSpeech(s, NOW)).toBe(false);
+  });
+
+  it("stale fallback (unconverged running job) with a job id is retryable", () => {
+    const s = speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        latest_job_id: JOB_ID,
+        latest_job_status: "running",
+        latest_job_updated_at: STALE_TS,
+      }),
+    });
+    expect(getDashboardRetryAction(s, NOW)).toEqual({ kind: "direct-retry", jobId: JOB_ID });
+  });
+
+  it("healthy processing and draft rows are not retryable", () => {
+    expect(getDashboardRetryAction(speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        latest_job_id: JOB_ID, latest_job_status: "running",
+        latest_job_updated_at: FRESH_TS,
+      }),
+    }), NOW)).toEqual({ kind: "none" });
+    expect(getDashboardRetryAction(speech({ status: "pending" }), NOW)).toEqual({ kind: "none" });
+  });
+});
+
+describe("getRetryFailureMessage", () => {
+  it("is safe, actionable, and free of internals", () => {
+    const msg = getRetryFailureMessage();
+    expect(msg).toContain("Open the practice");
+    expect(msg).not.toMatch(/error|exception|500|traceback/i);
+  });
+});
+
+// ── Phase 5F: report-ready handoff + visibility-aware polling ────────────────
+
+import {
+  findNewlyReadySpeeches,
+  shouldPollDashboard,
+} from "@/lib/practiceReadiness";
+
+const readySummary = () =>
+  summary({ has_transcript: true, has_flow: true, has_ballot: true, drill_count: 3 });
+const processingSummary = () =>
+  summary({ latest_job_status: "running", latest_job_current_step: "finalizing", latest_job_updated_at: FRESH_TS });
+
+describe("findNewlyReadySpeeches", () => {
+  const processing = speech({ id: "s-a", status: "analyzing", artifact_summary: processingSummary() });
+  const nowReady = speech({ id: "s-a", status: "done", artifact_summary: readySummary() });
+
+  it("detects a processing → verified-ready transition", () => {
+    expect(findNewlyReadySpeeches([processing], [nowReady], NOW).map((s) => s.id)).toEqual(["s-a"]);
+  });
+
+  it("ignores rows that were already ready (initial-load semantics)", () => {
+    expect(findNewlyReadySpeeches([nowReady], [nowReady], NOW)).toEqual([]);
+  });
+
+  it("ignores rows never observed in a pre-ready state", () => {
+    // A ready speech appearing for the first time is not a transition.
+    expect(findNewlyReadySpeeches([], [nowReady], NOW)).toEqual([]);
+  });
+
+  it("failed → ready (after retry) counts as a transition", () => {
+    const failed = speech({
+      id: "s-a", status: "error",
+      artifact_summary: summary({ latest_job_status: "failed", latest_job_error_code: "worker_lost" }),
+    });
+    expect(findNewlyReadySpeeches([failed], [nowReady], NOW)).toHaveLength(1);
+  });
+
+  it("done-without-ballot is NOT treated as ready (no false handoff)", () => {
+    const partial = speech({
+      id: "s-a", status: "done",
+      artifact_summary: summary({ has_transcript: true, has_flow: true, has_ballot: false }),
+    });
+    expect(findNewlyReadySpeeches([processing], [partial], NOW)).toEqual([]);
+  });
+
+  it("returns newest first when several become ready at once", () => {
+    const pA = speech({ id: "a", status: "analyzing", artifact_summary: processingSummary(), updated_at: "2026-07-05T10:00:00Z" });
+    const pB = speech({ id: "b", status: "analyzing", artifact_summary: processingSummary(), updated_at: "2026-07-05T10:00:00Z" });
+    const rA = speech({ id: "a", status: "done", artifact_summary: readySummary(), updated_at: "2026-07-05T11:00:00Z" });
+    const rB = speech({ id: "b", status: "done", artifact_summary: readySummary(), updated_at: "2026-07-05T11:30:00Z" });
+    expect(findNewlyReadySpeeches([pA, pB], [rA, rB], NOW).map((s) => s.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("shouldPollDashboard", () => {
+  const active = speech({ id: "r", status: "analyzing", artifact_summary: processingSummary() });
+  const settled = speech({ id: "d", status: "done", artifact_summary: readySummary() });
+
+  it("hidden tab never polls, even with active rows", () => {
+    expect(shouldPollDashboard([active], false, NOW)).toBe(false);
+  });
+
+  it("visible tab with active rows polls", () => {
+    expect(shouldPollDashboard([active, settled], true, NOW)).toBe(true);
+  });
+
+  it("visible tab with only settled rows does not poll", () => {
+    expect(shouldPollDashboard([settled], true, NOW)).toBe(false);
+    expect(shouldPollDashboard([], true, NOW)).toBe(false);
+  });
+});
+
+describe("Phase 5 CTA label consistency", () => {
+  const cases: Array<[Speech, string]> = [
+    [speech({ status: "done", artifact_summary: readySummary() }), "Open report"],
+    [speech({ status: "error", artifact_summary: summary({ latest_job_status: "failed" }) }), "Retry analysis"],
+    [speech({ status: "analyzing", artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: STALE_TS }) }), "Retry analysis"],
+    [speech({ status: "pending" }), "Start practice"],
+    [speech({ status: "pending", audio_url: "http://x/a.mp3" }), "Open practice"],
+  ];
+
+  it("ready/retry/stale/draft/incomplete map to the canonical labels", () => {
+    for (const [s, label] of cases) {
+      expect(getLatestPracticeSummary([s], NOW)!.ctaLabel).toBe(label);
+    }
   });
 });

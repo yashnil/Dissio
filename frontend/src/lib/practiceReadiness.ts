@@ -236,7 +236,52 @@ export function getSpeechListReadiness(
   return getPracticeReadinessStatus(speech, summaryToAvailability(sum));
 }
 
-// ── Active-row detection (dashboard polling gate) ────────────────────────────
+// ── Dashboard retry action ────────────────────────────────────────────────────
+
+export type DashboardRetryAction =
+  | { kind: "direct-retry"; jobId: string }
+  | { kind: "open-speech" }
+  | { kind: "none" };
+
+/**
+ * What the dashboard may offer for recovering this row.
+ *
+ * Direct retry needs a failed-or-stale readiness AND a known latest job id
+ * (POST /jobs/{id}/retry — the same endpoint the speech page uses). A ready
+ * report is never retryable, so an old failed job can't downgrade it. Without
+ * a job id the row falls back to opening the speech page.
+ */
+export function getDashboardRetryAction(
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+  nowMs: number = Date.now(),
+): DashboardRetryAction {
+  const r = getSpeechListReadiness(speech, nowMs);
+  if (r.key !== "needs-retry" && r.key !== "stale") return { kind: "none" };
+  const jobId = speech.artifact_summary?.latest_job_id;
+  return jobId ? { kind: "direct-retry", jobId } : { kind: "open-speech" };
+}
+
+/** The latest job id when this row is directly retryable, else null. */
+export function getRetryJobId(
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+  nowMs: number = Date.now(),
+): string | null {
+  const action = getDashboardRetryAction(speech, nowMs);
+  return action.kind === "direct-retry" ? action.jobId : null;
+}
+
+/** True when the row can be retried in one click from the dashboard. */
+export function isRetryableSpeech(
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+  nowMs: number = Date.now(),
+): boolean {
+  return getRetryJobId(speech, nowMs) !== null;
+}
+
+/** Safe inline message when a dashboard retry request itself fails. */
+export function getRetryFailureMessage(): string {
+  return "Retry didn’t start. Open the practice to retry from there — nothing was lost.";
+}
 
 /** Background refetch cadence while any speech is actively analyzing. */
 export const ACTIVE_POLL_INTERVAL_MS = 6000;
@@ -268,6 +313,45 @@ export function isSpeechActive(
 /** True when at least one row justifies background polling. */
 export function hasActiveSpeeches(speeches: Speech[], nowMs: number = Date.now()): boolean {
   return speeches.some((s) => isSpeechActive(s, nowMs));
+}
+
+/**
+ * The single polling decision: poll only while the tab is visible AND some
+ * row is actively analyzing. A hidden tab never polls; a settled dashboard
+ * never polls.
+ */
+export function shouldPollDashboard(
+  speeches: Speech[],
+  tabVisible: boolean,
+  nowMs: number = Date.now(),
+): boolean {
+  return tabVisible && hasActiveSpeeches(speeches, nowMs);
+}
+
+// ── Report-ready handoff detection ───────────────────────────────────────────
+
+/**
+ * Speeches that TRANSITIONED to verified Ready between two observations of
+ * the list, newest first. A speech must have been seen in `prev` in a
+ * non-ready state — rows that were already ready (initial page load) or that
+ * appear for the first time are not transitions and never trigger a handoff.
+ */
+export function findNewlyReadySpeeches(
+  prev: Speech[],
+  next: Speech[],
+  nowMs: number = Date.now(),
+): Speech[] {
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  return next
+    .filter((s) => {
+      const before = prevById.get(s.id);
+      if (!before) return false;
+      return (
+        getSpeechListReadiness(s, nowMs).key === "ready" &&
+        getSpeechListReadiness(before, nowMs).key !== "ready"
+      );
+    })
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 }
 
 // ── Truthful pipeline progress (list rows) ────────────────────────────────────
@@ -326,6 +410,11 @@ export interface LatestPracticeSummary {
   pipeline: PipelineStepProgress[];
 }
 
+/**
+ * Canonical CTA labels (Phase 5F consistency pass): retry-shaped states all
+ * say "Retry analysis"; unstarted work says "Start practice"; anything the
+ * user must finish or inspect in the workspace says "Open practice".
+ */
 const CTA_BY_KEY: Record<ReadinessKey, string> = {
   ready: "Open report",
   "partial-report": "Review report",
@@ -333,11 +422,11 @@ const CTA_BY_KEY: Record<ReadinessKey, string> = {
   transcribing: "Check progress",
   analyzing: "Check progress",
   processing: "Check progress",
-  stale: "Open & retry",
+  stale: "Retry analysis",
   "transcript-pending-analysis": "Continue analysis",
-  incomplete: "Continue setup",
-  draft: "Record speech",
-  unknown: "Open session",
+  incomplete: "Open practice",
+  draft: "Start practice",
+  unknown: "Open practice",
 };
 
 /**

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Mic, CheckCircle2, Target,
   MoreHorizontal, Trash2, ArrowUpRight, ArrowRight,
-  Play, AlertTriangle,
+  Play, AlertTriangle, X,
 } from "lucide-react";
 import DeleteDialog from "@/components/DeleteDialog";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,12 @@ import {
   getSpeechListReadiness,
   getPipelineProgress,
   getLatestPracticeSummary,
+  getDashboardRetryAction,
+  getRetryJobId,
+  getRetryFailureMessage,
   hasActiveSpeeches,
+  shouldPollDashboard,
+  findNewlyReadySpeeches,
   ACTIVE_POLL_INTERVAL_MS,
 } from "@/lib/practiceReadiness";
 import NextMissionCard from "@/components/dashboard/NextMissionCard";
@@ -66,9 +71,22 @@ function fmtPercent(val: number | null) {
 
 // ── Speech card ───────────────────────────────────────────────────────────────
 
-function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void }) {
+function SpeechCard({
+  s,
+  onDelete,
+  onRetry,
+  retrying,
+  retryError,
+}: {
+  s: Speech;
+  onDelete: (s: Speech) => void;
+  onRetry: (s: Speech) => void;
+  retrying: boolean;
+  retryError: string | null;
+}) {
   const badge = getSpeechListReadiness(s);
   const pipeline = getPipelineProgress(s);
+  const canDirectRetry = getDashboardRetryAction(s).kind === "direct-retry";
   const accentBorder =
     badge.tone === "green"        ? "border-l-ok/60"
     : badge.tone === "red"        ? "border-l-danger/60"
@@ -109,6 +127,17 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
         </Link>
 
         <div className="flex shrink-0 items-center gap-2" title={badge.detail}>
+          {canDirectRetry && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 gap-1 text-xs"
+              onClick={() => onRetry(s)}
+              disabled={retrying}
+            >
+              {retrying ? "Retrying…" : "Retry analysis"}
+            </Button>
+          )}
           <Badge variant={badge.badge}>
             {badge.isProcessing ? `${badge.label}…` : badge.label}
           </Badge>
@@ -138,6 +167,11 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
           </DropdownMenuRoot>
         </div>
       </CardContent>
+      {retryError && (
+        <p role="alert" className="px-5 pb-3 text-xs text-danger">
+          {retryError}
+        </p>
+      )}
     </Card>
   );
 }
@@ -213,36 +247,96 @@ export default function DashboardPage() {
 
   // ── Liveness: background refresh while any row is actively analyzing ──────
   // Polls the same batched endpoint (no N+1) and quietly swaps row data in.
-  // The effect only runs while an active row exists; when the last one settles
-  // (ready/failed/stale), `pollActive` flips false and the interval is torn
-  // down — completed dashboards never poll.
-  const pollActive = !loading && !err && userId !== null && hasActiveSpeeches(speeches);
-  useEffect(() => {
-    if (!pollActive || !userId) return;
-    let cancelled = false;
+  // Polling runs only while the tab is visible AND an active row exists; when
+  // the last row settles (ready/failed/stale) or the tab hides, the interval
+  // is torn down — completed or hidden dashboards never poll.
+  const [tabVisible, setTabVisible] = useState(true);
+  const speechesRef = useRef<Speech[]>([]);
+  useEffect(() => { speechesRef.current = speeches; }, [speeches]);
 
-    const tick = async () => {
-      try {
-        const fresh = await apiFetch<Speech[]>(
-          `/speeches?user_id=${userId}&include_artifacts=true`,
-        );
-        if (cancelled) return;
-        setSpeeches(fresh);
-        // Once everything settled, sync progress so drills/feedback counts
-        // reflect the finished analysis (one follow-up fetch, then silence).
-        if (!hasActiveSpeeches(fresh)) {
-          apiFetch<ProgressSummary>(`/users/${userId}/progress`)
-            .then((p) => { if (!cancelled) setProgress(p); })
-            .catch(() => { /* keep last known progress */ });
-        }
-      } catch {
-        // Background refresh only — keep showing the last good data.
+  // Report-ready handoff: shown only when a refresh OBSERVES a transition to
+  // verified Ready while the user is on the dashboard. Never on initial load.
+  const [readyNotice, setReadyNotice] =
+    useState<{ speechId: string; title: string; extraCount: number } | null>(null);
+  const dismissedReadyIds = useRef<Set<string>>(new Set());
+
+  const refreshSpeeches = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const fresh = await apiFetch<Speech[]>(
+        `/speeches?user_id=${userId}&include_artifacts=true`,
+      );
+      const newlyReady = findNewlyReadySpeeches(speechesRef.current, fresh)
+        .filter((s) => !dismissedReadyIds.current.has(s.id));
+      if (newlyReady.length > 0) {
+        setReadyNotice({
+          speechId: newlyReady[0].id,
+          title: newlyReady[0].title,
+          extraCount: newlyReady.length - 1,
+        });
+      }
+      setSpeeches(fresh);
+      // Once everything settled, sync progress so drills/feedback counts
+      // reflect the finished analysis (one follow-up fetch, then silence).
+      if (!hasActiveSpeeches(fresh)) {
+        apiFetch<ProgressSummary>(`/users/${userId}/progress`)
+          .then(setProgress)
+          .catch(() => { /* keep last known progress */ });
+      }
+    } catch {
+      // Background refresh only — keep showing the last good data.
+    }
+  }, [userId]);
+
+  // Pause on hidden tabs; one immediate catch-up refetch when visibility
+  // returns (then normal polling resumes if rows are still active).
+  const refreshRef = useRef(refreshSpeeches);
+  useEffect(() => { refreshRef.current = refreshSpeeches; }, [refreshSpeeches]);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibility = () => {
+      const visible = document.visibilityState === "visible";
+      setTabVisible(visible);
+      if (visible && speechesRef.current.length > 0) {
+        refreshRef.current();
       }
     };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
-    const id = setInterval(tick, ACTIVE_POLL_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [pollActive, userId]);
+  const pollActive =
+    !loading && !err && userId !== null && shouldPollDashboard(speeches, tabVisible);
+  useEffect(() => {
+    if (!pollActive) return;
+    const id = setInterval(() => { refreshRef.current(); }, ACTIVE_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [pollActive]);
+
+  function dismissReadyNotice() {
+    if (readyNotice) dismissedReadyIds.current.add(readyNotice.speechId);
+    setReadyNotice(null);
+  }
+
+  // ── One-click retry (failed / stalled analyses) ────────────────────────────
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryErr, setRetryErr] = useState<{ speechId: string; message: string } | null>(null);
+
+  async function handleRetry(s: Speech) {
+    const jobId = getRetryJobId(s);
+    if (!jobId || !userId || retryingId) return;
+    setRetryingId(s.id);
+    setRetryErr(null);
+    try {
+      // Same endpoint the speech page uses — no parallel retry system.
+      await apiFetch(`/jobs/${jobId}/retry?user_id=${userId}`, { method: "POST" });
+      await refreshSpeeches(); // row flips to Preparing; active polling re-arms itself
+    } catch {
+      setRetryErr({ speechId: s.id, message: getRetryFailureMessage() });
+    } finally {
+      setRetryingId(null);
+    }
+  }
 
   async function handleDelete() {
     if (!del || !userId) return;
@@ -294,6 +388,40 @@ export default function DashboardPage() {
 
         {!loading && (
           <>
+            {/* 0. Report-ready handoff — appears only when a report finished
+                while the user was watching the dashboard. Dismissible. */}
+            {readyNotice && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-3 rounded-xl border border-ok/25 bg-ok/5 px-4 py-3"
+              >
+                <CheckCircle2 size={16} className="shrink-0 text-ok" aria-hidden="true" />
+                <p className="min-w-0 flex-1 text-sm text-ink">
+                  <span className="font-semibold">Report ready — open it.</span>{" "}
+                  <span className="text-ink-subtle">
+                    &ldquo;{readyNotice.title}&rdquo; finished analyzing
+                    {readyNotice.extraCount > 0 &&
+                      ` (+${readyNotice.extraCount} more ready)`}
+                    .
+                  </span>
+                </p>
+                <Button asChild size="sm" className="shrink-0 gap-1.5">
+                  <Link href={`/speech/${readyNotice.speechId}`}>
+                    Open report <ArrowRight size={11} aria-hidden="true" />
+                  </Link>
+                </Button>
+                <button
+                  type="button"
+                  onClick={dismissReadyNotice}
+                  aria-label="Dismiss report-ready notice"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+
             {/* 1. Next Best Action — dominant hero ───────────────────── */}
             <motion.div variants={child}>
               <NextActionPanel action={state.nextAction} />
@@ -303,7 +431,18 @@ export default function DashboardPage() {
             {latestPractice && (
               <motion.div variants={child}>
                 <section aria-label="Practice cockpit" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <LatestPracticeCard summary={latestPractice} />
+                  <LatestPracticeCard
+                    summary={latestPractice}
+                    onRetry={
+                      getDashboardRetryAction(latestPractice.speech).kind === "direct-retry"
+                        ? () => handleRetry(latestPractice.speech)
+                        : undefined
+                    }
+                    retrying={retryingId === latestPractice.speech.id}
+                    retryError={
+                      retryErr?.speechId === latestPractice.speech.id ? retryErr.message : null
+                    }
+                  />
                   <DrillHandoffCard handoff={drillHandoff} workout={latestWorkout} />
                 </section>
               </motion.div>
@@ -383,6 +522,9 @@ export default function DashboardPage() {
                   speeches={speeches}
                   onDelete={setDel}
                   autoUpdating={pollActive}
+                  onRetry={handleRetry}
+                  retryingId={retryingId}
+                  retryErr={retryErr}
                 />
               </motion.div>
             )}
@@ -610,10 +752,16 @@ function SpeechHistorySection({
   speeches,
   onDelete,
   autoUpdating,
+  onRetry,
+  retryingId,
+  retryErr,
 }: {
   speeches: Speech[];
   onDelete: (s: Speech) => void;
   autoUpdating: boolean;
+  onRetry: (s: Speech) => void;
+  retryingId: string | null;
+  retryErr: { speechId: string; message: string } | null;
 }) {
   return (
     <section aria-label="Speech history" className="flex flex-col gap-3">
@@ -640,7 +788,14 @@ function SpeechHistorySection({
       </div>
       <div className="flex flex-col gap-1.5">
         {speeches.map((s) => (
-          <SpeechCard key={s.id} s={s} onDelete={onDelete} />
+          <SpeechCard
+            key={s.id}
+            s={s}
+            onDelete={onDelete}
+            onRetry={onRetry}
+            retrying={retryingId === s.id}
+            retryError={retryErr?.speechId === s.id ? retryErr.message : null}
+          />
         ))}
       </div>
     </section>
