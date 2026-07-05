@@ -167,3 +167,23 @@ describe("getFriendlyJobError", () => {
     expect(getFriendlyJobError(undefined)).toContain("retry");
   });
 });
+
+describe("worker_lost error mapping (Phase 5D)", () => {
+  const helpers = jest.requireActual("@/lib/jobHelpers");
+
+  it("getFriendlyJobError maps worker_lost to the stalled-analysis copy", () => {
+    expect(helpers.getFriendlyJobError("worker_lost")).toBe(
+      "Analysis stopped before finishing. Your recording is saved. Try again to continue from the available data.",
+    );
+  });
+
+  it("getJobFailureMessage (speech page) maps worker_lost the same way", () => {
+    const job = {
+      error_code: "worker_lost",
+      error_message: "internal: heartbeat timeout",
+    } as unknown as import("@/types").AnalysisJob;
+    const msg = helpers.getJobFailureMessage(job);
+    expect(msg).toContain("Your recording is saved");
+    expect(msg).not.toContain("heartbeat");
+  });
+});

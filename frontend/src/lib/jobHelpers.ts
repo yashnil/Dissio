@@ -32,6 +32,9 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     "Feedback generation failed. This is usually a temporary error — retry.",
   speech_not_found: "Speech not found. It may have been deleted.",
   unexpected_error: "An unexpected error occurred. Please retry.",
+  // Backend-converged stale job (Phase 5D): the worker died mid-analysis.
+  worker_lost:
+    "Analysis stopped before finishing. Your recording is saved. Try again to continue from the available data.",
 };
 
 export function getJobFailureMessage(job: AnalysisJob): string {

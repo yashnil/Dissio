@@ -737,3 +737,74 @@ def test_list_speeches_response_includes_liveness_fields():
     assert summary["latest_job_updated_at"] == "2026-07-01T00:04:00Z"
     assert summary["latest_job_error_code"] is None
     assert summary["latest_job_error_message"] is None
+
+
+# ── Phase 5D: stale-job convergence in artifact summaries ────────────────────
+
+from datetime import datetime, timedelta, timezone
+
+
+def _job_ts(minutes_ago: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
+
+
+def _job_row(**over):
+    return {
+        "id": "cccccccc-0000-0000-0000-0000000000c1",
+        "speech_id": SPEECH_A,
+        "status": "running",
+        "current_step": "generating_feedback",
+        "error_code": None,
+        "error_message": None,
+        "created_at": _job_ts(40),
+        "updated_at": _job_ts(2),
+        **over,
+    }
+
+
+def test_artifact_summary_converges_stale_running_job():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}],
+        jobs=[_job_row(updated_at=_job_ts(30))],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "failed"
+    assert s["latest_job_error_code"] == "worker_lost"
+    assert "saved" in s["latest_job_error_message"]
+    assert s["latest_job_updated_at"] is not None
+    # Verified artifacts are untouched by convergence.
+    assert s["has_transcript"] is True
+
+
+def test_artifact_summary_leaves_fresh_running_job_healthy():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(jobs=[_job_row(updated_at=_job_ts(2))])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "running"
+    assert s["latest_job_current_step"] == "generating_feedback"
+    assert s["latest_job_error_code"] is None
+
+
+def test_artifact_summary_convergence_is_bounded_to_requested_speeches():
+    """A stale job belonging to an unrequested speech is ignored entirely."""
+    other_speech_stale = _job_row(
+        id="cccccccc-0000-0000-0000-0000000000c2",
+        speech_id="ffffffff-0000-0000-0000-000000000099",
+        updated_at=_job_ts(60),
+    )
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(jobs=[other_speech_stale])
+    result = build_artifact_summaries(sb, [SPEECH_A])
+    assert result[SPEECH_A]["latest_job_status"] is None
+    assert "ffffffff-0000-0000-0000-000000000099" not in result
+
+
+def test_artifact_summary_terminal_jobs_not_converged():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[_job_row(status="succeeded", updated_at=_job_ts(500))],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "succeeded"
+    assert s["latest_job_error_code"] is None

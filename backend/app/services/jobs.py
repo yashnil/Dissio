@@ -11,10 +11,102 @@ Status transitions:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Stale-job classification ──────────────────────────────────────────────────
+# update_job_progress touches updated_at at every pipeline stage (DB trigger),
+# and a normal analysis finishes in a few minutes. A queued/running job whose
+# row hasn't moved for this long means the worker died with it.
+STALE_JOB_THRESHOLD = timedelta(minutes=12)
+
+# Error identity for converged stale jobs. The message is user-safe — it is
+# shown verbatim by clients that don't map error codes.
+STALE_ERROR_CODE = "worker_lost"
+STALE_ERROR_MESSAGE = (
+    "Analysis stopped before finishing. Your recording is saved. "
+    "Try again to continue from the available data."
+)
+
+_ACTIVE_JOB_STATUSES = ("queued", "running")
+# Speech statuses that may be flipped to error when their job is converged.
+# done/error are terminal and must never be downgraded by convergence.
+_CONVERGIBLE_SPEECH_STATUSES = ["pending", "transcribing", "analyzing"]
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def is_job_stale(job: dict, now: datetime | None = None) -> bool:
+    """
+    True when a queued/running job's row hasn't moved past the stale threshold.
+
+    Uses updated_at, falling back to created_at. No timestamp → not stale
+    (never claim a worker died without evidence). Terminal statuses are never
+    stale.
+    """
+    if job.get("status") not in _ACTIVE_JOB_STATUSES:
+        return False
+    ts = _parse_ts(job.get("updated_at")) or _parse_ts(job.get("created_at"))
+    if ts is None:
+        return False
+    return (now or datetime.now(timezone.utc)) - ts > STALE_JOB_THRESHOLD
+
+
+def converge_stale_job(sb, job: dict, now: datetime | None = None) -> dict | None:
+    """
+    If the job is stale, mark it failed with the worker_lost error identity and
+    bring the owning speech's status in line — exactly what the pipeline does
+    on a real failure, so the existing retry flow (failed → queued) applies.
+
+    Touches only the job row and (guardedly) the speech status row. Never
+    touches transcripts, argument maps, feedback, drills, or audio, and never
+    downgrades a done/error speech. Returns the converged field overrides, or
+    None when the job wasn't stale. Best-effort: DB errors return None so
+    read paths keep serving the un-converged row.
+    """
+    if not is_job_stale(job, now):
+        return None
+    try:
+        fail_job(sb, job["id"], STALE_ERROR_MESSAGE, STALE_ERROR_CODE)
+        speech_id = job.get("speech_id")
+        if speech_id:
+            (
+                sb.table("speeches")
+                .update({"status": "error"})
+                .eq("id", speech_id)
+                .in_("status", _CONVERGIBLE_SPEECH_STATUSES)
+                .execute()
+            )
+        converged_at = (now or datetime.now(timezone.utc)).isoformat()
+        logger.info(
+            "converge_stale_job: job_id=%s speech_id=%s last_moved=%s",
+            job.get("id"), speech_id, job.get("updated_at") or job.get("created_at"),
+        )
+        return {
+            "status": "failed",
+            "error_code": STALE_ERROR_CODE,
+            "error_message": STALE_ERROR_MESSAGE,
+            "completed_at": converged_at,
+            "updated_at": converged_at,
+        }
+    except Exception as exc:
+        logger.warning(
+            "converge_stale_job: failed (non-fatal) | job_id=%s | %s",
+            job.get("id"), type(exc).__name__,
+        )
+        return None
 
 
 def create_job(

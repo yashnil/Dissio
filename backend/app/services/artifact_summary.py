@@ -16,6 +16,8 @@ Truthfulness contract:
 
 import logging
 
+from app.services.jobs import converge_stale_job, is_job_stale
+
 logger = logging.getLogger(__name__)
 
 # Tables whose presence defines the core artifact booleans.
@@ -104,7 +106,7 @@ def build_artifact_summaries(sb, speech_ids: list[str]) -> dict[str, dict]:
         res = (
             sb.table("analysis_jobs")
             .select(
-                "speech_id, status, current_step, error_code, error_message, "
+                "id, speech_id, status, current_step, error_code, error_message, "
                 "created_at, updated_at"
             )
             .in_("speech_id", speech_ids)
@@ -118,6 +120,13 @@ def build_artifact_summaries(sb, speech_ids: list[str]) -> dict[str, dict]:
             if sid not in summaries or sid in seen:
                 continue
             seen.add(sid)
+            # Opportunistic convergence, bounded to the requested speeches:
+            # a queued/running job that stopped moving is marked failed
+            # (worker_lost) so it stops looking healthy at the API level.
+            if is_job_stale(job):
+                converged = converge_stale_job(sb, job)
+                if converged:
+                    job = {**job, **converged}
             summaries[sid]["latest_job_status"] = job.get("status")
             summaries[sid]["latest_job_current_step"] = job.get("current_step")
             summaries[sid]["latest_job_error_code"] = job.get("error_code")

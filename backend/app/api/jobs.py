@@ -4,8 +4,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.models.job import AnalysisJobRow
 from app.services.jobs import (
+    converge_stale_job,
     create_job,
     get_job,
+    is_job_stale,
     list_jobs_for_speech,
     retry_job as _retry_job,
 )
@@ -14,6 +16,15 @@ from app.services.supabase_client import get_supabase
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["jobs"])
+
+
+def _converged(sb, job: dict) -> dict:
+    """Opportunistically converge a stale job on read (bounded to this row)."""
+    if is_job_stale(job):
+        overrides = converge_stale_job(sb, job)
+        if overrides:
+            return {**job, **overrides}
+    return job
 
 
 @router.get("/jobs/{job_id}", response_model=AnalysisJobRow)
@@ -26,7 +37,7 @@ async def get_job_endpoint(job_id: str, user_id: str = Query(...)) -> AnalysisJo
         raise HTTPException(status_code=500, detail="Failed to fetch job") from exc
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job
+    return _converged(sb, job)
 
 
 @router.get("/speeches/{speech_id}/jobs", response_model=list[AnalysisJobRow])
@@ -37,9 +48,12 @@ async def list_speech_jobs(
     """List analysis jobs for a speech, newest first. Used for recovery on page load."""
     sb = get_supabase()
     try:
-        return list_jobs_for_speech(sb, speech_id, user_id)
+        jobs = list_jobs_for_speech(sb, speech_id, user_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to fetch jobs") from exc
+    # Converge stale rows so page-load recovery sees a retryable failed job
+    # instead of a phantom in-progress one.
+    return [_converged(sb, j) for j in jobs]
 
 
 @router.post("/jobs/{job_id}/retry", response_model=AnalysisJobRow)

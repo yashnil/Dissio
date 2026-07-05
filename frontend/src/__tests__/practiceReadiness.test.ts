@@ -622,3 +622,72 @@ describe("getLatestPracticeSummary — readiness transitions (polling updates)",
     expect(after.ctaLabel).toBe("Open & retry");
   });
 });
+
+// ── Phase 5D: backend-converged worker_lost jobs ─────────────────────────────
+
+describe("getSpeechListReadiness — backend-converged stale jobs", () => {
+  const workerLost = summary({
+    has_transcript: true,
+    latest_job_status: "failed",
+    latest_job_error_code: "worker_lost",
+    latest_job_error_message:
+      "Analysis stopped before finishing. Your recording is saved. Try again to continue from the available data.",
+    latest_job_updated_at: FRESH_TS,
+  });
+
+  it("converged worker_lost job renders Needs retry with the stalled-analysis copy", () => {
+    const r = getSpeechListReadiness(speech({ status: "error", artifact_summary: workerLost }), NOW);
+    expect(r.key).toBe("needs-retry");
+    expect(r.tone).toBe("red");
+    expect(r.detail).toBe(
+      "Analysis stopped before finishing. Your recording is saved. Try again to continue from the available data.",
+    );
+  });
+
+  it("converged job wins even when speech.status hasn't caught up yet", () => {
+    // Convergence updates the job first; the list row may still say analyzing.
+    const r = getSpeechListReadiness(speech({ status: "analyzing", artifact_summary: workerLost }), NOW);
+    expect(r.key).toBe("needs-retry");
+  });
+
+  it("a converged worker_lost row is inactive — polling stops", () => {
+    expect(isSpeechActive(speech({ status: "analyzing", artifact_summary: workerLost }), NOW)).toBe(false);
+  });
+
+  it("frontend stale fallback still applies when the backend has not converged", () => {
+    const notConverged = summary({ latest_job_status: "running", latest_job_updated_at: STALE_TS });
+    const r = getSpeechListReadiness(speech({ status: "analyzing", artifact_summary: notConverged }), NOW);
+    expect(r.key).toBe("stale");
+    expect(r.label).toBe("Taking longer than expected");
+  });
+
+  it("a ready speech with a verified ballot is never downgraded by an old worker_lost job", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "done",
+      artifact_summary: summary({
+        has_transcript: true, has_flow: true, has_ballot: true,
+        latest_job_status: "failed", latest_job_error_code: "worker_lost",
+      }),
+    }), NOW);
+    expect(r.key).toBe("ready");
+    expect(r.tone).toBe("green");
+  });
+});
+
+describe("getLatestPracticeSummary — stalled analysis (worker_lost)", () => {
+  it("shows the stalled explanation and a Retry analysis CTA", () => {
+    const s = getLatestPracticeSummary([speech({
+      status: "error",
+      artifact_summary: summary({
+        has_transcript: true,
+        latest_job_status: "failed",
+        latest_job_error_code: "worker_lost",
+      }),
+    })], NOW)!;
+    expect(s.readiness.tone).toBe("red");
+    expect(s.readiness.detail).toContain("Your recording is saved");
+    expect(s.ctaLabel).toBe("Retry analysis");
+    // The saved transcript is still shown as present — nothing was lost.
+    expect(s.pipeline.find((p) => p.key === "transcript")!.done).toBe(true);
+  });
+});

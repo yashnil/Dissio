@@ -407,3 +407,158 @@ class TestRetryJobEndpoint:
             r = client.post(f"/jobs/{JOB_ID}/retry?user_id={USER_ID}")
         assert r.status_code == 400
         assert "only failed jobs" in r.json()["detail"]
+
+
+# ── Phase 5D: stale-job classification + convergence ─────────────────────────
+
+from datetime import datetime, timedelta, timezone
+
+
+def _ts(minutes_ago: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
+
+
+class TestIsJobStale:
+    def test_fresh_running_job_is_not_stale(self):
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(2)}
+        assert job_svc.is_job_stale(job) is False
+
+    def test_running_job_past_threshold_is_stale(self):
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        assert job_svc.is_job_stale(job) is True
+
+    def test_queued_job_past_threshold_is_stale(self):
+        job = {**FAKE_JOB, "status": "queued", "updated_at": _ts(30)}
+        assert job_svc.is_job_stale(job) is True
+
+    def test_falls_back_to_created_at_when_updated_at_missing(self):
+        job = {**FAKE_JOB, "status": "running", "updated_at": None, "created_at": _ts(30)}
+        assert job_svc.is_job_stale(job) is True
+
+    def test_no_timestamps_is_never_stale(self):
+        job = {**FAKE_JOB, "status": "running", "updated_at": None, "created_at": None}
+        assert job_svc.is_job_stale(job) is False
+
+    def test_invalid_timestamp_is_never_stale(self):
+        job = {**FAKE_JOB, "status": "running", "updated_at": "not-a-date", "created_at": None}
+        assert job_svc.is_job_stale(job) is False
+
+    def test_terminal_statuses_are_never_stale(self):
+        for status in ("succeeded", "failed", "cancelled"):
+            job = {**FAKE_JOB, "status": status, "updated_at": _ts(120)}
+            assert job_svc.is_job_stale(job) is False, status
+
+    def test_threshold_is_conservative(self):
+        assert job_svc.STALE_JOB_THRESHOLD >= timedelta(minutes=12)
+
+
+class TestConvergeStaleJob:
+    def _recording_sb(self):
+        """Mock supabase that records which tables receive update() payloads."""
+        sb = MagicMock()
+        writes: list[tuple[str, dict]] = []
+
+        def table_fn(name):
+            t = MagicMock()
+            for m in ("eq", "in_", "limit", "order", "select"):
+                getattr(t, m).return_value = t
+
+            def update_fn(payload, _name=name):
+                writes.append((_name, payload))
+                return t
+
+            t.update = update_fn
+            t.execute.return_value = MagicMock(data=[{}])
+            return t
+
+        sb.table = table_fn
+        return sb, writes
+
+    def test_converges_stale_job_to_failed_worker_lost(self):
+        sb, writes = self._recording_sb()
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        result = job_svc.converge_stale_job(sb, job)
+
+        assert result is not None
+        assert result["status"] == "failed"
+        assert result["error_code"] == job_svc.STALE_ERROR_CODE == "worker_lost"
+        assert "saved" in result["error_message"]
+
+        job_writes = [p for (t, p) in writes if t == "analysis_jobs"]
+        assert len(job_writes) == 1
+        assert job_writes[0]["status"] == "failed"
+        assert job_writes[0]["error_code"] == "worker_lost"
+        assert "Traceback" not in job_writes[0]["error_message"]
+
+    def test_flips_speech_status_but_touches_no_artifact_tables(self):
+        sb, writes = self._recording_sb()
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        job_svc.converge_stale_job(sb, job)
+
+        touched = {t for (t, _) in writes}
+        assert touched == {"analysis_jobs", "speeches"}
+        # Artifacts are preserved — no writes to any artifact table.
+        for artifact_table in ("transcripts", "argument_maps", "feedback_reports", "drills"):
+            assert artifact_table not in touched
+        speech_writes = [p for (t, p) in writes if t == "speeches"]
+        assert speech_writes == [{"status": "error"}]
+
+    def test_fresh_job_is_not_converged_and_nothing_is_written(self):
+        sb, writes = self._recording_sb()
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(1)}
+        assert job_svc.converge_stale_job(sb, job) is None
+        assert writes == []
+
+    def test_terminal_job_is_never_converged(self):
+        sb, writes = self._recording_sb()
+        job = {**FAKE_JOB, "status": "failed", "updated_at": _ts(120)}
+        assert job_svc.converge_stale_job(sb, job) is None
+        assert writes == []
+
+    def test_db_error_returns_none(self):
+        sb = MagicMock()
+        sb.table.return_value.update.side_effect = Exception("db down")
+        job = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        assert job_svc.converge_stale_job(sb, job) is None
+
+
+class TestStaleConvergenceEndpoints:
+    def test_get_job_converges_stale_running_job(self):
+        stale = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        with patch("app.api.jobs.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _make_table_fn(jobs_data=[stale])
+            r = client.get(f"/jobs/{JOB_ID}?user_id={USER_ID}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "failed"
+        assert body["error_code"] == "worker_lost"
+
+    def test_get_job_leaves_fresh_running_job_alone(self):
+        fresh = {**FAKE_JOB, "status": "running", "updated_at": _ts(1)}
+        with patch("app.api.jobs.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _make_table_fn(jobs_data=[fresh])
+            r = client.get(f"/jobs/{JOB_ID}?user_id={USER_ID}")
+        assert r.status_code == 200
+        assert r.json()["status"] == "running"
+
+    def test_speech_jobs_list_converges_stale_rows(self):
+        stale = {**FAKE_JOB, "status": "running", "updated_at": _ts(30)}
+        with patch("app.api.jobs.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _make_table_fn(jobs_data=[stale])
+            r = client.get(f"/speeches/{SPEECH_ID}/jobs?user_id={USER_ID}")
+        assert r.status_code == 200
+        assert r.json()[0]["status"] == "failed"
+        assert r.json()[0]["error_code"] == "worker_lost"
+
+    def test_retry_flow_requeues_after_worker_lost(self):
+        """A converged worker_lost job is failed, so the existing retry applies."""
+        failed = {**FAKE_JOB, "status": "failed", "error_code": "worker_lost"}
+        sb = MagicMock()
+        get_res = MagicMock(data=[failed])
+        upd_res = MagicMock(data=[{**failed, "status": "queued", "error_code": None,
+                                   "error_message": None, "attempt_count": 2}])
+        sb.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = get_res
+        sb.table.return_value.update.return_value.eq.return_value.execute.return_value = upd_res
+        result = job_svc.retry_job(sb, JOB_ID, USER_ID)
+        assert result["status"] == "queued"
+        assert result["attempt_count"] == 2
