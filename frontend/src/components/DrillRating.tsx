@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { CheckCircle2, ThumbsUp, Minus, ThumbsDown } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { DrillRating as DrillRatingType, DrillRatingRow } from "@/types";
 
 interface Props {
@@ -21,7 +22,7 @@ interface Props {
 const OPTIONS: Array<{
   value: DrillRatingType;
   label: string;
-  icon: React.ElementType;
+  icon: LucideIcon;
   activeClass: string;
 }> = [
   { value: "helpful",     label: "Yes",       icon: ThumbsUp,   activeClass: "border-ok/40 bg-ok/10 text-ok" },

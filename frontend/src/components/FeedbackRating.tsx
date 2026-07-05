@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { ThumbsUp, Minus, ThumbsDown, CheckCircle2 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { FeedbackRating as FeedbackRatingType } from "@/types";
 
 interface Props {
@@ -20,7 +21,7 @@ interface Props {
 const OPTIONS: Array<{
   value: FeedbackRatingType;
   label: string;
-  icon: React.ElementType;
+  icon: LucideIcon;
   activeClass: string;
 }> = [
   { value: "helpful",     label: "Helpful",     icon: ThumbsUp,   activeClass: "border-ok/40 bg-ok/10 text-ok" },

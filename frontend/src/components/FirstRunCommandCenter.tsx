@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRight, FileText, FlaskConical, Mic } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { logEvent } from "@/lib/analytics";
 import { fadeUp } from "@/lib/motion";
@@ -44,7 +45,7 @@ function PathCard({
   primary,
   onClick,
 }: {
-  icon: React.ElementType;
+  icon: LucideIcon;
   title: string;
   description: string;
   ctaLabel: string;
