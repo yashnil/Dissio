@@ -21,6 +21,25 @@ class SpeechUpdateRequest(BaseModel):
     duration_seconds: Optional[int] = None
 
 
+class SpeechArtifactSummary(BaseModel):
+    """
+    Lightweight, backend-verified artifact presence for a speech.
+
+    Booleans reflect persisted rows (never speech.status). drill_count and
+    the latest_job_* fields are null when that data couldn't be looked up —
+    clients must treat null as unknown, not as absent/failed.
+    """
+
+    has_transcript: bool = False
+    has_flow: bool = False
+    has_ballot: bool = False
+    has_feedback: bool = False
+    drill_count: Optional[int] = None
+    latest_job_status: Optional[str] = None
+    latest_job_current_step: Optional[str] = None
+    latest_job_error: Optional[str] = None
+
+
 class SpeechRow(BaseModel):
     id: str
     user_id: str
@@ -37,3 +56,6 @@ class SpeechRow(BaseModel):
     # Re-record relationship (nullable — absent on older rows)
     parent_speech_id: Optional[str] = None
     source_drill_id: Optional[str] = None
+    # Verified artifact summary — only populated when the list endpoint is
+    # called with include_artifacts=true; null otherwise (backward compatible).
+    artifact_summary: Optional[SpeechArtifactSummary] = None

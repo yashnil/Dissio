@@ -421,3 +421,240 @@ def test_comparison_summary_helpers():
     assert "great" in _derive_next_action(8).lower()
     assert "keep" in _derive_next_action(2).lower()
     assert "another" in _derive_next_action(-1).lower() or "record" in _derive_next_action(-1).lower()
+
+
+# ── Artifact summary (Phase 5B: backend-verified readiness) ──────────────────
+
+from app.services.artifact_summary import build_artifact_summaries
+
+SPEECH_A = "aaaaaaaa-1111-0000-0000-000000000001"
+SPEECH_B = "aaaaaaaa-1111-0000-0000-000000000002"
+
+
+def _artifact_table_fn(
+    transcripts=None,
+    argument_maps=None,
+    feedback_reports=None,
+    drills=None,
+    jobs=None,
+    fail_tables=(),
+):
+    """table() factory for artifact-summary queries (supports .in_ chains)."""
+    data_by_table = {
+        "transcripts": transcripts or [],
+        "argument_maps": argument_maps or [],
+        "feedback_reports": feedback_reports or [],
+        "drills": drills or [],
+        "analysis_jobs": jobs or [],
+    }
+
+    def table_fn(name):
+        t = MagicMock()
+        for method in ("select", "insert", "update", "eq", "in_", "limit", "order"):
+            getattr(t, method).return_value = t
+
+        def execute_fn(_name=name):
+            if _name in fail_tables:
+                raise Exception("db error")
+            r = MagicMock()
+            r.data = data_by_table.get(_name, [])
+            return r
+
+        t.execute = execute_fn
+        return t
+
+    return table_fn
+
+
+def test_artifact_summary_transcript_only():
+    """Transcript exists but no report → transcript true, flow/ballot false."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(transcripts=[{"speech_id": SPEECH_A}])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["has_transcript"] is True
+    assert s["has_flow"] is False
+    assert s["has_ballot"] is False
+    assert s["has_feedback"] is False
+    assert s["drill_count"] == 0
+
+
+def test_artifact_summary_complete_report():
+    """Transcript + flow + ballot + drills → all artifact flags true."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}],
+        argument_maps=[{"speech_id": SPEECH_A}],
+        feedback_reports=[{"speech_id": SPEECH_A}],
+        drills=[{"speech_id": SPEECH_A}, {"speech_id": SPEECH_A}, {"speech_id": SPEECH_A}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["has_transcript"] is True
+    assert s["has_flow"] is True
+    assert s["has_ballot"] is True
+    assert s["has_feedback"] is True
+    assert s["drill_count"] == 3
+
+
+def test_artifact_summary_missing_ballot_not_ready():
+    """Flow present but ballot missing → has_ballot stays false."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}],
+        argument_maps=[{"speech_id": SPEECH_A}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["has_flow"] is True
+    assert s["has_ballot"] is False
+
+
+def test_artifact_summary_latest_running_job_exposes_current_step():
+    """Newest job wins; its status and current_step are exposed."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[
+            # newest first (endpoint orders created_at desc)
+            {"speech_id": SPEECH_A, "status": "running", "current_step": "generating_feedback",
+             "error_code": None, "error_message": None, "created_at": "2026-07-02T00:00:00Z"},
+            {"speech_id": SPEECH_A, "status": "failed", "current_step": "transcribing",
+             "error_code": "transcription_failed", "error_message": "boom",
+             "created_at": "2026-07-01T00:00:00Z"},
+        ],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "running"
+    assert s["latest_job_current_step"] == "generating_feedback"
+    assert s["latest_job_error"] is None
+
+
+def test_artifact_summary_failed_job_exposes_error():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[{"speech_id": SPEECH_A, "status": "failed", "current_step": "transcribing",
+               "error_code": "transcription_failed", "error_message": "Audio unreadable",
+               "created_at": "2026-07-01T00:00:00Z"}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_status"] == "failed"
+    assert s["latest_job_error"] == "Audio unreadable"
+
+
+def test_artifact_summary_legacy_row_safe_defaults():
+    """A legacy speech with no artifacts/jobs returns safe false/0/null values."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn()
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["has_transcript"] is False
+    assert s["has_flow"] is False
+    assert s["has_ballot"] is False
+    assert s["drill_count"] == 0
+    assert s["latest_job_status"] is None
+    assert s["latest_job_current_step"] is None
+    assert s["latest_job_error"] is None
+
+
+def test_artifact_summary_core_query_failure_returns_no_summaries():
+    """A failed core artifact query returns {} — never wrong False booleans."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}],
+        fail_tables=("feedback_reports",),
+    )
+    assert build_artifact_summaries(sb, [SPEECH_A]) == {}
+
+
+def test_artifact_summary_drills_failure_nulls_count_only():
+    """Drills lookup failure nulls drill_count instead of guessing 0."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}],
+        feedback_reports=[{"speech_id": SPEECH_A}],
+        fail_tables=("drills",),
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["has_ballot"] is True
+    assert s["drill_count"] is None
+
+
+def test_artifact_summary_batches_multiple_speeches():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        transcripts=[{"speech_id": SPEECH_A}, {"speech_id": SPEECH_B}],
+        feedback_reports=[{"speech_id": SPEECH_A}],
+        drills=[{"speech_id": SPEECH_B}],
+    )
+    result = build_artifact_summaries(sb, [SPEECH_A, SPEECH_B])
+    assert result[SPEECH_A]["has_ballot"] is True
+    assert result[SPEECH_B]["has_ballot"] is False
+    assert result[SPEECH_B]["has_transcript"] is True
+    assert result[SPEECH_A]["drill_count"] == 0
+    assert result[SPEECH_B]["drill_count"] == 1
+
+
+def test_artifact_summary_empty_speech_ids():
+    assert build_artifact_summaries(MagicMock(), []) == {}
+
+
+# ── List endpoint: include_artifacts wiring ───────────────────────────────────
+
+def _list_endpoint_table_fn(speech_rows, **artifact_kwargs):
+    """table() factory covering both the speeches query and artifact queries."""
+    artifact_fn = _artifact_table_fn(**artifact_kwargs)
+
+    def table_fn(name):
+        if name == "speeches":
+            t = MagicMock()
+            t.select.return_value.eq.return_value.order.return_value.execute.return_value.data = speech_rows
+            return t
+        return artifact_fn(name)
+
+    return table_fn
+
+
+def test_list_speeches_without_include_artifacts_keeps_shape():
+    """Default list response has artifact_summary null (backward compatible)."""
+    mock_client = MagicMock()
+    mock_client.table = _list_endpoint_table_fn([dict(FAKE_ROW)])
+    with patch("app.api.speeches.get_supabase", return_value=mock_client):
+        response = client.get(f"/speeches?user_id={FAKE_ROW['user_id']}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["id"] == FAKE_ROW["id"]
+    assert body[0]["artifact_summary"] is None
+
+
+def test_list_speeches_include_artifacts_attaches_summary():
+    mock_client = MagicMock()
+    mock_client.table = _list_endpoint_table_fn(
+        [dict(FAKE_ROW)],
+        transcripts=[{"speech_id": FAKE_ROW["id"]}],
+        feedback_reports=[{"speech_id": FAKE_ROW["id"]}],
+        jobs=[{"speech_id": FAKE_ROW["id"], "status": "running",
+               "current_step": "generating_drills", "error_code": None,
+               "error_message": None, "created_at": "2026-07-01T00:00:00Z"}],
+    )
+    with patch("app.api.speeches.get_supabase", return_value=mock_client):
+        response = client.get(
+            f"/speeches?user_id={FAKE_ROW['user_id']}&include_artifacts=true"
+        )
+    assert response.status_code == 200
+    summary = response.json()[0]["artifact_summary"]
+    assert summary["has_transcript"] is True
+    assert summary["has_ballot"] is True
+    assert summary["has_flow"] is False
+    assert summary["latest_job_status"] == "running"
+    assert summary["latest_job_current_step"] == "generating_drills"
+
+
+def test_list_speeches_include_artifacts_survives_summary_failure():
+    """Artifact lookup failure must not break the list response."""
+    mock_client = MagicMock()
+    mock_client.table = _list_endpoint_table_fn(
+        [dict(FAKE_ROW)],
+        fail_tables=("transcripts", "argument_maps", "feedback_reports"),
+    )
+    with patch("app.api.speeches.get_supabase", return_value=mock_client):
+        response = client.get(
+            f"/speeches?user_id={FAKE_ROW['user_id']}&include_artifacts=true"
+        )
+    assert response.status_code == 200
+    assert response.json()[0]["artifact_summary"] is None

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Mic, ArrowRight, Check, Circle } from "lucide-react";
+import { Mic, ArrowRight, Check, Circle, Minus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,12 +55,16 @@ export default function LatestPracticeCard({ summary }: { summary: LatestPractic
             <li key={step.key} className="flex items-center gap-1 text-xs">
               {step.done ? (
                 <Check size={11} className="text-ok" aria-hidden="true" />
+              ) : step.unknown ? (
+                <Minus size={9} className="text-ink-faint" aria-hidden="true" />
               ) : (
                 <Circle size={7} className="text-ink-faint" aria-hidden="true" />
               )}
               <span className={step.done ? "text-ink-subtle" : "text-ink-faint"}>
                 {step.label}
-                <span className="sr-only">{step.done ? " ready" : " not ready"}</span>
+                <span className="sr-only">
+                  {step.unknown ? " status unknown" : step.done ? " ready" : " not ready"}
+                </span>
               </span>
             </li>
           ))}

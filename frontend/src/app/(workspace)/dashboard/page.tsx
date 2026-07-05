@@ -30,7 +30,7 @@ import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { deriveDashboardState } from "@/lib/dashboardModel";
 import { getDrillHandoff } from "@/lib/dashboardHelpers";
 import {
-  mapSpeechStatusToDisplay,
+  getSpeechListReadiness,
   getPipelineProgress,
   getLatestPracticeSummary,
 } from "@/lib/practiceReadiness";
@@ -65,13 +65,13 @@ function fmtPercent(val: number | null) {
 // ── Speech card ───────────────────────────────────────────────────────────────
 
 function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void }) {
-  const badge = mapSpeechStatusToDisplay(s.status, s.audio_url);
+  const badge = getSpeechListReadiness(s);
   const pipeline = getPipelineProgress(s);
   const accentBorder =
-    s.status === "done"           ? "border-l-ok/60"
-    : s.status === "error"        ? "border-l-danger/60"
-    : s.status === "analyzing"    ? "border-l-warn/60"
-    : s.status === "transcribing" ? "border-l-lav/40"
+    badge.tone === "green"        ? "border-l-ok/60"
+    : badge.tone === "red"        ? "border-l-danger/60"
+    : badge.badge === "indigo"    ? "border-l-lav/40"
+    : badge.tone === "amber"      ? "border-l-warn/60"
     : "border-l-hairline";
 
   return (
@@ -95,7 +95,7 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
               {pipeline.map((step, i, arr) => (
                 <div key={step.key} className="flex items-center gap-0.5">
                   <div
-                    title={`${step.label}${step.done ? " ready" : " not ready"}`}
+                    title={`${step.label}${step.unknown ? " — unknown" : step.done ? " ready" : " not ready"}`}
                     className={`h-1.5 rounded-full transition-colors ${step.done ? "w-5 bg-lav" : "w-3 bg-hairline"}`}
                   />
                   {i < arr.length - 1 && <div className="h-px w-0.5 bg-hairline" />}
@@ -167,7 +167,9 @@ export default function DashboardPage() {
         setUserId(data.user.id);
 
         const [speechesData, progressData] = await Promise.all([
-          apiFetch<Speech[]>(`/speeches?user_id=${data.user.id}`),
+          // include_artifacts adds backend-verified readiness per row (batched
+          // server-side — no extra frontend requests).
+          apiFetch<Speech[]>(`/speeches?user_id=${data.user.id}&include_artifacts=true`),
           apiFetch<ProgressSummary>(`/users/${data.user.id}/progress`),
         ]);
         setSpeeches(speechesData);

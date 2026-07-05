@@ -226,3 +226,189 @@ describe("getProcessingDisplayState", () => {
     expect(r.tone).toBe("neutral");
   });
 });
+
+// ── Phase 5B: backend-verified artifact_summary ──────────────────────────────
+
+import {
+  getSpeechListReadiness,
+  summaryToAvailability,
+} from "@/lib/practiceReadiness";
+import type { SpeechArtifactSummary } from "@/types";
+
+function summary(over: Partial<SpeechArtifactSummary> = {}): SpeechArtifactSummary {
+  return {
+    has_transcript: false,
+    has_flow: false,
+    has_ballot: false,
+    has_feedback: false,
+    drill_count: 0,
+    latest_job_status: null,
+    latest_job_current_step: null,
+    latest_job_error: null,
+    ...over,
+  };
+}
+
+describe("getSpeechListReadiness — prefers artifact_summary over status", () => {
+  it("done + verified ballot → Ready (the only green)", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true, has_flow: true, has_ballot: true }),
+    }));
+    expect(r.key).toBe("ready");
+    expect(r.tone).toBe("green");
+    expect(r.isReportActionable).toBe(true);
+  });
+
+  it("done WITHOUT verified ballot → Partial report, never Ready", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true, has_flow: true, has_ballot: false }),
+    }));
+    expect(r.key).toBe("partial-report");
+    expect(r.tone).toBe("amber");
+    expect(r.isReportActionable).toBe(false);
+  });
+
+  it("transcript-only summary → Transcript ready, analysis pending (even when status says done)", () => {
+    // Legacy transcribe/paste path marks speeches done after saving only a transcript.
+    const r = getSpeechListReadiness(speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true }),
+    }));
+    expect(r.key).toBe("transcript-pending-analysis");
+    expect(r.label).toBe("Transcript ready, analysis pending");
+  });
+
+  it("running job with current_step → specific live stage, not generic Analyzing", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        has_transcript: true,
+        latest_job_status: "running",
+        latest_job_current_step: "generating_feedback",
+      }),
+    }));
+    expect(r.key).toBe("processing");
+    expect(r.label).toBe("Generating ballot");
+    expect(r.tone).toBe("amber");
+    expect(r.isProcessing).toBe(true);
+  });
+
+  it("each known current_step maps to its debate-native stage label", () => {
+    const cases: Array<[string, string]> = [
+      ["transcribing", "Transcribing"],
+      ["extracting_flow", "Analyzing arguments"],
+      ["generating_feedback", "Generating ballot"],
+      ["generating_drills", "Creating drills"],
+      ["finalizing", "Validating"],
+    ];
+    for (const [step, label] of cases) {
+      const r = getSpeechListReadiness(speech({
+        status: "analyzing",
+        artifact_summary: summary({ latest_job_status: "running", latest_job_current_step: step }),
+      }));
+      expect(r.label).toBe(label);
+    }
+  });
+
+  it("queued job → Preparing (amber)", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "pending",
+      audio_url: "http://x/a.mp3",
+      artifact_summary: summary({ latest_job_status: "queued" }),
+    }));
+    expect(r.label).toBe("Preparing");
+    expect(r.tone).toBe("amber");
+  });
+
+  it("failed latest job → Needs retry (red), even when status is stale", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        has_transcript: true,
+        latest_job_status: "failed",
+        latest_job_error: "Model timeout",
+      }),
+    }));
+    expect(r.key).toBe("needs-retry");
+    expect(r.tone).toBe("red");
+  });
+
+  it("done + ballot wins over an old failed job (report is genuinely ready)", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "done",
+      artifact_summary: summary({
+        has_transcript: true, has_flow: true, has_ballot: true,
+        latest_job_status: "failed",
+      }),
+    }));
+    expect(r.key).toBe("ready");
+  });
+
+  it("missing artifact_summary → conservative Phase 5A status fallback", () => {
+    expect(getSpeechListReadiness(speech({ status: "done", artifact_summary: null })).label).toBe("Ready");
+    expect(getSpeechListReadiness(speech({ status: "error" })).label).toBe("Needs retry");
+    expect(getSpeechListReadiness(speech({ status: "analyzing" })).label).toBe("Analyzing arguments");
+  });
+});
+
+describe("summaryToAvailability", () => {
+  it("maps booleans and treats null drill_count as no drills", () => {
+    expect(summaryToAvailability(summary({ has_ballot: true, drill_count: null }))).toEqual({
+      hasTranscript: false, hasFlow: false, hasBallot: true, hasDrills: false,
+    });
+    expect(summaryToAvailability(summary({ drill_count: 2 })).hasDrills).toBe(true);
+  });
+});
+
+describe("getPipelineProgress — with artifact_summary", () => {
+  it("uses verified artifact booleans and a real drill count", () => {
+    const steps = getPipelineProgress(speech({
+      status: "analyzing",
+      artifact_summary: summary({ has_transcript: true, has_flow: true, drill_count: 3 }),
+    }));
+    expect(steps.map((s) => [s.key, s.done])).toEqual([
+      ["audio", false],
+      ["transcript", true],
+      ["flow", true],
+      ["ballot", false],
+      ["drills", true],
+    ]);
+  });
+
+  it("null drill_count → drills step is unknown, not failed", () => {
+    const steps = getPipelineProgress(speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true, has_ballot: true, drill_count: null }),
+    }));
+    const drills = steps.find((s) => s.key === "drills")!;
+    expect(drills.unknown).toBe(true);
+    expect(drills.done).toBe(false);
+  });
+
+  it("without a summary keeps the Phase 5A status-contract steps (no drills step)", () => {
+    const steps = getPipelineProgress(speech({ status: "done", artifact_summary: null }));
+    expect(steps.map((s) => s.key)).toEqual(["audio", "transcript", "flow", "ballot"]);
+  });
+});
+
+describe("getLatestPracticeSummary — with artifact_summary", () => {
+  it("done without verified ballot → Review report CTA (not Open report)", () => {
+    const s = getLatestPracticeSummary([speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true, has_flow: true }),
+    })])!;
+    expect(s.readiness.key).toBe("partial-report");
+    expect(s.ctaLabel).toBe("Review report");
+  });
+
+  it("live processing stage → Check progress CTA with the real stage label", () => {
+    const s = getLatestPracticeSummary([speech({
+      status: "analyzing",
+      artifact_summary: summary({ latest_job_status: "running", latest_job_current_step: "generating_drills" }),
+    })])!;
+    expect(s.readiness.label).toBe("Creating drills");
+    expect(s.ctaLabel).toBe("Check progress");
+  });
+});

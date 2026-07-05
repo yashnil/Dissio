@@ -16,7 +16,7 @@
  *     the artifacts that make the report actionable.
  */
 
-import type { AnalysisJob, Speech, SpeechStatus } from "@/types";
+import type { AnalysisJob, Speech, SpeechArtifactSummary, SpeechStatus } from "@/types";
 
 // ── Display model ─────────────────────────────────────────────────────────────
 
@@ -28,6 +28,8 @@ export type ReadinessKey =
   | "transcript-pending-analysis"
   | "transcribing"
   | "analyzing"
+  /** Live job stage from artifact_summary (label carries the real stage). */
+  | "processing"
   | "ready"
   | "partial-report"
   | "needs-retry"
@@ -127,26 +129,110 @@ export function isReportActionable(
   return speech.status === "done" && artifacts.hasBallot;
 }
 
-// ── Truthful pipeline progress (list rows) ────────────────────────────────────
+// ── Backend-verified list readiness (artifact_summary) ───────────────────────
 
-export interface PipelineStepProgress {
-  key: "audio" | "transcript" | "flow" | "ballot";
-  label: string;
-  done: boolean;
+/** Adapt a backend artifact summary to the local availability shape. */
+export function summaryToAvailability(s: SpeechArtifactSummary): ArtifactAvailability {
+  return {
+    hasTranscript: s.has_transcript,
+    hasFlow: s.has_flow,
+    hasBallot: s.has_ballot,
+    hasDrills: (s.drill_count ?? 0) > 0,
+  };
+}
+
+function summaryJob(s: SpeechArtifactSummary): Pick<AnalysisJob, "status" | "current_step"> | null {
+  if (!s.latest_job_status) return null;
+  return {
+    status: s.latest_job_status as AnalysisJob["status"],
+    current_step: s.latest_job_current_step,
+  };
 }
 
 /**
- * What we can truthfully claim from a Speech row alone. Transcription completes
- * before `analyzing`; flow and ballot are only guaranteed at `done`. Drills are
- * never claimable from status (non-fatal step) so they are not listed.
+ * Readiness for a list/dashboard row. Prefers the backend-verified
+ * artifact_summary when present; falls back to the status-contract mapping
+ * (Phase 5A behavior) when it isn't.
+ *
+ * Priority with a summary:
+ *   1. done + verified ballot            → Ready (the only green)
+ *   2. queued/running job                → live processing stage (amber)
+ *   3. failed job or error status        → Needs retry (red)
+ *   4. transcript only, nothing else     → Transcript ready, analysis pending
+ *   5. anything done without a ballot,
+ *      or flow without a ballot          → Partial report (amber)
+ *   6. otherwise                         → status mapping with verified artifacts
+ */
+export function getSpeechListReadiness(
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+): PracticeReadiness {
+  const sum = speech.artifact_summary;
+  if (!sum) return getPracticeReadinessStatus(speech);
+
+  if (speech.status === "done" && sum.has_ballot) {
+    return readiness("ready", "Ready", "green", { isReportActionable: true });
+  }
+
+  const job = summaryJob(sum);
+  if (job && (job.status === "queued" || job.status === "running")) {
+    const stage = getProcessingDisplayState(job);
+    return readiness("processing", stage.label, "amber", { isProcessing: true });
+  }
+
+  if (speech.status === "error" || job?.status === "failed") {
+    return readiness("needs-retry", "Needs retry", "red");
+  }
+
+  if (sum.has_transcript && !sum.has_flow && !sum.has_ballot) {
+    return readiness("transcript-pending-analysis", "Transcript ready, analysis pending", "amber");
+  }
+
+  if ((speech.status === "done" || sum.has_flow) && !sum.has_ballot) {
+    return readiness("partial-report", "Partial report", "amber");
+  }
+
+  return getPracticeReadinessStatus(speech, summaryToAvailability(sum));
+}
+
+// ── Truthful pipeline progress (list rows) ────────────────────────────────────
+
+export interface PipelineStepProgress {
+  key: "audio" | "transcript" | "flow" | "ballot" | "drills";
+  label: string;
+  done: boolean;
+  /** True when the data can't tell us either way (render neutral, not missing). */
+  unknown?: boolean;
+}
+
+/**
+ * Which artifacts genuinely exist. With a backend artifact_summary this is
+ * verified per artifact (including a real drill count); from a Speech row
+ * alone it claims only what the status contract guarantees — transcription
+ * completes before `analyzing`, flow and ballot only at `done`, and drills
+ * are never claimable from status (non-fatal step) so the step is omitted.
  */
 export function getPipelineProgress(
-  speech: Pick<Speech, "status" | "audio_url">,
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
 ): PipelineStepProgress[] {
+  const audio: PipelineStepProgress = { key: "audio", label: "Audio", done: !!speech.audio_url };
+  const sum = speech.artifact_summary;
+
+  if (sum) {
+    return [
+      audio,
+      { key: "transcript", label: "Transcript", done: sum.has_transcript },
+      { key: "flow", label: "Flow", done: sum.has_flow },
+      { key: "ballot", label: "Ballot", done: sum.has_ballot },
+      sum.drill_count == null
+        ? { key: "drills", label: "Drills", done: false, unknown: true }
+        : { key: "drills", label: "Drills", done: sum.drill_count > 0 },
+    ];
+  }
+
   const s = speech.status;
   const pastTranscription = s === "analyzing" || s === "done";
   return [
-    { key: "audio", label: "Audio", done: !!speech.audio_url },
+    audio,
     { key: "transcript", label: "Transcript", done: pastTranscription },
     { key: "flow", label: "Flow", done: s === "done" },
     { key: "ballot", label: "Ballot", done: s === "done" },
@@ -170,19 +256,23 @@ const CTA_BY_KEY: Record<ReadinessKey, string> = {
   "needs-retry": "Retry analysis",
   transcribing: "Check progress",
   analyzing: "Check progress",
+  processing: "Check progress",
   "transcript-pending-analysis": "Continue analysis",
   incomplete: "Continue setup",
   draft: "Record speech",
   unknown: "Open session",
 };
 
-/** The newest practice by updated_at, with its truthful status + destination. */
+/**
+ * The newest practice by updated_at, with its truthful status + destination.
+ * Uses backend-verified artifact data when the speech carries a summary.
+ */
 export function getLatestPracticeSummary(speeches: Speech[]): LatestPracticeSummary | null {
   if (speeches.length === 0) return null;
   const latest = [...speeches].sort(
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   )[0];
-  const r = getPracticeReadinessStatus(latest);
+  const r = getSpeechListReadiness(latest);
   return {
     speech: latest,
     readiness: r,

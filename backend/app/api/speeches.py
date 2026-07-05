@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.models.job import AnalyzeResponse
 from app.models.speech import SpeechCreateRequest, SpeechRow, SpeechUpdateRequest
+from app.services.artifact_summary import build_artifact_summaries
 from app.services.jobs import create_job, list_jobs_for_speech
 from app.services.product_events import track_product_event
 from app.services.supabase_client import get_supabase
@@ -51,19 +52,43 @@ async def create_speech(body: SpeechCreateRequest) -> SpeechRow:
 
 
 @router.get("", response_model=list[SpeechRow])
-async def list_speeches(user_id: str = Query(...)) -> list[SpeechRow]:
+async def list_speeches(
+    user_id: str = Query(...),
+    include_artifacts: bool = Query(False),
+) -> list[SpeechRow]:
     try:
+        supabase = get_supabase()
         result = (
-            get_supabase()
+            supabase
             .table("speeches")
             .select("*")
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .execute()
         )
-        return result.data
+        speeches = result.data
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to fetch speeches") from exc
+
+    # Optional verified artifact summary — batched (one query per artifact
+    # table, never one per speech). Best-effort: a lookup failure leaves
+    # artifact_summary null so clients fall back to status-based display.
+    if include_artifacts and speeches:
+        try:
+            summaries = build_artifact_summaries(
+                supabase, [s["id"] for s in speeches]
+            )
+            for s in speeches:
+                summary = summaries.get(s["id"])
+                if summary is not None:
+                    s["artifact_summary"] = summary
+        except Exception as exc:
+            logger.warning(
+                "list_speeches: artifact summary failed (non-fatal) | %s",
+                type(exc).__name__,
+            )
+
+    return speeches
 
 
 @router.get("/{speech_id}", response_model=SpeechRow)

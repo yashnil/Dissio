@@ -135,6 +135,22 @@ export interface FeedbackReport {
   created_at: string;
 }
 
+/**
+ * Backend-verified artifact presence for a speech (Phase 5B).
+ * Booleans reflect persisted rows, never speech.status. Null drill_count /
+ * job fields mean unknown — treat as unknown, not as missing/failed.
+ */
+export interface SpeechArtifactSummary {
+  has_transcript: boolean;
+  has_flow: boolean;
+  has_ballot: boolean;
+  has_feedback: boolean;
+  drill_count: number | null;
+  latest_job_status: string | null;
+  latest_job_current_step: string | null;
+  latest_job_error: string | null;
+}
+
 export interface Speech {
   id: string;
   user_id: string;
@@ -152,6 +168,8 @@ export interface Speech {
   parent_speech_id: string | null;
   /** The drill that motivated this re-record (used for improvement comparison). */
   source_drill_id: string | null;
+  /** Present only when the list was fetched with include_artifacts=true. */
+  artifact_summary?: SpeechArtifactSummary | null;
 }
 
 /** Deterministic improvement comparison between a re-recorded speech and its parent. */
