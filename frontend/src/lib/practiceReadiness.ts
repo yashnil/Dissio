@@ -17,6 +17,7 @@
  */
 
 import type { AnalysisJob, Speech, SpeechArtifactSummary, SpeechStatus } from "@/types";
+import { getFriendlyJobError } from "@/lib/jobHelpers";
 
 // ── Display model ─────────────────────────────────────────────────────────────
 
@@ -30,6 +31,8 @@ export type ReadinessKey =
   | "analyzing"
   /** Live job stage from artifact_summary (label carries the real stage). */
   | "processing"
+  /** Job still marked running but silent past the stale threshold. */
+  | "stale"
   | "ready"
   | "partial-report"
   | "needs-retry"
@@ -44,6 +47,8 @@ export interface PracticeReadiness {
   isProcessing: boolean;
   /** True when opening the speech lands on an actionable report. */
   isReportActionable: boolean;
+  /** Optional one-line explanation (friendly error, stale-job guidance). */
+  detail?: string;
 }
 
 /** What we actually know exists for a speech (from fetched artifacts). */
@@ -66,7 +71,12 @@ function readiness(
   key: ReadinessKey,
   label: string,
   tone: ReadinessTone,
-  opts: { isProcessing?: boolean; isReportActionable?: boolean; badge?: PracticeReadiness["badge"] } = {},
+  opts: {
+    isProcessing?: boolean;
+    isReportActionable?: boolean;
+    badge?: PracticeReadiness["badge"];
+    detail?: string;
+  } = {},
 ): PracticeReadiness {
   return {
     key,
@@ -75,7 +85,29 @@ function readiness(
     badge: opts.badge ?? TONE_BADGE[tone],
     isProcessing: opts.isProcessing ?? false,
     isReportActionable: opts.isReportActionable ?? false,
+    ...(opts.detail ? { detail: opts.detail } : {}),
   };
+}
+
+// ── Job liveness / staleness ──────────────────────────────────────────────────
+
+/**
+ * How long a queued/running job may go without its row moving before we stop
+ * presenting it as healthy. update_job_progress touches updated_at at every
+ * pipeline stage, and a full analysis normally completes in a few minutes —
+ * 12 minutes of silence conservatively means the worker is gone.
+ */
+export const STALE_JOB_THRESHOLD_MS = 12 * 60 * 1000;
+
+/** True when a job's last movement is older than the stale threshold. */
+export function isJobStale(
+  updatedAt: string | null | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!updatedAt) return false; // no evidence — never claim stale without it
+  const t = new Date(updatedAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return nowMs - t > STALE_JOB_THRESHOLD_MS;
 }
 
 /**
@@ -156,8 +188,9 @@ function summaryJob(s: SpeechArtifactSummary): Pick<AnalysisJob, "status" | "cur
  *
  * Priority with a summary:
  *   1. done + verified ballot            → Ready (the only green)
- *   2. queued/running job                → live processing stage (amber)
- *   3. failed job or error status        → Needs retry (red)
+ *   2. queued/running job, fresh         → live processing stage (amber)
+ *      queued/running job, gone quiet    → Taking longer than expected (stale)
+ *   3. failed job or error status        → Needs retry (red, friendly message)
  *   4. transcript only, nothing else     → Transcript ready, analysis pending
  *   5. anything done without a ballot,
  *      or flow without a ballot          → Partial report (amber)
@@ -165,6 +198,7 @@ function summaryJob(s: SpeechArtifactSummary): Pick<AnalysisJob, "status" | "cur
  */
 export function getSpeechListReadiness(
   speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+  nowMs: number = Date.now(),
 ): PracticeReadiness {
   const sum = speech.artifact_summary;
   if (!sum) return getPracticeReadinessStatus(speech);
@@ -175,12 +209,20 @@ export function getSpeechListReadiness(
 
   const job = summaryJob(sum);
   if (job && (job.status === "queued" || job.status === "running")) {
+    if (isJobStale(sum.latest_job_updated_at, nowMs)) {
+      return readiness("stale", "Taking longer than expected", "amber", {
+        detail:
+          "Analysis hasn’t reported progress for a while. Open the practice to retry — your recording is saved.",
+      });
+    }
     const stage = getProcessingDisplayState(job);
     return readiness("processing", stage.label, "amber", { isProcessing: true });
   }
 
   if (speech.status === "error" || job?.status === "failed") {
-    return readiness("needs-retry", "Needs retry", "red");
+    return readiness("needs-retry", "Needs retry", "red", {
+      detail: getFriendlyJobError(sum.latest_job_error_code),
+    });
   }
 
   if (sum.has_transcript && !sum.has_flow && !sum.has_ballot) {
@@ -192,6 +234,40 @@ export function getSpeechListReadiness(
   }
 
   return getPracticeReadinessStatus(speech, summaryToAvailability(sum));
+}
+
+// ── Active-row detection (dashboard polling gate) ────────────────────────────
+
+/** Background refetch cadence while any speech is actively analyzing. */
+export const ACTIVE_POLL_INTERVAL_MS = 6000;
+
+/**
+ * Whether background work may still change this row — the gate for dashboard
+ * polling. Ready, failed, draft, and transcript-waiting-on-user rows are
+ * inactive; so are stale jobs (polling a worker that stopped reporting would
+ * poll forever).
+ */
+export function isSpeechActive(
+  speech: Pick<Speech, "status" | "audio_url" | "artifact_summary">,
+  nowMs: number = Date.now(),
+): boolean {
+  const sum = speech.artifact_summary;
+  const jobStatus = sum?.latest_job_status;
+
+  if (jobStatus === "queued" || jobStatus === "running") {
+    return !isJobStale(sum?.latest_job_updated_at, nowMs);
+  }
+  if (jobStatus === "failed" || speech.status === "error") return false;
+  if (speech.status === "done" && sum?.has_ballot) return false;
+
+  // No job telemetry — the backend-transitional statuses are the only honest
+  // signal that work is in flight. pending/draft rows wait on the user.
+  return speech.status === "transcribing" || speech.status === "analyzing";
+}
+
+/** True when at least one row justifies background polling. */
+export function hasActiveSpeeches(speeches: Speech[], nowMs: number = Date.now()): boolean {
+  return speeches.some((s) => isSpeechActive(s, nowMs));
 }
 
 // ── Truthful pipeline progress (list rows) ────────────────────────────────────
@@ -257,6 +333,7 @@ const CTA_BY_KEY: Record<ReadinessKey, string> = {
   transcribing: "Check progress",
   analyzing: "Check progress",
   processing: "Check progress",
+  stale: "Open & retry",
   "transcript-pending-analysis": "Continue analysis",
   incomplete: "Continue setup",
   draft: "Record speech",
@@ -267,12 +344,15 @@ const CTA_BY_KEY: Record<ReadinessKey, string> = {
  * The newest practice by updated_at, with its truthful status + destination.
  * Uses backend-verified artifact data when the speech carries a summary.
  */
-export function getLatestPracticeSummary(speeches: Speech[]): LatestPracticeSummary | null {
+export function getLatestPracticeSummary(
+  speeches: Speech[],
+  nowMs: number = Date.now(),
+): LatestPracticeSummary | null {
   if (speeches.length === 0) return null;
   const latest = [...speeches].sort(
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   )[0];
-  const r = getSpeechListReadiness(latest);
+  const r = getSpeechListReadiness(latest, nowMs);
   return {
     speech: latest,
     readiness: r,

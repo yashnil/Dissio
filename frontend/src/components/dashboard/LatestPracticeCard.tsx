@@ -49,6 +49,16 @@ export default function LatestPracticeCard({ summary }: { summary: LatestPractic
           </div>
         </div>
 
+        {/* Friendly one-line guidance for failed/stale states */}
+        {readiness.detail && (
+          <p
+            role="status"
+            className={`text-xs leading-relaxed ${readiness.tone === "red" ? "text-danger" : "text-ink-subtle"}`}
+          >
+            {readiness.detail}
+          </p>
+        )}
+
         {/* Artifact availability — only what the data actually supports */}
         <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Report artifacts">
           {pipeline.map((step) => (

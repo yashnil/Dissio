@@ -658,3 +658,82 @@ def test_list_speeches_include_artifacts_survives_summary_failure():
         )
     assert response.status_code == 200
     assert response.json()[0]["artifact_summary"] is None
+
+
+# ── Phase 5C: job liveness + structured errors in artifact summary ───────────
+
+def test_artifact_summary_exposes_job_updated_at():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[{"speech_id": SPEECH_A, "status": "running", "current_step": "extracting_flow",
+               "error_code": None, "error_message": None,
+               "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:05:00Z"}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_updated_at"] == "2026-07-01T00:05:00Z"
+
+
+def test_artifact_summary_updated_at_falls_back_to_created_at():
+    """Jobs without updated_at (older rows) still expose a liveness timestamp."""
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[{"speech_id": SPEECH_A, "status": "running", "current_step": None,
+               "error_code": None, "error_message": None,
+               "created_at": "2026-07-01T00:00:00Z"}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_updated_at"] == "2026-07-01T00:00:00Z"
+
+
+def test_artifact_summary_missing_timestamps_are_null():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[{"speech_id": SPEECH_A, "status": "queued", "current_step": None,
+               "error_code": None, "error_message": None}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_updated_at"] is None
+
+
+def test_artifact_summary_structured_error_fields():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(
+        jobs=[{"speech_id": SPEECH_A, "status": "failed", "current_step": "transcribing",
+               "error_code": "transcription_failed", "error_message": "Audio unreadable",
+               "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:01:00Z"}],
+    )
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_error_code"] == "transcription_failed"
+    assert s["latest_job_error_message"] == "Audio unreadable"
+    # Combined field preserved for Phase 5B clients.
+    assert s["latest_job_error"] == "Audio unreadable"
+
+
+def test_artifact_summary_no_job_leaves_liveness_fields_null():
+    sb = MagicMock()
+    sb.table = _artifact_table_fn(transcripts=[{"speech_id": SPEECH_A}])
+    s = build_artifact_summaries(sb, [SPEECH_A])[SPEECH_A]
+    assert s["latest_job_updated_at"] is None
+    assert s["latest_job_error_code"] is None
+    assert s["latest_job_error_message"] is None
+
+
+def test_list_speeches_response_includes_liveness_fields():
+    mock_client = MagicMock()
+    mock_client.table = _list_endpoint_table_fn(
+        [dict(FAKE_ROW)],
+        transcripts=[{"speech_id": FAKE_ROW["id"]}],
+        jobs=[{"speech_id": FAKE_ROW["id"], "status": "running",
+               "current_step": "generating_feedback", "error_code": None,
+               "error_message": None, "created_at": "2026-07-01T00:00:00Z",
+               "updated_at": "2026-07-01T00:04:00Z"}],
+    )
+    with patch("app.api.speeches.get_supabase", return_value=mock_client):
+        response = client.get(
+            f"/speeches?user_id={FAKE_ROW['user_id']}&include_artifacts=true"
+        )
+    assert response.status_code == 200
+    summary = response.json()[0]["artifact_summary"]
+    assert summary["latest_job_updated_at"] == "2026-07-01T00:04:00Z"
+    assert summary["latest_job_error_code"] is None
+    assert summary["latest_job_error_message"] is None

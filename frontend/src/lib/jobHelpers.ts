@@ -41,6 +41,19 @@ export function getJobFailureMessage(job: AnalysisJob): string {
   return job.error_message ?? "Analysis failed. Please retry.";
 }
 
+/**
+ * Friendly failure message for dashboard rows, from the summary's error code.
+ * Known codes map to coached copy; anything else gets a safe generic line.
+ * The raw error message is deliberately not accepted here — provider/internal
+ * text must never be surfaced in list rows.
+ */
+export function getFriendlyJobError(errorCode: string | null | undefined): string {
+  if (errorCode && ERROR_CODE_MESSAGES[errorCode]) {
+    return ERROR_CODE_MESSAGES[errorCode];
+  }
+  return "Analysis didn’t finish. Open the practice to retry — your recording is saved.";
+}
+
 export type AnalysisRecoveryState =
   | { type: "idle" }
   | { type: "in_progress"; job: AnalysisJob }

@@ -148,7 +148,13 @@ export interface SpeechArtifactSummary {
   drill_count: number | null;
   latest_job_status: string | null;
   latest_job_current_step: string | null;
+  /** Combined error string (message or code) — kept for compatibility. */
   latest_job_error: string | null;
+  /** Structured error fields — prefer for friendly client-side mapping. */
+  latest_job_error_code?: string | null;
+  latest_job_error_message?: string | null;
+  /** When the job row last moved; progress updates touch this (liveness). */
+  latest_job_updated_at?: string | null;
 }
 
 export interface Speech {

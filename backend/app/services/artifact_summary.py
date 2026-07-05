@@ -36,6 +36,9 @@ def _empty_summary() -> dict:
         "latest_job_status": None,
         "latest_job_current_step": None,
         "latest_job_error": None,
+        "latest_job_error_code": None,
+        "latest_job_error_message": None,
+        "latest_job_updated_at": None,
     }
 
 
@@ -100,7 +103,10 @@ def build_artifact_summaries(sb, speech_ids: list[str]) -> dict[str, dict]:
     try:
         res = (
             sb.table("analysis_jobs")
-            .select("speech_id, status, current_step, error_code, error_message, created_at")
+            .select(
+                "speech_id, status, current_step, error_code, error_message, "
+                "created_at, updated_at"
+            )
             .in_("speech_id", speech_ids)
             .eq("job_type", "speech_analysis")
             .order("created_at", desc=True)
@@ -114,8 +120,15 @@ def build_artifact_summaries(sb, speech_ids: list[str]) -> dict[str, dict]:
             seen.add(sid)
             summaries[sid]["latest_job_status"] = job.get("status")
             summaries[sid]["latest_job_current_step"] = job.get("current_step")
+            summaries[sid]["latest_job_error_code"] = job.get("error_code")
+            summaries[sid]["latest_job_error_message"] = job.get("error_message")
+            # Kept for backward compatibility with Phase 5B clients.
             summaries[sid]["latest_job_error"] = (
                 job.get("error_message") or job.get("error_code")
+            )
+            # Liveness signal — updated_at moves with every progress step.
+            summaries[sid]["latest_job_updated_at"] = (
+                job.get("updated_at") or job.get("created_at")
             )
     except Exception as exc:
         logger.warning(

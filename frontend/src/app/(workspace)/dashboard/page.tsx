@@ -33,6 +33,8 @@ import {
   getSpeechListReadiness,
   getPipelineProgress,
   getLatestPracticeSummary,
+  hasActiveSpeeches,
+  ACTIVE_POLL_INTERVAL_MS,
 } from "@/lib/practiceReadiness";
 import NextMissionCard from "@/components/dashboard/NextMissionCard";
 import { ContinueTrainingCard } from "@/components/training/ContinueTrainingCard";
@@ -106,10 +108,11 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
           </div>
         </Link>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2" title={badge.detail}>
           <Badge variant={badge.badge}>
             {badge.isProcessing ? `${badge.label}…` : badge.label}
           </Badge>
+          {badge.detail && <span className="sr-only">{badge.detail}</span>}
           <DropdownMenuRoot>
             <DropdownMenuTrigger asChild>
               <button
@@ -207,6 +210,39 @@ export default function DashboardPage() {
         setLoading(false);
       });
   }, [router]);
+
+  // ── Liveness: background refresh while any row is actively analyzing ──────
+  // Polls the same batched endpoint (no N+1) and quietly swaps row data in.
+  // The effect only runs while an active row exists; when the last one settles
+  // (ready/failed/stale), `pollActive` flips false and the interval is torn
+  // down — completed dashboards never poll.
+  const pollActive = !loading && !err && userId !== null && hasActiveSpeeches(speeches);
+  useEffect(() => {
+    if (!pollActive || !userId) return;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const fresh = await apiFetch<Speech[]>(
+          `/speeches?user_id=${userId}&include_artifacts=true`,
+        );
+        if (cancelled) return;
+        setSpeeches(fresh);
+        // Once everything settled, sync progress so drills/feedback counts
+        // reflect the finished analysis (one follow-up fetch, then silence).
+        if (!hasActiveSpeeches(fresh)) {
+          apiFetch<ProgressSummary>(`/users/${userId}/progress`)
+            .then((p) => { if (!cancelled) setProgress(p); })
+            .catch(() => { /* keep last known progress */ });
+        }
+      } catch {
+        // Background refresh only — keep showing the last good data.
+      }
+    };
+
+    const id = setInterval(tick, ACTIVE_POLL_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [pollActive, userId]);
 
   async function handleDelete() {
     if (!del || !userId) return;
@@ -343,7 +379,11 @@ export default function DashboardPage() {
             {state.showSpeechHistory && (
               <motion.div variants={child} className="flex flex-col gap-3">
                 {state.hasPendingRecovery && <RecoveryBanner speeches={speeches} />}
-                <SpeechHistorySection speeches={speeches} onDelete={setDel} />
+                <SpeechHistorySection
+                  speeches={speeches}
+                  onDelete={setDel}
+                  autoUpdating={pollActive}
+                />
               </motion.div>
             )}
           </>
@@ -569,9 +609,11 @@ function RecoveryBanner({ speeches }: { speeches: Speech[] }) {
 function SpeechHistorySection({
   speeches,
   onDelete,
+  autoUpdating,
 }: {
   speeches: Speech[];
   onDelete: (s: Speech) => void;
+  autoUpdating: boolean;
 }) {
   return (
     <section aria-label="Speech history" className="flex flex-col gap-3">
@@ -579,6 +621,15 @@ function SpeechHistorySection({
         <div className="flex items-center gap-2">
           <span className="text-eyebrow text-ink-subtle">Flow reports</span>
           <span className="rep-badge">{speeches.length}</span>
+          {autoUpdating && (
+            <span className="flex items-center gap-1 text-[10px] text-ink-faint">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-lav motion-safe:animate-pulse"
+                aria-hidden="true"
+              />
+              Updating automatically
+            </span>
+          )}
         </div>
         <Link
           href="/session"

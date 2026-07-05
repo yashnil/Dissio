@@ -147,3 +147,23 @@ describe("isJobActive", () => {
   it("returns false for failed", () => expect(isJobActive("failed")).toBe(false));
   it("returns false for cancelled", () => expect(isJobActive("cancelled")).toBe(false));
 });
+
+describe("getFriendlyJobError", () => {
+  const { getFriendlyJobError } = jest.requireActual("@/lib/jobHelpers");
+
+  it("maps known codes to coached messages", () => {
+    expect(getFriendlyJobError("transcription_failed")).toContain("transcription failed");
+    expect(getFriendlyJobError("feedback_failed")).toContain("retry");
+  });
+
+  it("unknown codes get the safe generic fallback (raw text is never accepted)", () => {
+    const msg = getFriendlyJobError("weird_code");
+    expect(msg).not.toContain("Traceback");
+    expect(msg).toContain("retry");
+  });
+
+  it("handles null/undefined codes with the safe fallback", () => {
+    expect(getFriendlyJobError(null)).toContain("retry");
+    expect(getFriendlyJobError(undefined)).toContain("retry");
+  });
+});

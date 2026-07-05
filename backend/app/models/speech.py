@@ -37,7 +37,13 @@ class SpeechArtifactSummary(BaseModel):
     drill_count: Optional[int] = None
     latest_job_status: Optional[str] = None
     latest_job_current_step: Optional[str] = None
+    # Combined error string (message or code) — kept for Phase 5B clients.
     latest_job_error: Optional[str] = None
+    # Structured error fields — prefer these for friendly client-side mapping.
+    latest_job_error_code: Optional[str] = None
+    latest_job_error_message: Optional[str] = None
+    # Liveness: when the job row last moved (progress updates touch this).
+    latest_job_updated_at: Optional[str] = None
 
 
 class SpeechRow(BaseModel):

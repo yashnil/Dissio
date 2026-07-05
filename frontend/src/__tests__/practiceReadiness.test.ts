@@ -412,3 +412,213 @@ describe("getLatestPracticeSummary — with artifact_summary", () => {
     expect(s.ctaLabel).toBe("Check progress");
   });
 });
+
+// ── Phase 5C: liveness, staleness, friendly errors ───────────────────────────
+
+import {
+  isJobStale,
+  isSpeechActive,
+  hasActiveSpeeches,
+  STALE_JOB_THRESHOLD_MS,
+  ACTIVE_POLL_INTERVAL_MS,
+} from "@/lib/practiceReadiness";
+
+const NOW = new Date("2026-07-05T12:00:00Z").getTime();
+const FRESH_TS = new Date(NOW - 60_000).toISOString(); // 1 min ago
+const STALE_TS = new Date(NOW - STALE_JOB_THRESHOLD_MS - 60_000).toISOString();
+
+describe("isJobStale", () => {
+  it("fresh timestamps are not stale; ones past the threshold are", () => {
+    expect(isJobStale(FRESH_TS, NOW)).toBe(false);
+    expect(isJobStale(STALE_TS, NOW)).toBe(true);
+  });
+
+  it("exactly at the threshold is not yet stale (conservative)", () => {
+    const atThreshold = new Date(NOW - STALE_JOB_THRESHOLD_MS).toISOString();
+    expect(isJobStale(atThreshold, NOW)).toBe(false);
+  });
+
+  it("never claims stale without evidence (null/invalid timestamps)", () => {
+    expect(isJobStale(null, NOW)).toBe(false);
+    expect(isJobStale(undefined, NOW)).toBe(false);
+    expect(isJobStale("not-a-date", NOW)).toBe(false);
+  });
+
+  it("threshold is conservative (at least 10 minutes)", () => {
+    expect(STALE_JOB_THRESHOLD_MS).toBeGreaterThanOrEqual(10 * 60 * 1000);
+  });
+});
+
+describe("getSpeechListReadiness — stale jobs", () => {
+  it("fresh running job → live processing stage", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        latest_job_status: "running",
+        latest_job_current_step: "generating_feedback",
+        latest_job_updated_at: FRESH_TS,
+      }),
+    }), NOW);
+    expect(r.key).toBe("processing");
+    expect(r.label).toBe("Generating ballot");
+  });
+
+  it("running job silent past the threshold → Taking longer than expected", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "analyzing",
+      artifact_summary: summary({
+        latest_job_status: "running",
+        latest_job_current_step: "generating_feedback",
+        latest_job_updated_at: STALE_TS,
+      }),
+    }), NOW);
+    expect(r.key).toBe("stale");
+    expect(r.label).toBe("Taking longer than expected");
+    expect(r.tone).toBe("amber");
+    expect(r.detail).toContain("retry");
+  });
+
+  it("running job without a timestamp is treated as healthy, not stale", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "analyzing",
+      artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: null }),
+    }), NOW);
+    expect(r.key).toBe("processing");
+  });
+});
+
+describe("getSpeechListReadiness — friendly errors", () => {
+  it("known error code maps to the coached message, not raw text", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "error",
+      artifact_summary: summary({
+        latest_job_status: "failed",
+        latest_job_error_code: "transcription_failed",
+        latest_job_error_message: "whisper: HTTP 500 at provider xyz…",
+      }),
+    }), NOW);
+    expect(r.key).toBe("needs-retry");
+    expect(r.detail).toContain("transcription failed");
+    expect(r.detail).not.toContain("provider");
+    expect(r.detail).not.toContain("HTTP 500");
+  });
+
+  it("unknown error code falls back to a safe generic message", () => {
+    const r = getSpeechListReadiness(speech({
+      status: "error",
+      artifact_summary: summary({
+        latest_job_status: "failed",
+        latest_job_error_code: "quantum_flux_error",
+        latest_job_error_message: "Traceback (most recent call last): …",
+      }),
+    }), NOW);
+    expect(r.detail).toContain("retry");
+    expect(r.detail).not.toContain("Traceback");
+  });
+});
+
+describe("isSpeechActive / hasActiveSpeeches — polling gate", () => {
+  it("fresh queued/running jobs are active", () => {
+    expect(isSpeechActive(speech({
+      status: "analyzing",
+      artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: FRESH_TS }),
+    }), NOW)).toBe(true);
+    expect(isSpeechActive(speech({
+      status: "pending",
+      artifact_summary: summary({ latest_job_status: "queued", latest_job_updated_at: FRESH_TS }),
+    }), NOW)).toBe(true);
+  });
+
+  it("stale running jobs are NOT active (no polling forever)", () => {
+    expect(isSpeechActive(speech({
+      status: "analyzing",
+      artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: STALE_TS }),
+    }), NOW)).toBe(false);
+  });
+
+  it("ready, failed, draft, and transcript-waiting rows are inactive", () => {
+    expect(isSpeechActive(speech({
+      status: "done",
+      artifact_summary: summary({ has_transcript: true, has_flow: true, has_ballot: true }),
+    }), NOW)).toBe(false);
+    expect(isSpeechActive(speech({
+      status: "error",
+      artifact_summary: summary({ latest_job_status: "failed" }),
+    }), NOW)).toBe(false);
+    expect(isSpeechActive(speech({ status: "pending" }), NOW)).toBe(false);
+    expect(isSpeechActive(speech({
+      status: "pending",
+      artifact_summary: summary({ has_transcript: true }),
+    }), NOW)).toBe(false);
+  });
+
+  it("transitional statuses without job telemetry are active", () => {
+    expect(isSpeechActive(speech({ status: "transcribing" }), NOW)).toBe(true);
+    expect(isSpeechActive(speech({ status: "analyzing" }), NOW)).toBe(true);
+  });
+
+  it("hasActiveSpeeches gates polling on any active row", () => {
+    const done = speech({
+      id: "d", status: "done",
+      artifact_summary: summary({ has_transcript: true, has_ballot: true }),
+    });
+    const running = speech({
+      id: "r", status: "analyzing",
+      artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: FRESH_TS }),
+    });
+    expect(hasActiveSpeeches([done], NOW)).toBe(false);
+    expect(hasActiveSpeeches([done, running], NOW)).toBe(true);
+  });
+
+  it("poll interval is in the required 5–8 second band", () => {
+    expect(ACTIVE_POLL_INTERVAL_MS).toBeGreaterThanOrEqual(5000);
+    expect(ACTIVE_POLL_INTERVAL_MS).toBeLessThanOrEqual(8000);
+  });
+});
+
+describe("getLatestPracticeSummary — readiness transitions (polling updates)", () => {
+  const base = {
+    id: "s-live",
+    status: "analyzing" as const,
+    updated_at: "2026-07-05T11:00:00Z",
+  };
+
+  it("processing → ready: badge green, CTA Open report", () => {
+    const before = getLatestPracticeSummary([speech({
+      ...base,
+      artifact_summary: summary({ latest_job_status: "running", latest_job_current_step: "finalizing", latest_job_updated_at: FRESH_TS }),
+    })], NOW)!;
+    expect(before.readiness.label).toBe("Validating");
+    expect(before.ctaLabel).toBe("Check progress");
+
+    const after = getLatestPracticeSummary([speech({
+      ...base,
+      status: "done",
+      artifact_summary: summary({
+        has_transcript: true, has_flow: true, has_ballot: true, drill_count: 3,
+        latest_job_status: "succeeded",
+      }),
+    })], NOW)!;
+    expect(after.readiness.tone).toBe("green");
+    expect(after.ctaLabel).toBe("Open report");
+  });
+
+  it("processing → failed: badge red, CTA Retry analysis", () => {
+    const after = getLatestPracticeSummary([speech({
+      ...base,
+      status: "error",
+      artifact_summary: summary({ latest_job_status: "failed", latest_job_error_code: "feedback_failed" }),
+    })], NOW)!;
+    expect(after.readiness.tone).toBe("red");
+    expect(after.ctaLabel).toBe("Retry analysis");
+  });
+
+  it("processing → stale: amber with an Open & retry CTA", () => {
+    const after = getLatestPracticeSummary([speech({
+      ...base,
+      artifact_summary: summary({ latest_job_status: "running", latest_job_updated_at: STALE_TS }),
+    })], NOW)!;
+    expect(after.readiness.key).toBe("stale");
+    expect(after.ctaLabel).toBe("Open & retry");
+  });
+});
