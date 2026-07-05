@@ -11,8 +11,8 @@
  *  - coaching gap summary visible at 1280×800 without page scroll
  *  - no JS/hydration console errors
  *
- * Tests navigate directly to "/" and scroll to #speech-to-flow.
- * No auth is required — the section is part of the public homepage.
+ * Tests navigate directly to "/home-v2" (the archived original homepage)
+ * and scroll to #speech-to-flow. No auth is required.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -20,7 +20,7 @@ import { test, expect, type Page } from "@playwright/test";
 // ── Setup: navigate to homepage and scroll to the section ─────────────────────
 
 async function goToSection(page: Page) {
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   const section = page.locator("#speech-to-flow");
   await section.scrollIntoViewIfNeeded();
   await page.waitForTimeout(400); // let entrance animation settle
@@ -177,7 +177,7 @@ test("SpeechFlowSection has no horizontal overflow at 390×844", async ({
     viewport: { width: 390, height: 844 },
   });
   const page = await ctx.newPage();
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   const section = page.locator("#speech-to-flow");
   await section.scrollIntoViewIfNeeded();
   const hasHScroll = await page.evaluate(
@@ -196,7 +196,7 @@ test("coaching gap summary is in viewport at 1280×800 when section is in view",
     viewport: { width: 1280, height: 800 },
   });
   const page = await ctx.newPage();
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   const section = page.locator("#speech-to-flow");
   await section.scrollIntoViewIfNeeded();
   await page.waitForTimeout(400);
@@ -229,7 +229,7 @@ test("homepage loads without console errors or hydration warnings", async ({
     errors.push(err.message);
   });
 
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
 
   // Filter out known non-critical network errors (e.g., favicon, analytics)
   const significantErrors = errors.filter(
@@ -246,7 +246,7 @@ test("homepage loads without console errors or hydration warnings", async ({
 test("speech-to-flow section is in the DOM and labelled correctly", async ({
   page,
 }) => {
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   const section = page.locator("#speech-to-flow");
   await expect(section).toBeAttached();
   await expect(section).toHaveAttribute(

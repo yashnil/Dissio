@@ -1,5 +1,6 @@
 /**
- * Homepage structural and content integrity tests.
+ * Structural and content integrity tests for /home-v2 — the archived
+ * original homepage (previously served at `/`).
  *
  * Covers: PipelineShowcase presence, Trust section count, mobile overflow,
  * and anchor integrity after the surgical cleanup pass.
@@ -8,7 +9,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 async function goToHome(page: Page) {
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
 }
 
 // ── PipelineShowcase ──────────────────────────────────────────────────────────

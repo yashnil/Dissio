@@ -15,7 +15,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 async function goToSection(page: Page) {
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   await page.locator("#product-proof").scrollIntoViewIfNeeded();
   await page.waitForTimeout(400);
 }
@@ -183,7 +183,7 @@ test("DebateProofSection has no horizontal overflow at 390×844", async ({
     viewport: { width: 390, height: 844 },
   });
   const page = await ctx.newPage();
-  await page.goto("/", { waitUntil: "networkidle" });
+  await page.goto("/home-v2", { waitUntil: "networkidle" });
   await page.locator("#product-proof").scrollIntoViewIfNeeded();
   const hasHScroll = await page.evaluate(
     () => document.body.scrollWidth > window.innerWidth + 2,
