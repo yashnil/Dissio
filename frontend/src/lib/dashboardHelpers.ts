@@ -7,7 +7,7 @@
  * scattered JSX conditionals.
  */
 
-import type { Speech, ProgressSummary, SpeechType } from "@/types";
+import type { Speech, ProgressSummary, SpeechType, IncompleteDrill } from "@/types";
 
 export type NextActionKind =
   | "retry-analysis"
@@ -231,6 +231,44 @@ export const QUICK_START_OPTIONS: QuickStartOption[] = [
 /** Deep-link a quick-start choice into the practice setup flow. */
 export function quickStartHref(type: SpeechType): string {
   return `/session?type=${type}`;
+}
+
+// ── Drill handoff (dashboard cockpit) ────────────────────────────────────────
+
+/**
+ * What the cockpit's drill slot should show. Never invents a drill: when none
+ * exists, it explains truthfully what unlocks one.
+ */
+export type DrillHandoff =
+  | { kind: "drill"; drill: IncompleteDrill; moreCount: number }
+  | { kind: "generate-from-report"; reportHref: string }
+  | { kind: "locked-needs-analysis" }
+  | { kind: "locked-needs-practice" };
+
+export function getDrillHandoff(input: {
+  incompleteDrills: IncompleteDrill[];
+  feedbackReadyCount: number;
+  speeches: Speech[];
+}): DrillHandoff {
+  const { incompleteDrills, feedbackReadyCount, speeches } = input;
+
+  if (incompleteDrills.length > 0) {
+    return {
+      kind: "drill",
+      drill: incompleteDrills[0],
+      moreCount: incompleteDrills.length - 1,
+    };
+  }
+  if (feedbackReadyCount > 0) {
+    // A ballot exists but no drills are queued — point at the newest done
+    // speech, where drills are generated from.
+    const latestDone = [...speeches].sort(byNewest).find((s) => s.status === "done");
+    if (latestDone) {
+      return { kind: "generate-from-report", reportHref: `/speech/${latestDone.id}` };
+    }
+  }
+  if (speeches.length > 0) return { kind: "locked-needs-analysis" };
+  return { kind: "locked-needs-practice" };
 }
 
 // ── Formatting ───────────────────────────────────────────────────────────────

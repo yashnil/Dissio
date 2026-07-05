@@ -38,6 +38,54 @@ describe("deriveProcessingStages", () => {
   });
 });
 
+describe("deriveProcessingStages — fine-grained (real current_step)", () => {
+  it("running with a known step shows the real stage sequence", () => {
+    const s = deriveProcessingStages({
+      jobStatus: "running", hasReport: false, failed: false, currentStep: "generating_feedback",
+    });
+    expect(s.map((x) => x.label)).toEqual([
+      "Input secured", "Transcribing", "Analyzing arguments",
+      "Generating ballot", "Creating drills", "Validating", "Report ready",
+    ]);
+    // Ordered pipeline: earlier stages genuinely complete, current active, rest upcoming.
+    expect(s.find((x) => x.id === "transcribing")!.status).toBe("done");
+    expect(s.find((x) => x.id === "extracting")!.status).toBe("done");
+    expect(s.find((x) => x.id === "ballot")!.status).toBe("active");
+    expect(s.find((x) => x.id === "drills")!.status).toBe("upcoming");
+    expect(s.find((x) => x.id === "ready")!.status).toBe("upcoming");
+  });
+
+  it("delivery_analysis maps into the Analyzing arguments stage (transcription done)", () => {
+    const s = deriveProcessingStages({
+      jobStatus: "running", hasReport: false, failed: false, currentStep: "delivery_analysis",
+    });
+    expect(s.find((x) => x.id === "transcribing")!.status).toBe("done");
+    expect(s.find((x) => x.id === "extracting")!.status).toBe("active");
+  });
+
+  it("unknown step falls back to the coarse honest stages", () => {
+    const s = deriveProcessingStages({
+      jobStatus: "running", hasReport: false, failed: false, currentStep: "mystery_step",
+    });
+    expect(s.find((x) => x.id === "analysis")!.status).toBe("active");
+  });
+
+  it("queued jobs never use current_step (no work has started)", () => {
+    const s = deriveProcessingStages({
+      jobStatus: "queued", hasReport: false, failed: false, currentStep: "generating_drills",
+    });
+    expect(s.find((x) => x.id === "analysis")!.status).toBe("active");
+    expect(s.find((x) => x.id === "drills")).toBeUndefined();
+  });
+
+  it("failure overrides fine-grained display", () => {
+    const s = deriveProcessingStages({
+      jobStatus: "running", hasReport: false, failed: true, currentStep: "transcribing",
+    });
+    expect(s.some((x) => x.status === "failed")).toBe(true);
+  });
+});
+
 describe("processingHeadline", () => {
   it("reflects the active stage / terminal states", () => {
     expect(processingHeadline(deriveProcessingStages({ jobStatus: "running", hasReport: false, failed: false }))).toBe("Analysis running");

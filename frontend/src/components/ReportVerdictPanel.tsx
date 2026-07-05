@@ -23,6 +23,7 @@ import {
   ISSUE_STYLES,
   type IssueColor,
 } from "@/lib/reportVerdictStyles";
+import { deriveIssueExcerpt } from "@/lib/reportNarrative";
 import type { DebateIssue, Drill, FeedbackReport, FeedbackScores, Speech } from "@/types";
 
 // ── Animated count-up ──────────────────────────────────────────────────────────
@@ -100,9 +101,11 @@ function ArgumentChain({ labels, color }: { labels: string[]; color: IssueColor 
 function TopIssueCard({
   issue,
   priorities,
+  excerpt,
 }: {
   issue?: DebateIssue | null;
   priorities?: string[];
+  excerpt?: string | null;
 }) {
   const title          = issue?.title          ?? priorities?.[0] ?? null;
   const recommendation = issue?.recommendation ?? null;
@@ -138,6 +141,14 @@ function TopIssueCard({
       <div className="flex flex-col gap-2.5 px-4 py-3">
         <p className="text-sm font-semibold leading-snug text-ink">{title}</p>
         <ArgumentChain labels={affectedLabels} color={color} />
+        {excerpt && (
+          <blockquote className="border-l-2 border-hairline-strong pl-3">
+            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              From your speech
+            </p>
+            <p className="text-xs italic leading-relaxed text-ink-subtle">&ldquo;{excerpt}&rdquo;</p>
+          </blockquote>
+        )}
         {whyItMatters && (
           <p className="text-xs leading-relaxed text-ink-muted">{whyItMatters}</p>
         )}
@@ -249,6 +260,7 @@ export default function ReportVerdictPanel({
           <TopIssueCard
             issue={topIssue}
             priorities={feedback.raw_feedback?.top_3_priorities}
+            excerpt={deriveIssueExcerpt(feedback)}
           />
         </div>
 

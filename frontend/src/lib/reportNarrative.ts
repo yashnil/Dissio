@@ -130,6 +130,35 @@ export function deriveCriticalBreakdown(
   };
 }
 
+// ── 3b. Issue excerpt — the student's exact words behind the top issue ───────
+
+function normalizeDimension(name: string): string {
+  return name.toLowerCase().replace(/[_\s&]/g, "");
+}
+
+/**
+ * The exact speech excerpt tied to the top issue, when the rubric's score
+ * explanations contain one for the matching dimension. Returns null rather
+ * than guessing — the quote must come from real report data.
+ */
+export function deriveIssueExcerpt(feedback: FeedbackReport): string | null {
+  const issues = feedback.raw_feedback?.structured_issues;
+  const explanations = feedback.raw_feedback?.score_explanations;
+  if (!issues || issues.length === 0 || !explanations || explanations.length === 0) return null;
+
+  const top = issues.find((i) => i.severity === "high") ?? issues[0];
+  const skill = ISSUE_TO_SKILL[top.issue_type];
+  if (!skill) return null;
+
+  const target = normalizeDimension(skill);
+  const match = explanations.find((e) => {
+    const dim = normalizeDimension(e.dimension_name);
+    return dim.includes(target) || target.includes(dim);
+  });
+  const excerpt = match?.evidence_from_speech?.trim();
+  return excerpt ? excerpt : null;
+}
+
 // ── 4. Weakness → Drill links ─────────────────────────────────────────────────
 
 /** One entry per drill explaining WHY it was assigned from the speech. */

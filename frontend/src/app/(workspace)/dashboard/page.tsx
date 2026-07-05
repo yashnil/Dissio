@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Mic, CheckCircle2, Target,
   MoreHorizontal, Trash2, ArrowUpRight, ArrowRight,
-  Zap, Play, AlertTriangle, ChevronRight, Dumbbell,
+  Play, AlertTriangle,
 } from "lucide-react";
 import DeleteDialog from "@/components/DeleteDialog";
 import { Badge } from "@/components/ui/badge";
@@ -19,15 +19,21 @@ import {
 import { createClient } from "@/lib/supabase";
 import { apiFetch, isBackendUnreachable } from "@/lib/api";
 import { reducedSafe, staggerParent, staggerChild } from "@/lib/motion";
-import { getSpeechStatusConfig } from "@/lib/debateHelpers";
 import { motion } from "motion/react";
 import FirstRunCommandCenter from "@/components/FirstRunCommandCenter";
 import NextActionPanel from "@/components/dashboard/NextActionPanel";
 import CoachingFocusCard from "@/components/dashboard/CoachingFocusCard";
 import LoopStageCard from "@/components/dashboard/LoopStageCard";
+import LatestPracticeCard from "@/components/dashboard/LatestPracticeCard";
+import DrillHandoffCard from "@/components/dashboard/DrillHandoffCard";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { deriveDashboardState } from "@/lib/dashboardModel";
-import { deriveWorkoutProgress, getNextIncompleteStep } from "@/lib/workoutHelpers";
+import { getDrillHandoff } from "@/lib/dashboardHelpers";
+import {
+  mapSpeechStatusToDisplay,
+  getPipelineProgress,
+  getLatestPracticeSummary,
+} from "@/lib/practiceReadiness";
 import NextMissionCard from "@/components/dashboard/NextMissionCard";
 import { ContinueTrainingCard } from "@/components/training/ContinueTrainingCard";
 import type { Speech, ProgressSummary, PilotSummary, Workout, StudentMission } from "@/types";
@@ -41,11 +47,6 @@ const TYPE_LABEL: Record<string, string> = {
 const JUDGE_LABEL: Record<string, string> = {
   lay: "Lay", flow: "Flow", tech: "Tech", coach: "Coach",
 };
-const SKILL_LABELS: Record<string, string> = {
-  weighing: "Impact Weighing", warranting: "Warranting", drops: "Drop Prevention",
-  extensions: "Extensions", evidence: "Evidence Use", clash: "Clash",
-  judge_adaptation: "Judge Adaptation", collapse: "Collapse Strategy", line_by_line: "Line-by-Line",
-};
 const SKILL_GRID = [
   { key: "clash",            label: "Clash",           icon: "⚔", max: 20 },
   { key: "weighing",         label: "Impact Weighing", icon: "⚖", max: 20 },
@@ -54,13 +55,6 @@ const SKILL_GRID = [
   { key: "judge_adaptation", label: "Judge Adapt.",    icon: "👁", max: 20 },
 ] as const;
 
-type BV = "default" | "indigo" | "green" | "amber" | "red";
-
-function speechBadge(s: Speech): { label: string; variant: BV } {
-  const cfg = getSpeechStatusConfig(s.status);
-  if (s.status === "pending" && s.audio_url) return { label: "Audio uploaded", variant: "default" };
-  return { label: cfg.isProcessing ? `${cfg.label}…` : cfg.label, variant: cfg.badge as BV };
-}
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
@@ -70,24 +64,9 @@ function fmtPercent(val: number | null) {
 
 // ── Speech card ───────────────────────────────────────────────────────────────
 
-const PIPELINE_STEPS = [
-  { key: "audio",  label: "Audio" },
-  { key: "tx",     label: "Transcript" },
-  { key: "flow",   label: "Flow" },
-  { key: "ballot", label: "Ballot" },
-  { key: "drills", label: "Drills" },
-];
-
-function pipelineDone(s: Speech, key: string): boolean {
-  if (key === "audio")  return !!s.audio_url;
-  if (key === "tx")     return s.status !== "pending";
-  if (key === "flow")   return s.status === "analyzing" || s.status === "done";
-  if (key === "ballot") return s.status === "done";
-  return false;
-}
-
 function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void }) {
-  const badge = speechBadge(s);
+  const badge = mapSpeechStatusToDisplay(s.status, s.audio_url);
+  const pipeline = getPipelineProgress(s);
   const accentBorder =
     s.status === "done"           ? "border-l-ok/60"
     : s.status === "error"        ? "border-l-danger/60"
@@ -113,11 +92,11 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
               {s.topic      && <span className="hidden truncate text-xs text-ink-faint sm:inline">· {s.topic}</span>}
             </div>
             <div className="mt-1.5 flex items-center gap-0.5">
-              {PIPELINE_STEPS.map((step, i, arr) => (
+              {pipeline.map((step, i, arr) => (
                 <div key={step.key} className="flex items-center gap-0.5">
                   <div
-                    title={step.label}
-                    className={`h-1.5 rounded-full transition-colors ${pipelineDone(s, step.key) ? "w-5 bg-lav" : "w-3 bg-hairline"}`}
+                    title={`${step.label}${step.done ? " ready" : " not ready"}`}
+                    className={`h-1.5 rounded-full transition-colors ${step.done ? "w-5 bg-lav" : "w-3 bg-hairline"}`}
                   />
                   {i < arr.length - 1 && <div className="h-px w-0.5 bg-hairline" />}
                 </div>
@@ -128,7 +107,9 @@ function SpeechCard({ s, onDelete }: { s: Speech; onDelete: (s: Speech) => void 
         </Link>
 
         <div className="flex shrink-0 items-center gap-2">
-          <Badge variant={badge.variant}>{badge.label}</Badge>
+          <Badge variant={badge.badge}>
+            {badge.isProcessing ? `${badge.label}…` : badge.label}
+          </Badge>
           <DropdownMenuRoot>
             <DropdownMenuTrigger asChild>
               <button
@@ -245,6 +226,12 @@ export default function DashboardPage() {
   }
 
   const state   = deriveDashboardState(speeches, progress);
+  const latestPractice = getLatestPracticeSummary(speeches);
+  const drillHandoff = getDrillHandoff({
+    incompleteDrills: progress?.incomplete_drills ?? [],
+    feedbackReadyCount: progress?.feedback_ready_count ?? 0,
+    speeches,
+  });
   const stagger = reducedSafe(staggerParent(0.06, 0.03));
   const child   = reducedSafe(staggerChild);
 
@@ -273,6 +260,16 @@ export default function DashboardPage() {
             <motion.div variants={child}>
               <NextActionPanel action={state.nextAction} />
             </motion.div>
+
+            {/* 1a. Cockpit band — latest practice + drill handoff ─────── */}
+            {latestPractice && (
+              <motion.div variants={child}>
+                <section aria-label="Practice cockpit" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <LatestPracticeCard summary={latestPractice} />
+                  <DrillHandoffCard handoff={drillHandoff} workout={latestWorkout} />
+                </section>
+              </motion.div>
+            )}
 
             {/* 1b. Next Mission coaching card */}
             <motion.div variants={child}>
@@ -340,17 +337,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {/* 5. Upcoming drills ─────────────────────────────────────── */}
-            {state.showDrillQueue && progress && (
-              <motion.div variants={child}>
-                <DrillQueueSection
-                  drills={progress.incomplete_drills}
-                  workout={latestWorkout}
-                />
-              </motion.div>
-            )}
-
-            {/* 6. Speech history ──────────────────────────────────────── */}
+            {/* 5. Speech history ──────────────────────────────────────── */}
             {state.showSpeechHistory && (
               <motion.div variants={child} className="flex flex-col gap-3">
                 {state.hasPendingRecovery && <RecoveryBanner speeches={speeches} />}
@@ -530,93 +517,6 @@ function SkillTrajectorySection({
                   style={{ width: `${(progress.drill_completion_rate || 0) * 100}%` }}
                 />
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
-// ── Drill queue section ───────────────────────────────────────────────────────
-
-function DrillQueueSection({
-  drills,
-  workout,
-}: {
-  drills: ProgressSummary["incomplete_drills"];
-  workout: Workout | null;
-}) {
-  const next         = drills[0];
-  const workoutNext  = workout && workout.status !== "completed" ? getNextIncompleteStep(workout) : null;
-  const workoutProg  = workout && workout.status !== "completed" ? deriveWorkoutProgress(workout) : null;
-
-  return (
-    <section aria-label="Upcoming drills" className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Zap size={14} className="text-lav" aria-hidden="true" />
-        <h2 className="text-heading text-ink">Upcoming drills</h2>
-        {drills.length > 1 && <span className="rep-badge">{drills.length}</span>}
-      </div>
-
-      <Card className="border-lav/20 bg-lav/5">
-        <CardContent className="flex flex-col gap-4 px-5 py-5">
-          {/* Primary drill */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <p className="truncate text-sm font-semibold text-ink">{next.title}</p>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="rounded-full border border-lav/25 bg-lav/10 px-2 py-0.5 text-[10px] font-semibold text-lav">
-                  {SKILL_LABELS[next.skill_target] ?? next.skill_target}
-                </span>
-                <span className="text-[10px] capitalize text-ink-faint">{next.difficulty}</span>
-                {next.speech_title && (
-                  <span className="text-[10px] text-ink-faint">From: {next.speech_title}</span>
-                )}
-              </div>
-            </div>
-            <Button asChild size="sm" className="shrink-0 gap-1.5">
-              <Link href={`/drills/${next.id}`}>
-                Open workspace <ArrowRight size={11} aria-hidden="true" />
-              </Link>
-            </Button>
-          </div>
-
-          {/* Additional drills */}
-          {drills.length > 1 && (
-            <div className="flex flex-col gap-1 border-t border-lav/10 pt-3">
-              <p className="mb-1 text-xs font-medium text-ink-subtle">Also queued:</p>
-              {drills.slice(1, 4).map((d) => (
-                <Link
-                  key={d.id}
-                  href={`/drills/${d.id}`}
-                  className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs text-ink-subtle transition-colors hover:bg-lav/5 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
-                >
-                  <span className="truncate">{d.title}</span>
-                  <span className="shrink-0 capitalize text-ink-faint">{d.status.replace("_", " ")}</span>
-                </Link>
-              ))}
-              {drills.length > 4 && (
-                <p className="px-2 text-xs text-ink-faint">+{drills.length - 4} more</p>
-              )}
-            </div>
-          )}
-
-          {/* Workout context — compact secondary row */}
-          {workoutProg && workoutNext && workout && (
-            <div className="flex items-center justify-between gap-3 border-t border-lav/10 pt-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <Dumbbell size={13} className="shrink-0 text-lav" aria-hidden="true" />
-                <span className="truncate text-xs text-ink-subtle">
-                  Today&apos;s prep: {workoutProg.completed}/{workoutProg.total} done · {workoutNext.title}
-                </span>
-              </div>
-              <Link
-                href={`/speech/${workout.speech_id}`}
-                className="shrink-0 flex items-center gap-0.5 text-[10px] font-medium text-lav hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lav/50"
-              >
-                Continue <ChevronRight size={10} aria-hidden="true" />
-              </Link>
             </div>
           )}
         </CardContent>

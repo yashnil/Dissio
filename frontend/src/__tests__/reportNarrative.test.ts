@@ -18,6 +18,7 @@ import {
   deriveStrongestSequence,
   deriveCriticalBreakdown,
   deriveWeaknessDrillLinks,
+  deriveIssueExcerpt,
   hasDecisiveMoment,
   hasCompleteChain,
   drillNarrativeTitle,
@@ -516,5 +517,55 @@ describe("weakness → drill linkage correctness", () => {
     const d = drill({ skill_target: "weighing", source_weakness: null });
     const link = deriveWeaknessDrillLinks([d], f)[0];
     expect(link.why).toBe("Rounds are lost on weighing");
+  });
+});
+
+// ── deriveIssueExcerpt ────────────────────────────────────────────────────────
+
+describe("deriveIssueExcerpt", () => {
+  const explanation = {
+    dimension_name: "weighing",
+    score: 9,
+    score_band: "developing",
+    evidence_from_speech: "Our impact is bigger because it affects more people.",
+    why_not_higher: "No timeframe or probability comparison.",
+    how_to_improve: "Compare magnitude AND timeframe explicitly.",
+  };
+
+  test("returns the exact excerpt when a score explanation matches the top issue's skill", () => {
+    const f = fb({
+      structured_issues: [issue({ issue_type: "no_weighing", severity: "high" })],
+      score_explanations: [explanation],
+    });
+    expect(deriveIssueExcerpt(f)).toBe("Our impact is bigger because it affects more people.");
+  });
+
+  test("matches fuzzy dimension names (e.g. 'Impact Weighing')", () => {
+    const f = fb({
+      structured_issues: [issue({ issue_type: "unclear_impact" })],
+      score_explanations: [{ ...explanation, dimension_name: "Impact Weighing" }],
+    });
+    expect(deriveIssueExcerpt(f)).toBe("Our impact is bigger because it affects more people.");
+  });
+
+  test("returns null rather than guessing when no dimension matches", () => {
+    const f = fb({
+      structured_issues: [issue({ issue_type: "no_clash" })],
+      score_explanations: [explanation], // weighing only — no clash explanation
+    });
+    expect(deriveIssueExcerpt(f)).toBeNull();
+  });
+
+  test("returns null when there are no issues or no explanations", () => {
+    expect(deriveIssueExcerpt(fb({ structured_issues: [] }))).toBeNull();
+    expect(deriveIssueExcerpt(fb({ score_explanations: [] }))).toBeNull();
+  });
+
+  test("returns null for an empty/whitespace excerpt", () => {
+    const f = fb({
+      structured_issues: [issue({ issue_type: "no_weighing" })],
+      score_explanations: [{ ...explanation, evidence_from_speech: "   " }],
+    });
+    expect(deriveIssueExcerpt(f)).toBeNull();
   });
 });

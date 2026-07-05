@@ -176,6 +176,7 @@ export default function SpeechProcessingWorkspace({
                           jobStatus={activeJob.status as ProcJobStatus}
                           hasReport={!!feedback}
                           failed={activeJob.status === "failed"}
+                          currentStep={activeJob.current_step}
                         />
                         {activeJob.status !== "failed" && (
                           <DebateAnatomy

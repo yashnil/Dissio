@@ -14,6 +14,8 @@ interface SpeechProcessingTimelineProps {
   jobStatus: ProcJobStatus;
   hasReport: boolean;
   failed: boolean;
+  /** The job's real current_step — enables the fine-grained stage sequence. */
+  currentStep?: string | null;
 }
 
 function StageIcon({ status }: { status: ProcStageStatus }) {
@@ -40,8 +42,9 @@ export default function SpeechProcessingTimeline({
   jobStatus,
   hasReport,
   failed,
+  currentStep,
 }: SpeechProcessingTimelineProps) {
-  const stages = deriveProcessingStages({ jobStatus, hasReport, failed });
+  const stages = deriveProcessingStages({ jobStatus, hasReport, failed, currentStep });
   const headline = processingHeadline(stages);
   const analysisActive = stages.find((s) => s.id === "analysis")?.status === "active";
 

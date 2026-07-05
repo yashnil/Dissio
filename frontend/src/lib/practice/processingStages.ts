@@ -1,16 +1,18 @@
 /**
  * Honest processing-stage model.
  *
- * Dissio's backend exposes a coarse job status (queued/running/succeeded/
- * failed), not per-category telemetry. So we present a small, truthful set of
- * high-level stages and list the analysis CATEGORIES as an *explanatory* view —
- * never marking a category complete from elapsed time, never a fake percentage.
+ * The analysis job reports a real `current_step` while running (transcribing →
+ * extracting_flow → generating_feedback → generating_drills → finalizing).
+ * When we have it, we show the matching fine-grained stage sequence — earlier
+ * stages are genuinely complete because the pipeline is strictly ordered.
+ * When we don't (queued, legacy jobs, unknown steps), we fall back to a coarse
+ * truthful set of stages. Never a fake percentage, never time-based progress.
  */
 
 export type ProcStageStatus = "done" | "active" | "upcoming" | "failed";
 
 export interface ProcStage {
-  id: "input" | "analysis" | "assembling" | "ready";
+  id: string;
   label: string;
   status: ProcStageStatus;
 }
@@ -24,7 +26,29 @@ export interface ProcessingStageInput {
   hasReport: boolean;
   /** True when analysis failed (and not recovered). */
   failed: boolean;
+  /** The job's real current_step, when known. Enables fine-grained stages. */
+  currentStep?: string | null;
 }
+
+// ── Fine-grained stages (from the job's real current_step) ───────────────────
+
+/** Backend current_step → 0-based index in FINE_STAGES. */
+const STEP_TO_FINE_INDEX: Record<string, number> = {
+  transcribing: 0,
+  delivery_analysis: 1, // runs after transcription, within argument analysis
+  extracting_flow: 1,
+  generating_feedback: 2,
+  generating_drills: 3,
+  finalizing: 4,
+};
+
+const FINE_STAGES: { id: string; label: string }[] = [
+  { id: "transcribing", label: "Transcribing" },
+  { id: "extracting", label: "Analyzing arguments" },
+  { id: "ballot", label: "Generating ballot" },
+  { id: "drills", label: "Creating drills" },
+  { id: "validating", label: "Validating" },
+];
 
 /**
  * The categories Dissio examines during "analysis running". Shown as an
@@ -41,10 +65,26 @@ export const ANALYSIS_CATEGORIES = [
 ] as const;
 
 export function deriveProcessingStages(input: ProcessingStageInput): ProcStage[] {
-  const { jobStatus, hasReport, failed } = input;
+  const { jobStatus, hasReport, failed, currentStep } = input;
 
   // Input is always secured by the time processing renders.
   const inputStage: ProcStage = { id: "input", label: "Input secured", status: "done" };
+
+  // Fine-grained path: a running job with a recognized real step.
+  const fineIndex =
+    jobStatus === "running" && currentStep != null
+      ? STEP_TO_FINE_INDEX[currentStep]
+      : undefined;
+  if (fineIndex !== undefined && !failed && !hasReport) {
+    return [
+      inputStage,
+      ...FINE_STAGES.map((s, i): ProcStage => ({
+        ...s,
+        status: i < fineIndex ? "done" : i === fineIndex ? "active" : "upcoming",
+      })),
+      { id: "ready", label: "Report ready", status: "upcoming" },
+    ];
+  }
 
   if (failed) {
     return [

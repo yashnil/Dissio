@@ -4,11 +4,12 @@ import {
   findFailedSpeech,
   findInProgressSpeech,
   findUnfinishedCapture,
+  getDrillHandoff,
   QUICK_START_OPTIONS,
   quickStartHref,
   formatSkill,
 } from "@/lib/dashboardHelpers";
-import type { Speech, ProgressSummary } from "@/types";
+import type { Speech, ProgressSummary, IncompleteDrill } from "@/types";
 
 function speech(over: Partial<Speech>): Speech {
   return {
@@ -161,6 +162,48 @@ describe("quick start", () => {
 
   it("deep-links the chosen type into setup", () => {
     expect(quickStartHref("rebuttal")).toBe("/session?type=rebuttal");
+  });
+});
+
+describe("getDrillHandoff", () => {
+  const drill: IncompleteDrill = {
+    id: "d1", speech_id: "s1", title: "Weighing reps", skill_target: "weighing",
+    difficulty: "beginner", status: "assigned", speech_title: "Constructive",
+  };
+
+  it("surfaces the real recommended drill with the queue count", () => {
+    const h = getDrillHandoff({
+      incompleteDrills: [drill, { ...drill, id: "d2" }],
+      feedbackReadyCount: 1,
+      speeches: [speech({ id: "ok" })],
+    });
+    expect(h).toEqual({ kind: "drill", drill, moreCount: 1 });
+  });
+
+  it("no drills but a ballot exists → point at the newest done report", () => {
+    const h = getDrillHandoff({
+      incompleteDrills: [],
+      feedbackReadyCount: 1,
+      speeches: [
+        speech({ id: "old", status: "done", updated_at: "2026-06-01T00:00:00Z" }),
+        speech({ id: "new", status: "done", updated_at: "2026-06-03T00:00:00Z" }),
+      ],
+    });
+    expect(h).toEqual({ kind: "generate-from-report", reportHref: "/speech/new" });
+  });
+
+  it("speeches but no ballot yet → explains drills unlock after analysis (never fakes one)", () => {
+    const h = getDrillHandoff({
+      incompleteDrills: [],
+      feedbackReadyCount: 0,
+      speeches: [speech({ id: "p", status: "analyzing" })],
+    });
+    expect(h.kind).toBe("locked-needs-analysis");
+  });
+
+  it("brand-new user → explains drills unlock after first practice", () => {
+    const h = getDrillHandoff({ incompleteDrills: [], feedbackReadyCount: 0, speeches: [] });
+    expect(h.kind).toBe("locked-needs-practice");
   });
 });
 

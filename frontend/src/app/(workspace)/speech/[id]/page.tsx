@@ -15,9 +15,10 @@ import CoachReviewRail from "@/components/speech/CoachReviewRail";
 import SpeechProcessingWorkspace from "@/components/speech/SpeechProcessingWorkspace";
 import SpeechCaptureWorkspace from "@/components/speech/SpeechCaptureWorkspace";
 import SpeechLoadingState from "@/components/speech/SpeechLoadingState";
+import PartialReportNotice from "@/components/speech/PartialReportNotice";
 import SpeechNotFoundState from "@/components/speech/SpeechNotFoundState";
 import SpeechFailureState from "@/components/speech/SpeechFailureState";
-import { StatusBadge, WorkspaceCard, getVerifiedOverallScore } from "@/components/speech/reportPrimitives";
+import { WorkspaceCard, getVerifiedOverallScore } from "@/components/speech/reportPrimitives";
 import WorkflowStepper from "@/components/WorkflowStepper";
 import { type JudgeViewMode } from "@/components/JudgeModeSelector";
 import ReportVerdictPanel from "@/components/ReportVerdictPanel";
@@ -658,6 +659,20 @@ export default function SpeechPage() {
           {!isComplete && (
             <motion.div variants={staggerChild}>
               <WorkflowStepper steps={steps} />
+            </motion.div>
+          )}
+
+          {/* Partial report — marked done but the ballot artifact is missing.
+              Make the gap explicit instead of rendering an empty "ready" report. */}
+          {isComplete && !feedback && (
+            <motion.div variants={staggerChild}>
+              <PartialReportNotice
+                hasTranscript={!!transcript}
+                hasFlow={!!argMap}
+                hasDrills={drills.length > 0}
+                onGenerateFeedback={generateFeedback}
+                generating={genFb}
+              />
             </motion.div>
           )}
 
