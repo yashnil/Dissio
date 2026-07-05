@@ -191,11 +191,13 @@ export default function DashboardPage() {
         ]);
         setSpeeches(speechesData);
         setProgress(progressData);
+        // Show the dashboard immediately — critical data is ready
+        setLoading(false);
 
-        try {
-          const pilotData = await apiFetch<PilotSummary>(`/users/${data.user.id}/pilot-summary`);
-          setPilotSummary(pilotData);
-        } catch { /* non-critical */ }
+        // Non-critical secondary data loads independently in the background
+        apiFetch<PilotSummary>(`/users/${data.user.id}/pilot-summary`)
+          .then((pilotData) => setPilotSummary(pilotData))
+          .catch(() => { /* non-critical */ });
 
         apiFetch<Workout[]>(`/workouts?user_id=${data.user.id}`)
           .then((ws) => { if (ws.length > 0) setLatestWorkout(ws[0]); })
@@ -213,14 +215,14 @@ export default function DashboardPage() {
           .catch(() => { setNextTrainingAction(null); })
           .finally(() => { setTrainingLoading(false); });
       })
-      .catch((e) =>
+      .catch((e) => {
         setErr(
           isBackendUnreachable(e)
             ? "Could not reach the server. Start the backend and refresh."
             : "Could not load your data. Please refresh and try again.",
-        ),
-      )
-      .finally(() => setLoading(false));
+        );
+        setLoading(false);
+      });
   }, [router]);
 
   async function handleDelete() {
