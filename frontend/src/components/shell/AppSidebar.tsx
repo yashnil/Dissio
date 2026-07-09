@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Mic, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { APP_NAV_GROUPS, isNavItemActive } from "@/lib/navItems";
+import { APP_NAV_GROUPS, BRAND_LINK, isNavItemActive } from "@/lib/navItems";
 import { usePersistentToggle } from "@/hooks/usePersistentToggle";
 import {
   TooltipRoot,
@@ -31,10 +31,12 @@ export default function AppSidebar() {
       )}
       aria-label="Primary navigation"
     >
-      {/* Brand */}
+      {/* Brand — always keyboard-focusable with an accessible name, even when
+          the sidebar is collapsed and the wordmark text is hidden. */}
       <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         <Link
-          href="/dashboard"
+          href={BRAND_LINK.href}
+          aria-label={BRAND_LINK.ariaLabel}
           className="group flex items-center gap-2.5 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
         >
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-lav transition-colors group-hover:bg-lav-hi">

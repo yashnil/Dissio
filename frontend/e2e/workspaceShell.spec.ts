@@ -155,6 +155,20 @@ test.describe("URL preservation — route group transparent to user", () => {
 // ── Demo sidebar nav items include Full Round and Library (desktop only) ──────
 
 test.describe("sidebar navigation items (demo page — desktop)", () => {
+  test("brand/logo is a labeled, keyboard-focusable link to the dashboard", async ({ page, viewport }) => {
+    test.skip(!isDesktop(viewport), "Sidebar is desktop-only");
+
+    await page.goto("/demo", { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle");
+    const brand = page.locator(
+      '[aria-label="Primary navigation"] a[aria-label="Dissio — go to dashboard"]',
+    );
+    await expect(brand).toBeVisible({ timeout: 5_000 });
+    await expect(brand).toHaveAttribute("href", "/dashboard");
+    await brand.focus();
+    await expect(brand).toBeFocused();
+  });
+
   test("Full Round nav link is present in sidebar", async ({ page, viewport }) => {
     test.skip(!isDesktop(viewport), "Sidebar is desktop-only");
 

@@ -27,7 +27,11 @@ import LoopStageCard from "@/components/dashboard/LoopStageCard";
 import LatestPracticeCard from "@/components/dashboard/LatestPracticeCard";
 import DrillHandoffCard from "@/components/dashboard/DrillHandoffCard";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
-import { deriveDashboardState } from "@/lib/dashboardModel";
+import {
+  deriveDashboardState,
+  deriveDashboardContentState,
+  DASHBOARD_FRAME,
+} from "@/lib/dashboardModel";
 import { getDrillHandoff } from "@/lib/dashboardHelpers";
 import {
   getSpeechListReadiness,
@@ -357,6 +361,7 @@ export default function DashboardPage() {
     } finally { setDeleting(false); }
   }
 
+  const contentState = deriveDashboardContentState(loading, err);
   const state   = deriveDashboardState(speeches, progress);
   const latestPractice = getLatestPracticeSummary(speeches);
   const drillHandoff = getDrillHandoff({
@@ -375,18 +380,37 @@ export default function DashboardPage() {
         initial="hidden"
         animate="show"
       >
+        {/* Stable frame — heading + primary action render immediately, before
+            auth or any data resolves. Never gated on loading. */}
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-title text-ink">{DASHBOARD_FRAME.heading}</h1>
+          <Button asChild size="sm" className="shrink-0 gap-1.5">
+            <Link href={DASHBOARD_FRAME.primaryCtaHref}>
+              <Play size={12} aria-hidden="true" />
+              {DASHBOARD_FRAME.primaryCtaLabel}
+            </Link>
+          </Button>
+        </div>
+
         {/* Error */}
-        {!loading && err && (
+        {contentState === "error" && (
           <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden="true" />
             <p className="text-sm text-danger">{err}</p>
           </div>
         )}
 
-        {/* Loading skeleton */}
-        {loading && <DashboardSkeleton />}
+        {/* Loading — local section skeletons under the real frame */}
+        {contentState === "loading" && (
+          <div className="flex flex-col gap-3">
+            <p role="status" className="text-sm text-ink-subtle">
+              {DASHBOARD_FRAME.loadingCopy}
+            </p>
+            <DashboardSkeleton />
+          </div>
+        )}
 
-        {!loading && (
+        {contentState === "ready" && (
           <>
             {/* 0. Report-ready handoff — appears only when a report finished
                 while the user was watching the dashboard. Dismissible. */}

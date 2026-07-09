@@ -47,6 +47,37 @@ export function deriveUserStage(
   return "has-speech";
 }
 
+// ── Stable page frame ──────────────────────────────────────────────────────────
+
+/**
+ * The dashboard frame that must be visible IMMEDIATELY — before auth resolves
+ * or any data loads. The page renders these unconditionally so a slow or cold
+ * backend can never leave the user staring at an anonymous skeleton with no
+ * heading and no way to act.
+ */
+export const DASHBOARD_FRAME = {
+  heading: "Practice dashboard",
+  primaryCtaLabel: "Start practice",
+  primaryCtaHref: "/session",
+  loadingCopy: "Loading your recent practices — you can start a new one right away.",
+} as const;
+
+export type DashboardContentState = "loading" | "error" | "ready";
+
+/**
+ * Which content region renders under the always-visible frame. Loading wins
+ * while critical data is in flight; a load failure must clear loading and
+ * land in "error" (actionable message), never back in a skeleton.
+ */
+export function deriveDashboardContentState(
+  loading: boolean,
+  err: string,
+): DashboardContentState {
+  if (loading) return "loading";
+  if (err) return "error";
+  return "ready";
+}
+
 // ── Dashboard state ────────────────────────────────────────────────────────────
 
 export interface DashboardState {

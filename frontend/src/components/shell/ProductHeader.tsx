@@ -6,6 +6,7 @@ import { Mic, Search } from "lucide-react";
 import ThemeToggle from "@/components/shell/ThemeToggle";
 import UserMenu from "@/components/shell/UserMenu";
 import { openCommandMenu } from "@/components/shell/CommandMenu";
+import { BRAND_LINK } from "@/lib/navItems";
 
 interface ProductHeaderProps {
   /** Optional left-side context (breadcrumbs, page label). */
@@ -20,9 +21,9 @@ export default function ProductHeader({ leftSlot, rightSlot }: ProductHeaderProp
       <div className="flex min-w-0 items-center gap-2">
         {/* Mobile brand (sidebar is hidden on mobile) */}
         <Link
-          href="/dashboard"
-          className="flex items-center gap-2 md:hidden"
-          aria-label="Dissio home"
+          href={BRAND_LINK.href}
+          className="flex items-center gap-2 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 md:hidden"
+          aria-label={BRAND_LINK.ariaLabel}
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lav">
             <Mic size={14} className="text-white" />

@@ -332,3 +332,44 @@ describe("LOOP_STEP_INDEX values are stable across all stages", () => {
     expect(LOOP_STEP_INDEX["has-drills"]).toBeLessThan(LOOP_STEP_INDEX["repeating"]);
   });
 });
+
+// ── Stable page frame + content state (loading must never be a dead page) ────
+
+import {
+  DASHBOARD_FRAME,
+  deriveDashboardContentState,
+} from "@/lib/dashboardModel";
+
+describe("DASHBOARD_FRAME", () => {
+  it("provides a real heading and primary action for the always-visible frame", () => {
+    // The page renders these unconditionally — even while loading, the user
+    // sees a heading and can start a practice. Never a skeleton-only page.
+    expect(DASHBOARD_FRAME.heading).toBe("Practice dashboard");
+    expect(DASHBOARD_FRAME.primaryCtaLabel).toBe("Start practice");
+    expect(DASHBOARD_FRAME.primaryCtaHref).toBe("/session");
+  });
+
+  it("loading copy tells the user they can act right away", () => {
+    expect(DASHBOARD_FRAME.loadingCopy.toLowerCase()).toContain("start a new one");
+  });
+});
+
+describe("deriveDashboardContentState", () => {
+  it("loading while critical data is in flight", () => {
+    expect(deriveDashboardContentState(true, "")).toBe("loading");
+  });
+
+  it("a load failure clears loading into an actionable error, never a skeleton", () => {
+    expect(deriveDashboardContentState(false, "Could not reach the server.")).toBe("error");
+  });
+
+  it("ready once data arrives without error", () => {
+    expect(deriveDashboardContentState(false, "")).toBe("ready");
+  });
+
+  it("ready + no speeches still routes to the first-run empty state", () => {
+    // Content state says "ready"; the empty-state gate is userStage.
+    expect(deriveDashboardContentState(false, "")).toBe("ready");
+    expect(deriveDashboardState([], null).userStage).toBe("new-user");
+  });
+});

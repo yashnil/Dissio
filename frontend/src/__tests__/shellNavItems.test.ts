@@ -165,3 +165,25 @@ describe("reducedSafe", () => {
     expect(MOTION_NOOP.animate).toEqual({});
   });
 });
+
+// ── Brand link (top-left logo) ────────────────────────────────────────────────
+
+import { BRAND_LINK } from "@/lib/navItems";
+
+describe("BRAND_LINK", () => {
+  test("has an href pointing at the in-app home (dashboard)", () => {
+    expect(BRAND_LINK.href).toBe("/dashboard");
+  });
+
+  test("has an accessible label naming the destination", () => {
+    expect(BRAND_LINK.ariaLabel).toContain("Dissio");
+    expect(BRAND_LINK.ariaLabel.toLowerCase()).toContain("dashboard");
+  });
+
+  test("matches the Home nav item's destination (no conflicting conventions)", () => {
+    const allItems = flattenNavGroups();
+    const home = allItems.find((i) => i.href === "/dashboard");
+    expect(home).toBeDefined();
+    expect(BRAND_LINK.href).toBe(home!.href);
+  });
+});
