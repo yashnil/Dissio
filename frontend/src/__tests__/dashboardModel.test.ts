@@ -337,6 +337,8 @@ describe("LOOP_STEP_INDEX values are stable across all stages", () => {
 
 import {
   DASHBOARD_FRAME,
+  DASHBOARD_LOADING_GRACE_MS,
+  DASHBOARD_DELAYED_LOADING,
   deriveDashboardContentState,
 } from "@/lib/dashboardModel";
 
@@ -354,22 +356,42 @@ describe("DASHBOARD_FRAME", () => {
   });
 });
 
+describe("delayed-loading fallback", () => {
+  it("grace period is short — skeletons can never dominate a cold start", () => {
+    expect(DASHBOARD_LOADING_GRACE_MS).toBeGreaterThanOrEqual(1000);
+    expect(DASHBOARD_LOADING_GRACE_MS).toBeLessThanOrEqual(2000);
+  });
+
+  it("delayed copy is useful and truthful (history unknown, not empty)", () => {
+    expect(DASHBOARD_DELAYED_LOADING.title).toBe("Still loading your recent practices.");
+    expect(DASHBOARD_DELAYED_LOADING.body).toContain("start a new practice now");
+    expect(DASHBOARD_DELAYED_LOADING.body).toContain("when the server responds");
+    expect(DASHBOARD_DELAYED_LOADING.retryLabel).toBe("Retry loading");
+  });
+});
+
 describe("deriveDashboardContentState", () => {
-  it("loading while critical data is in flight", () => {
-    expect(deriveDashboardContentState(true, "")).toBe("loading");
+  it("fresh loading within the grace period", () => {
+    expect(deriveDashboardContentState(true, "", false)).toBe("loading-fresh");
   });
 
-  it("a load failure clears loading into an actionable error, never a skeleton", () => {
-    expect(deriveDashboardContentState(false, "Could not reach the server.")).toBe("error");
+  it("delayed loading after the grace period elapses", () => {
+    expect(deriveDashboardContentState(true, "", true)).toBe("loading-delayed");
   });
 
-  it("ready once data arrives without error", () => {
-    expect(deriveDashboardContentState(false, "")).toBe("ready");
+  it("a load failure clears loading into an actionable error — error wins over delayed", () => {
+    expect(deriveDashboardContentState(false, "Could not reach the server.", true)).toBe("error");
+    expect(deriveDashboardContentState(false, "Could not reach the server.", false)).toBe("error");
+  });
+
+  it("ready wins once data arrives, regardless of a stale delayed flag", () => {
+    expect(deriveDashboardContentState(false, "", true)).toBe("ready");
+    expect(deriveDashboardContentState(false, "", false)).toBe("ready");
   });
 
   it("ready + no speeches still routes to the first-run empty state", () => {
     // Content state says "ready"; the empty-state gate is userStage.
-    expect(deriveDashboardContentState(false, "")).toBe("ready");
+    expect(deriveDashboardContentState(false, "", false)).toBe("ready");
     expect(deriveDashboardState([], null).userStage).toBe("new-user");
   });
 });

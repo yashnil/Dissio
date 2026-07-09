@@ -31,6 +31,8 @@ import {
   deriveDashboardState,
   deriveDashboardContentState,
   DASHBOARD_FRAME,
+  DASHBOARD_LOADING_GRACE_MS,
+  DASHBOARD_DELAYED_LOADING,
 } from "@/lib/dashboardModel";
 import { getDrillHandoff } from "@/lib/dashboardHelpers";
 import {
@@ -201,8 +203,16 @@ export default function DashboardPage() {
   const [deleting,      setDeleting]     = useState(false);
   const [deleteErr,     setDeleteErr]    = useState("");
 
-  useEffect(() => {
-    createClient().auth.getUser()
+  // Delayed-loading flag: a brief skeleton is fine; past the grace period the
+  // loading area must become useful (start a practice, retry) instead of a
+  // wall of skeletons. Reset wherever loading completes.
+  const [delayedLoading, setDelayedLoading] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  // Single fetch path for the critical dashboard data — used by the initial
+  // mount AND by the delayed/error "Retry loading" action.
+  const loadDashboard = useCallback(() => {
+    return createClient().auth.getUser()
       .then(async ({ data }) => {
         if (!data.user) { router.replace("/login"); return; }
         setUserId(data.user.id);
@@ -215,8 +225,10 @@ export default function DashboardPage() {
         ]);
         setSpeeches(speechesData);
         setProgress(progressData);
+        setErr("");
         // Show the dashboard immediately — critical data is ready
         setLoading(false);
+        setDelayedLoading(false);
 
         // Non-critical secondary data loads independently in the background
         apiFetch<PilotSummary>(`/users/${data.user.id}/pilot-summary`)
@@ -246,8 +258,28 @@ export default function DashboardPage() {
             : "Could not load your data. Please refresh and try again.",
         );
         setLoading(false);
+        setDelayedLoading(false);
       });
   }, [router]);
+
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // ── Delayed-loading grace period ───────────────────────────────────────────
+  useEffect(() => {
+    if (!loading) return; // delayedLoading is reset where loading completes
+    const t = setTimeout(() => setDelayedLoading(true), DASHBOARD_LOADING_GRACE_MS);
+    return () => clearTimeout(t);
+  }, [loading, loadAttempt]);
+
+  /** Re-run the same fetch path with a fresh grace period. Never unmounts the
+   *  frame — only the content region below the heading changes. */
+  function retryLoading() {
+    setErr("");
+    setDelayedLoading(false);
+    setLoadAttempt((n) => n + 1);
+    setLoading(true);
+    loadDashboard();
+  }
 
   // ── Liveness: background refresh while any row is actively analyzing ──────
   // Polls the same batched endpoint (no N+1) and quietly swaps row data in.
@@ -361,7 +393,7 @@ export default function DashboardPage() {
     } finally { setDeleting(false); }
   }
 
-  const contentState = deriveDashboardContentState(loading, err);
+  const contentState = deriveDashboardContentState(loading, err, delayedLoading);
   const state   = deriveDashboardState(speeches, progress);
   const latestPractice = getLatestPracticeSummary(speeches);
   const drillHandoff = getDrillHandoff({
@@ -396,17 +428,53 @@ export default function DashboardPage() {
         {contentState === "error" && (
           <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden="true" />
-            <p className="text-sm text-danger">{err}</p>
+            <p className="flex-1 text-sm text-danger">{err}</p>
+            <Button size="sm" variant="secondary" className="shrink-0" onClick={retryLoading}>
+              {DASHBOARD_DELAYED_LOADING.retryLabel}
+            </Button>
           </div>
         )}
 
-        {/* Loading — local section skeletons under the real frame */}
-        {contentState === "loading" && (
+        {/* Loading (within grace period) — brief local skeletons under the frame */}
+        {contentState === "loading-fresh" && (
           <div className="flex flex-col gap-3">
             <p role="status" className="text-sm text-ink-subtle">
               {DASHBOARD_FRAME.loadingCopy}
             </p>
             <DashboardSkeleton />
+          </div>
+        )}
+
+        {/* Loading (grace period elapsed) — useful fallback, no skeleton wall.
+            History is still UNKNOWN here, so we don't render an empty state. */}
+        {contentState === "loading-delayed" && (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface-1 px-5 py-5"
+          >
+            <div className="flex items-center gap-2.5">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full bg-lav motion-safe:animate-pulse"
+                aria-hidden="true"
+              />
+              <p className="text-sm font-semibold text-ink">
+                {DASHBOARD_DELAYED_LOADING.title}
+              </p>
+            </div>
+            <p className="text-sm leading-relaxed text-ink-subtle">
+              {DASHBOARD_DELAYED_LOADING.body}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button asChild size="sm" className="gap-1.5">
+                <Link href={DASHBOARD_FRAME.primaryCtaHref}>
+                  <Play size={12} aria-hidden="true" />
+                  {DASHBOARD_FRAME.primaryCtaLabel}
+                </Link>
+              </Button>
+              <Button size="sm" variant="secondary" onClick={retryLoading}>
+                {DASHBOARD_DELAYED_LOADING.retryLabel}
+              </Button>
+            </div>
           </div>
         )}
 

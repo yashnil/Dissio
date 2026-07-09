@@ -171,19 +171,25 @@ describe("reducedSafe", () => {
 import { BRAND_LINK } from "@/lib/navItems";
 
 describe("BRAND_LINK", () => {
-  test("has an href pointing at the in-app home (dashboard)", () => {
-    expect(BRAND_LINK.href).toBe("/dashboard");
+  test("brand href points at the public homepage", () => {
+    expect(BRAND_LINK.href).toBe("/");
   });
 
-  test("has an accessible label naming the destination", () => {
+  test("accessible label names the homepage destination", () => {
     expect(BRAND_LINK.ariaLabel).toContain("Dissio");
-    expect(BRAND_LINK.ariaLabel.toLowerCase()).toContain("dashboard");
+    expect(BRAND_LINK.ariaLabel.toLowerCase()).toContain("homepage");
   });
 
-  test("matches the Home nav item's destination (no conflicting conventions)", () => {
+  test("Home nav item still points at /dashboard", () => {
     const allItems = flattenNavGroups();
     const home = allItems.find((i) => i.href === "/dashboard");
     expect(home).toBeDefined();
-    expect(BRAND_LINK.href).toBe(home!.href);
+  });
+
+  test("brand and Home nav are intentionally different destinations", () => {
+    // Brand → public homepage front door; Home nav item → in-app dashboard.
+    const allItems = flattenNavGroups();
+    const home = allItems.find((i) => i.href === "/dashboard");
+    expect(BRAND_LINK.href).not.toBe(home!.href);
   });
 });

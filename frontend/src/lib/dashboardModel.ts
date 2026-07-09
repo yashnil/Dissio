@@ -62,18 +62,40 @@ export const DASHBOARD_FRAME = {
   loadingCopy: "Loading your recent practices — you can start a new one right away.",
 } as const;
 
-export type DashboardContentState = "loading" | "error" | "ready";
+/**
+ * How long the initial skeleton may stay up before it's replaced with the
+ * useful delayed-loading fallback. Short enough that a cold backend never
+ * makes the dashboard feel like a blank loading page.
+ */
+export const DASHBOARD_LOADING_GRACE_MS = 1500;
+
+/** Copy + actions for the post-grace-period fallback. Truthful: history is
+ *  still UNKNOWN (not empty) — the user just doesn't have to wait for it. */
+export const DASHBOARD_DELAYED_LOADING = {
+  title: "Still loading your recent practices.",
+  body: "You can start a new practice now. We’ll load your history when the server responds.",
+  retryLabel: "Retry loading",
+} as const;
+
+export type DashboardContentState =
+  | "loading-fresh"
+  | "loading-delayed"
+  | "error"
+  | "ready";
 
 /**
- * Which content region renders under the always-visible frame. Loading wins
- * while critical data is in flight; a load failure must clear loading and
- * land in "error" (actionable message), never back in a skeleton.
+ * Which content region renders under the always-visible frame.
+ * - loading-fresh: brief local skeleton, within the grace period.
+ * - loading-delayed: grace period elapsed — useful copy + Start/Retry actions.
+ * - error: fetch failed (wins over any delayed flag once loading clears).
+ * - ready: data arrived.
  */
 export function deriveDashboardContentState(
   loading: boolean,
   err: string,
+  delayedLoading: boolean,
 ): DashboardContentState {
-  if (loading) return "loading";
+  if (loading) return delayedLoading ? "loading-delayed" : "loading-fresh";
   if (err) return "error";
   return "ready";
 }

@@ -37,14 +37,15 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 
 /**
  * The app shell's brand/logo link (top-left in the sidebar, mobile header).
- * In-app "home" is the dashboard by product convention (the Home nav item
- * also points there); the public homepage lives at / for logged-out visitors.
+ * The brand goes to the PUBLIC HOMEPAGE at / — users expect clicking a logo
+ * to reach the product's front door. In-app "home" remains the dashboard via
+ * the sidebar Home nav item (/dashboard); the two are intentionally different.
  * Shared here so every brand placement navigates and announces identically —
  * including when the sidebar is collapsed and the wordmark text is hidden.
  */
 export const BRAND_LINK = {
-  href: "/dashboard",
-  ariaLabel: "Dissio — go to dashboard",
+  href: "/",
+  ariaLabel: "Dissio — go to homepage",
 } as const;
 
 /** Is `item` active for the current `pathname`? Exact match or prefix match. */
