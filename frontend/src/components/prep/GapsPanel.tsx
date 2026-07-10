@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import type { PrepGap, GapSeverity } from "@/types/prep";
-import { AlertTriangle, Info, AlertCircle } from "lucide-react";
+import { AlertTriangle, Info, AlertCircle, ArrowRight } from "lucide-react";
+import { mapGapToTarget } from "@/lib/prepModel";
 
 const SEVERITY_LABELS: Record<GapSeverity, string> = {
   critical: "Critical",
@@ -91,6 +93,18 @@ export function GapsPanel({ gaps }: GapsPanelProps) {
                   {gap.is_deterministic && (
                     <span className="text-[9px] opacity-60">deterministic</span>
                   )}
+                  {(() => {
+                    const target = mapGapToTarget(gap);
+                    return (
+                      <Link
+                        href={target.href}
+                        title={target.explanation}
+                        className="ml-auto flex items-center gap-1 rounded text-[11px] font-medium text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+                      >
+                        {target.actionLabel} <ArrowRight size={10} aria-hidden="true" />
+                      </Link>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
