@@ -8,6 +8,13 @@ import { JudgeProfileSelector } from "@/components/judge-adaptation/JudgeProfile
 import { JudgeReadinessCard } from "@/components/judge-adaptation/JudgeReadinessCard";
 import { JudgeWorkoutCard } from "@/components/judge-adaptation/JudgeWorkoutCard";
 import { createClient } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
+import { MaterialPicker, SelectedMaterialPreview } from "@/components/judge-adaptation/MaterialPicker";
+import {
+  adaptationRequestBody,
+  deriveAdaptationReadiness,
+  type SelectedMaterial,
+} from "@/lib/judgeAdaptationModel";
 import type {
   JudgeAdaptationResult,
   JudgeComparisonResult,
@@ -16,8 +23,6 @@ import type {
   JudgeType,
   JudgeWorkoutRow,
 } from "@/types/judgeAdaptation";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Tab = "adapt" | "compare" | "workouts" | "readiness";
 
@@ -39,8 +44,7 @@ function JudgeAdaptationContent() {
   const [selectedJudge, setSelectedJudge] = useState<JudgeType | null>("lay");
   const [compareJudge, setCompareJudge] = useState<JudgeType | null>("flow");
 
-  const [sourceType, setSourceType] = useState<string>("evidence");
-  const [sourceId, setSourceId] = useState<string>("");
+  const [material, setMaterial] = useState<SelectedMaterial | null>(null);
 
   const [adaptResult, setAdaptResult] = useState<JudgeAdaptationResult | null>(null);
   const [compareResult, setCompareResult] = useState<JudgeComparisonResult | null>(null);
@@ -71,107 +75,104 @@ function JudgeAdaptationContent() {
   // Load profiles once authenticated
   useEffect(() => {
     if (!userId) return;
-    fetch(`${API}/judge-adaptation/profiles?user_id=${userId}`)
-      .then((r) => r.json())
-      .then(setProfiles)
-      .catch(() => {});
+    const t = setTimeout(() => {
+      apiFetch<JudgeProfile[]>(`/judge-adaptation/profiles?user_id=${userId}`)
+        .then(setProfiles)
+        .catch(() => {});
+    }, 0);
+    return () => clearTimeout(t);
   }, [userId]);
 
   // Load workouts when tab switches
   useEffect(() => {
     if (tab !== "workouts" || !userId) return;
-    fetch(`${API}/judge-adaptation/workouts?user_id=${userId}`)
-      .then((r) => r.json())
-      .then((data) => setWorkouts(Array.isArray(data) ? data : []))
-      .catch(() => {});
+    const t = setTimeout(() => {
+      apiFetch<JudgeWorkoutRow[]>(`/judge-adaptation/workouts?user_id=${userId}`)
+        .then((data) => setWorkouts(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }, 0);
+    return () => clearTimeout(t);
   }, [tab, userId]);
 
+  /** Selecting new material invalidates any previously generated output. */
+  function handleSelectMaterial(m: SelectedMaterial) {
+    setMaterial(m);
+    setAdaptResult(null);
+    setCompareResult(null);
+    setReadinessReport(null);
+    setError(null);
+  }
+
+  const readiness = deriveAdaptationReadiness(material, selectedJudge);
+
   async function runAdaptation() {
-    if (!selectedJudge || !sourceId.trim()) {
-      setError("Enter a source ID and select a judge type.");
-      return;
-    }
+    if (readiness.state !== "ready" || !material || !selectedJudge || !userId) return;
     setError(null);
     setIsAdapting(true);
     try {
-      const r = await fetch(`${API}/judge-adaptation/adapt`, {
+      const result = await apiFetch<JudgeAdaptationResult>("/judge-adaptation/adapt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          judge_type: selectedJudge,
-          source_type: sourceType,
-          source_id: sourceId,
-        }),
+        body: JSON.stringify(adaptationRequestBody(userId, selectedJudge, material)),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setAdaptResult(await r.json());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Adaptation failed.");
+      setAdaptResult(result);
+    } catch {
+      setError("Adaptation didn't generate. Your saved material is untouched — retry in a moment.");
     } finally {
       setIsAdapting(false);
     }
   }
 
   async function runComparison() {
-    if (!selectedJudge || !compareJudge || !sourceId.trim()) {
-      setError("Enter a source ID and select two judge types.");
-      return;
-    }
+    if (readiness.state !== "ready" || !material || !selectedJudge || !compareJudge || !userId) return;
     setError(null);
     setIsComparing(true);
     try {
-      const r = await fetch(`${API}/judge-adaptation/compare`, {
+      const base = adaptationRequestBody(userId, selectedJudge, material);
+      const result = await apiFetch<JudgeComparisonResult>("/judge-adaptation/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
+          user_id: base.user_id,
           judge_types: [selectedJudge, compareJudge],
-          source_type: sourceType,
-          source_id: sourceId,
+          source_type: base.source_type,
+          source_id: base.source_id,
         }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setCompareResult(await r.json());
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Comparison failed.");
+      setCompareResult(result);
+    } catch {
+      setError("Comparison didn't generate. Retry in a moment.");
     } finally {
       setIsComparing(false);
     }
   }
 
   async function loadReadiness() {
-    if (!selectedJudge || !sourceId.trim()) return;
+    if (readiness.state !== "ready" || !material || !selectedJudge || !userId) return;
     try {
-      const r = await fetch(`${API}/judge-adaptation/readiness-score`, {
+      const result = await apiFetch<JudgeReadinessReport>("/judge-adaptation/readiness-score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          judge_type: selectedJudge,
-          source_type: sourceType,
-          source_id: sourceId,
-        }),
+        body: JSON.stringify(adaptationRequestBody(userId, selectedJudge, material)),
       });
-      if (!r.ok) return;
-      setReadinessReport(await r.json());
-    } catch {}
+      setReadinessReport(result);
+    } catch { /* keep prior state */ }
   }
 
   async function generateWorkout() {
-    if (!selectedJudge || !sourceId.trim()) return;
+    if (readiness.state !== "ready" || !material || !selectedJudge || !userId) return;
     try {
+      const base = adaptationRequestBody(userId, selectedJudge, material);
       const params = new URLSearchParams({
-        user_id: userId ?? "",
-        judge_type: selectedJudge,
-        source_type: sourceType,
-        source_id: sourceId,
+        user_id: base.user_id,
+        judge_type: base.judge_type,
+        source_type: base.source_type,
+        source_id: base.source_id,
       });
-      const r = await fetch(`${API}/judge-adaptation/workouts/generate?${params}`, {
-        method: "POST",
-      });
-      if (!r.ok) return;
-      const workout = await r.json();
+      const workout = await apiFetch<JudgeWorkoutRow>(
+        `/judge-adaptation/workouts/generate?${params}`,
+        { method: "POST" },
+      );
       setWorkouts((prev) => [{ ...workout, id: Date.now().toString(), status: "not_started", created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]);
     } catch {}
   }
@@ -180,7 +181,7 @@ function JudgeAdaptationContent() {
     try {
       const params = new URLSearchParams({ user_id: userId ?? "" });
       if (notes) params.set("student_notes", notes);
-      await fetch(`${API}/judge-adaptation/workouts/${id}/complete?${params}`, {
+      await apiFetch(`/judge-adaptation/workouts/${id}/complete?${params}`, {
         method: "PATCH",
       });
       setWorkouts((prev) =>
@@ -211,52 +212,20 @@ function JudgeAdaptationContent() {
         </p>
       </div>
 
-      {/* Source input */}
-      <div className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4 space-y-3">
-        <p className="text-xs font-medium text-[var(--ink-subtle)] uppercase tracking-wide">
-          Source Material
-        </p>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label
-              htmlFor="source-type-select"
-              className="text-xs text-[var(--ink-subtle)] mb-1 block"
-            >
-              Source Type
-            </label>
-            <select
-              id="source-type-select"
-              value={sourceType}
-              onChange={(e) => setSourceType(e.target.value)}
-              className="w-full text-sm border border-[var(--surface-3)] rounded-md px-3 py-2 bg-[var(--surface-1)] focus:outline-none focus:ring-1 focus:ring-[var(--lavender-8)]"
-            >
-              {["evidence", "argument", "frontline", "section", "summary", "final_focus"].map(
-                (t) => (
-                  <option key={t} value={t}>
-                    {t.replace(/_/g, " ")}
-                  </option>
-                )
-              )}
-            </select>
-          </div>
-          <div>
-            <label
-              htmlFor="source-id-input"
-              className="text-xs text-[var(--ink-subtle)] mb-1 block"
-            >
-              Source ID
-            </label>
-            <input
-              id="source-id-input"
-              type="text"
-              value={sourceId}
-              onChange={(e) => setSourceId(e.target.value)}
-              placeholder="card ID, argument ID, etc."
-              className="w-full text-sm border border-[var(--surface-3)] rounded-md px-3 py-2 bg-[var(--surface-1)] focus:outline-none focus:ring-1 focus:ring-[var(--lavender-8)]"
-            />
-          </div>
-        </div>
-      </div>
+      {/* Material selection — real saved materials, picked by title */}
+      <section
+        aria-label="Material to adapt"
+        className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4 space-y-3"
+      >
+        <h2 className="text-xs font-medium text-[var(--ink-subtle)] uppercase tracking-wide">
+          Material to adapt
+        </h2>
+        {material ? (
+          <SelectedMaterialPreview material={material} onChange={() => setMaterial(null)} />
+        ) : (
+          <MaterialPicker userId={userId} onSelect={handleSelectMaterial} selectedId={null} />
+        )}
+      </section>
 
       {/* Judge selector */}
       <div className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4">
@@ -293,12 +262,23 @@ function JudgeAdaptationContent() {
         </div>
       </div>
 
+      {/* Readiness guidance — truthful reason whenever generation is blocked */}
+      {readiness.state !== "ready" && (
+        <p role="status" className="text-xs text-[var(--ink-subtle)]">
+          {readiness.state === "unsafe-material" ? (
+            <span className="text-danger">{readiness.reason}</span>
+          ) : (
+            readiness.reason
+          )}
+        </p>
+      )}
+
       {/* Tab content */}
       {tab === "adapt" && (
         <div className="space-y-4">
           <button
             onClick={runAdaptation}
-            disabled={isAdapting || !selectedJudge}
+            disabled={isAdapting || readiness.state !== "ready"}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[var(--lavender-8)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {isAdapting ? "Generating..." : "Generate Adaptation"}
@@ -306,6 +286,9 @@ function JudgeAdaptationContent() {
 
           {adaptResult && (
             <div className="space-y-4">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ink-subtle)]">
+                Coaching & delivery advice — your evidence text is unchanged
+              </p>
               <div className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4">
                 <p className="text-xs font-medium text-[var(--ink-subtle)] mb-1">Judge Goal</p>
                 <p className="text-sm text-[var(--ink-primary)]">{adaptResult.judge_goal}</p>
@@ -380,12 +363,18 @@ function JudgeAdaptationContent() {
 
           <button
             onClick={runComparison}
-            disabled={isComparing || !selectedJudge || !compareJudge}
+            disabled={isComparing || readiness.state !== "ready" || !compareJudge}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[var(--lavender-8)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {isComparing ? "Comparing..." : "Compare Judges"}
           </button>
 
+          {!compareResult && !isComparing && (
+            <p className="text-sm text-[var(--ink-subtle)]">
+              Nothing generated yet. Pick a material and two judges, then compare —
+              you&rsquo;ll see how the same truthful material lands differently for each.
+            </p>
+          )}
           <JudgeComparisonPanel result={compareResult} isLoading={isComparing} />
         </div>
       )}
@@ -394,7 +383,7 @@ function JudgeAdaptationContent() {
         <div className="space-y-4">
           <button
             onClick={generateWorkout}
-            disabled={!selectedJudge || !sourceId.trim()}
+            disabled={readiness.state !== "ready"}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[var(--lavender-8)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             Generate Workout
@@ -418,7 +407,7 @@ function JudgeAdaptationContent() {
         <div className="space-y-4">
           <button
             onClick={loadReadiness}
-            disabled={!selectedJudge || !sourceId.trim()}
+            disabled={readiness.state !== "ready"}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[var(--lavender-8)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             Compute Readiness
@@ -430,7 +419,7 @@ function JudgeAdaptationContent() {
             <div className="text-center py-8 text-[var(--ink-subtle)]">
               <p className="text-sm">
                 Judge readiness is a separate score from evidence quality and freshness.
-                Select a judge type and source, then click Compute Readiness.
+                Pick a saved material and a judge type, then click Compute Readiness.
               </p>
             </div>
           )}

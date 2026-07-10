@@ -1,6 +1,7 @@
 "use client";
 
 import { JUDGE_TYPE_DESCRIPTIONS, JUDGE_TYPE_LABELS, JudgeProfile, JudgeType } from "@/types/judgeAdaptation";
+import { judgePriorities } from "@/lib/judgeAdaptationModel";
 
 interface Props {
   profiles: JudgeProfile[];
@@ -39,10 +40,15 @@ export function JudgeProfileSelector({ profiles, selected, onSelect, className }
                   : "border-[var(--surface-3)] bg-[var(--surface-2)] text-[var(--ink-primary)] hover:border-[var(--lavender-8)]/50",
               ].join(" ")}
             >
-              <span className="text-base">{JUDGE_ICONS[profile.judge_type]}</span>
+              <span className="text-base" aria-hidden="true">{JUDGE_ICONS[profile.judge_type]}</span>
               <span className="text-sm font-medium leading-tight">
                 {JUDGE_TYPE_LABELS[profile.judge_type]}
               </span>
+              {judgePriorities(profile.judge_type).length > 0 && (
+                <span className="text-[10px] leading-snug text-[var(--ink-subtle)]">
+                  {judgePriorities(profile.judge_type).join(" · ")}
+                </span>
+              )}
               {isSelected && (
                 <span className="text-[10px] text-[var(--lavender-8)] font-medium">Selected</span>
               )}
