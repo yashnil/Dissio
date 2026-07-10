@@ -239,3 +239,222 @@ describe("adaptationRequestBody", () => {
     expect(adaptationRequestBody("u1", "flow", normalizeArgumentMaterial(argRow())).source_type).toBe("argument");
   });
 });
+
+// ── Phase 7B: result/compare normalization, checklist, history, notes ────────
+
+import {
+  normalizeAdaptationResult,
+  deriveUnchangedItems,
+  deriveNextPracticeAction,
+  deriveIntegrityChecklist,
+  normalizeComparisonResult,
+  formatHistoryEntry,
+  formatNoteLabel,
+} from "@/lib/judgeAdaptationModel";
+import type {
+  AdaptationRisk, JudgeAdaptationResult, JudgeComparisonResult,
+} from "@/types/judgeAdaptation";
+
+function risk(over: Partial<AdaptationRisk> = {}): AdaptationRisk {
+  return {
+    category: "jargon_overflow", level: "medium",
+    description: "Too much technical vocabulary for this judge.",
+    how_to_mitigate: "Replace jargon with plain terms.",
+    ...over,
+  };
+}
+
+function adaptation(over: Partial<JudgeAdaptationResult> = {}): JudgeAdaptationResult {
+  return {
+    id: "adapt-uuid-1",
+    user_id: "u1", judge_type: "lay", source_type: "evidence", source_id: "card-uuid-1",
+    original_purpose: "Support C1 with an emissions statistic",
+    judge_goal: "Make the statistic land as a real-world story",
+    changes: [{ dimension: "vocabulary", adapted: "Say 'one fifth' instead of '20%'", reason: "Plain terms", may_be_omitted: false }],
+    risks: [risk()], critical_risks: [],
+    what_to_emphasize: ["The real-world consequence"],
+    what_to_simplify: ["The methodology detail"],
+    what_must_remain_explicit: ["The 20% figure itself"],
+    what_can_be_shortened: ["Source credentials"],
+    suggested_phrasing: ["One in five tons of carbon — gone."],
+    preserved_source_refs: ["ref-1"],
+    estimated_seconds: 45,
+    rules_version: "1", generated_at: "2026-07-10T00:00:00Z",
+    ...over,
+  } as JudgeAdaptationResult;
+}
+
+describe("normalizeAdaptationResult", () => {
+  it("mirrors real backend fields into the view", () => {
+    const v = normalizeAdaptationResult(adaptation());
+    expect(v.judgeGoal).toContain("real-world story");
+    expect(v.emphasize).toEqual(["The real-world consequence"]);
+    expect(v.suggestedPhrasing).toHaveLength(1);
+    expect(v.estimatedSeconds).toBe(45);
+    expect(v.adaptationId).toBe("adapt-uuid-1");
+  });
+
+  it("missing/empty backend fields become empty states — never fake text", () => {
+    const v = normalizeAdaptationResult(adaptation({
+      id: undefined,
+      judge_goal: "",
+      what_to_emphasize: [],
+      suggested_phrasing: undefined as unknown as string[],
+      estimated_seconds: 0,
+    }));
+    expect(v.judgeGoal).toBeNull();
+    expect(v.emphasize).toEqual([]);
+    expect(v.suggestedPhrasing).toEqual([]);
+    expect(v.estimatedSeconds).toBeNull();
+    expect(v.adaptationId).toBeNull();
+  });
+
+  it("collects delivery notes only from real guide/plan fields", () => {
+    const v = normalizeAdaptationResult(adaptation({
+      evidence_guide: {
+        card_id: "c1", judge_type: "lay", can_be_paraphrased: false, risks: [],
+        best_practice_note: "Pause after the statistic.",
+        estimated_read_time_seconds: 20,
+      },
+    }));
+    expect(v.deliveryNotes).toContain("Pause after the statistic.");
+    expect(v.deliveryNotes).toContainEqual(expect.stringContaining("20s"));
+    expect(normalizeAdaptationResult(adaptation()).deliveryNotes).toEqual([]);
+  });
+});
+
+describe("deriveUnchangedItems", () => {
+  it("builds from explicit-keep list and evidence guide limits", () => {
+    const items = deriveUnchangedItems(adaptation({
+      evidence_guide: {
+        card_id: "c1", judge_type: "lay", can_be_paraphrased: false, risks: [],
+        support_limit: "Only covers the power sector",
+        relevant_qualifier: "Estimates, not measurements",
+      },
+    }));
+    expect(items).toContainEqual(expect.stringContaining("power sector"));
+    expect(items).toContainEqual(expect.stringContaining("Estimates"));
+    expect(items).toContainEqual(expect.stringContaining("The 20% figure"));
+  });
+
+  it("empty when nothing was explicitly kept (empty state upstream)", () => {
+    expect(deriveUnchangedItems(adaptation({ what_must_remain_explicit: [] }))).toEqual([]);
+  });
+});
+
+describe("deriveNextPracticeAction", () => {
+  it("critical risk mitigation comes first", () => {
+    const v = normalizeAdaptationResult(adaptation({
+      critical_risks: [risk({ level: "critical", how_to_mitigate: "Restore the qualifier before use." })],
+    }));
+    expect(deriveNextPracticeAction(v)).toContain("Restore the qualifier");
+  });
+
+  it("phrasing practice when phrasing exists; workout hint otherwise", () => {
+    expect(deriveNextPracticeAction(normalizeAdaptationResult(adaptation())))
+      .toContain("Practice the suggested phrasing");
+    expect(deriveNextPracticeAction(normalizeAdaptationResult(adaptation({ suggested_phrasing: [] }))))
+      .toContain("judge workout");
+  });
+});
+
+describe("deriveIntegrityChecklist", () => {
+  const safeCard = normalizeCardMaterial(cardRow());
+
+  it("unsafe evidence collapses the checklist to a single blocked item", () => {
+    const bad = normalizeCardMaterial(cardRow({ support_verdict: "contradicted" }));
+    const items = deriveIntegrityChecklist(bad, null);
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe("blocked");
+  });
+
+  it("safe card: quote pass, citation pass, verify-before-round always present", () => {
+    const items = deriveIntegrityChecklist(safeCard, adaptation());
+    const byLabel = Object.fromEntries(items.map((i) => [i.label, i]));
+    expect(byLabel["Source quote unchanged"].status).toBe("pass");
+    expect(byLabel["Citation preserved"].status).toBe("pass");
+    expect(byLabel["Verify before using in round"].status).toBe("verify");
+  });
+
+  it("missing citation → warn; no result yet → overstatement stays verify", () => {
+    const noCite = normalizeCardMaterial(cardRow({ cite: undefined }));
+    const items = deriveIntegrityChecklist(noCite, null);
+    const byLabel = Object.fromEntries(items.map((i) => [i.label, i]));
+    expect(byLabel["Citation preserved"].status).toBe("warn");
+    expect(byLabel["Claim not overstated"].status).toBe("verify");
+  });
+
+  it("overstatement risks in the real response flip the claim check to warn", () => {
+    const items = deriveIntegrityChecklist(
+      safeCard,
+      adaptation({ risks: [risk({ category: "causal_overstatement", description: "Causal leap." })] }),
+    );
+    const claim = items.find((i) => i.label === "Claim not overstated")!;
+    expect(claim.status).toBe("warn");
+    expect(claim.detail).toBe("Causal leap.");
+  });
+});
+
+describe("normalizeComparisonResult", () => {
+  function comparison(over: Partial<JudgeComparisonResult> = {}): JudgeComparisonResult {
+    return {
+      source_type: "evidence", source_id: "card-uuid-1",
+      judge_types: ["lay", "flow"],
+      constants: ["The quoted statistic stays verbatim"],
+      differences: [{ dimension: "explanation depth", judge_a_value: "Story first", judge_b_value: "Warrant first", why_different: "Lay judges follow narrative." }],
+      strategic_risks_by_judge: { flow: [risk({ category: "missing_extension" })] },
+      wording_differences: [], time_allocation_differences: [],
+      generated_at: "2026-07-10T00:00:00Z",
+      ...over,
+    };
+  }
+
+  it("labels judge columns with names + priorities from real judge types", () => {
+    const v = normalizeComparisonResult(comparison());
+    expect(v.judgeALabel).toBe("Lay Judge");
+    expect(v.judgeBLabel).toBe("Flow Judge");
+    expect(v.judgeAPriorities).toContain("Story");
+    expect(v.judgeBPriorities).toContain("Weighing");
+    expect(v.hasContent).toBe(true);
+  });
+
+  it("risk columns come only from real per-judge response data", () => {
+    const v = normalizeComparisonResult(comparison());
+    expect(v.riskColumns).toHaveLength(1);
+    expect(v.riskColumns[0].judgeLabel).toBe("Flow Judge");
+  });
+
+  it("an all-empty response reports no content — never fake comparison text", () => {
+    const v = normalizeComparisonResult(comparison({
+      constants: [], differences: [], strategic_risks_by_judge: {},
+    }));
+    expect(v.hasContent).toBe(false);
+  });
+});
+
+describe("history + note labels", () => {
+  it("history entries use human labels — never raw IDs", () => {
+    const h = formatHistoryEntry({
+      id: "adapt-uuid-9", judge_type: "technical", source_type: "evidence",
+      risk_count: 2, change_count: 5, created_at: "2026-07-09T00:00:00Z",
+    });
+    expect(h.judgeLabel).toBe("Technical Judge");
+    expect(h.materialKindLabel).toBe("Evidence card");
+    expect(h.summary).toBe("5 changes · 2 risks");
+    expect(`${h.judgeLabel} ${h.materialKindLabel} ${h.summary}`).not.toContain("uuid");
+  });
+
+  it("unknown source types get a safe generic label; null counts stay honest", () => {
+    const h = formatHistoryEntry({
+      id: "x", judge_type: "lay", source_type: "mystery",
+      risk_count: null, change_count: null, created_at: "2026-07-09T00:00:00Z",
+    });
+    expect(h.materialKindLabel).toBe("Saved material");
+    expect(h.summary).toBe("Generated");
+  });
+
+  it("note labels show judge + date only", () => {
+    expect(formatNoteLabel({ judge_type: "coach", created_at: "2026-07-09T00:00:00Z" }))
+      .toContain("Coach Judge");
+  });
+});

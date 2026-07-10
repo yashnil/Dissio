@@ -1,10 +1,21 @@
 "use client";
 
-import { JudgeComparisonResult, JudgeType, JUDGE_TYPE_LABELS } from "@/types/judgeAdaptation";
+import { JudgeComparisonResult, RISK_LEVEL_COLORS } from "@/types/judgeAdaptation";
+import { normalizeComparisonResult } from "@/lib/judgeAdaptationModel";
 
 interface Props {
   result: JudgeComparisonResult | null;
   isLoading?: boolean;
+}
+
+/** Column headers so every a/b grid reads as judge-specific columns. */
+function ColumnHeaders({ a, b }: { a: string; b: string }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 mb-1">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ink-subtle)]">{a}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ink-subtle)]">{b}</p>
+    </div>
+  );
 }
 
 export function JudgeComparisonPanel({ result, isLoading }: Props) {
@@ -26,29 +37,44 @@ export function JudgeComparisonPanel({ result, isLoading }: Props) {
     );
   }
 
-  const [typeA, typeB] = result.judge_types as [JudgeType, JudgeType];
+  const view = normalizeComparisonResult(result);
+
+  if (!view.hasContent) {
+    return (
+      <p className="py-6 text-sm text-[var(--ink-subtle)]">
+        The comparison returned no differences for this material — try a different
+        judge pairing or material.
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <span className="text-sm font-semibold text-[var(--ink-primary)]">
-          {JUDGE_TYPE_LABELS[typeA]}
-        </span>
-        <span className="text-[var(--ink-subtle)] text-xs">vs</span>
-        <span className="text-sm font-semibold text-[var(--ink-primary)]">
-          {JUDGE_TYPE_LABELS[typeB]}
-        </span>
+      {/* Judge columns header — labels + real priorities */}
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { label: view.judgeALabel, priorities: view.judgeAPriorities },
+          { label: view.judgeBLabel, priorities: view.judgeBPriorities },
+        ].map((j) => (
+          <div key={j.label} className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] px-3 py-2">
+            <p className="text-sm font-semibold text-[var(--ink-primary)]">{j.label}</p>
+            {j.priorities.length > 0 && (
+              <p className="text-[10px] text-[var(--ink-subtle)] mt-0.5">
+                Prioritizes: {j.priorities.join(" · ")}
+              </p>
+            )}
+          </div>
+        ))}
       </div>
 
-      {/* Constants */}
-      {result.constants.length > 0 && (
+      {/* What stays the same — evidence integrity across judges */}
+      {view.constants.length > 0 && (
         <div>
           <p className="text-[11px] font-medium text-[var(--ink-subtle)] uppercase tracking-wide mb-2">
-            Always the same ({result.constants.length})
+            What stays the same for every judge ({view.constants.length})
           </p>
           <ul className="space-y-1">
-            {result.constants.map((c, i) => (
+            {view.constants.map((c, i) => (
               <li key={i} className="flex items-start gap-2 text-xs text-[var(--ink-primary)]">
                 <span className="text-emerald-500 shrink-0 mt-0.5">✓</span>
                 {c}
@@ -59,13 +85,13 @@ export function JudgeComparisonPanel({ result, isLoading }: Props) {
       )}
 
       {/* Preference differences */}
-      {result.differences.length > 0 && (
+      {view.differences.length > 0 && (
         <div>
           <p className="text-[11px] font-medium text-[var(--ink-subtle)] uppercase tracking-wide mb-2">
             Key Differences
           </p>
           <div className="space-y-2">
-            {result.differences.map((d, i) => (
+            {view.differences.map((d, i) => (
               <div
                 key={i}
                 className="rounded-md border border-[var(--surface-3)] bg-[var(--surface-2)] p-3"
@@ -73,6 +99,7 @@ export function JudgeComparisonPanel({ result, isLoading }: Props) {
                 <p className="text-[11px] font-semibold text-[var(--lavender-8)] uppercase tracking-wide mb-1">
                   {d.dimension}
                 </p>
+                <ColumnHeaders a={view.judgeALabel} b={view.judgeBLabel} />
                 <div className="grid grid-cols-2 gap-2 mb-1">
                   <p className="text-xs text-[var(--ink-primary)]">{d.judge_a_value}</p>
                   <p className="text-xs text-[var(--ink-primary)]">{d.judge_b_value}</p>
@@ -85,14 +112,15 @@ export function JudgeComparisonPanel({ result, isLoading }: Props) {
       )}
 
       {/* Time allocation */}
-      {result.time_allocation_differences.length > 0 && (
+      {view.timeDifferences.length > 0 && (
         <div>
           <p className="text-[11px] font-medium text-[var(--ink-subtle)] uppercase tracking-wide mb-2">
             Time Allocation
           </p>
           <div className="space-y-2">
-            {result.time_allocation_differences.map((d, i) => (
+            {view.timeDifferences.map((d, i) => (
               <div key={i} className="rounded-md border border-[var(--surface-3)] p-3">
+                <ColumnHeaders a={view.judgeALabel} b={view.judgeBLabel} />
                 <div className="grid grid-cols-2 gap-2">
                   <p className="text-xs text-[var(--ink-primary)]">{d.judge_a_value}</p>
                   <p className="text-xs text-[var(--ink-primary)]">{d.judge_b_value}</p>
@@ -104,21 +132,46 @@ export function JudgeComparisonPanel({ result, isLoading }: Props) {
       )}
 
       {/* Wording differences */}
-      {result.wording_differences.length > 0 && (
+      {view.wordingDifferences.length > 0 && (
         <div>
           <p className="text-[11px] font-medium text-[var(--ink-subtle)] uppercase tracking-wide mb-2">
             Wording Changes
           </p>
           <div className="space-y-2">
-            {result.wording_differences.slice(0, 4).map((d, i) => (
+            {view.wordingDifferences.slice(0, 4).map((d, i) => (
               <div key={i} className="rounded-md border border-[var(--surface-3)] p-3">
                 <p className="text-[11px] font-semibold text-[var(--ink-primary)] mb-1">
                   {d.dimension.replace(/_/g, " ")}
                 </p>
+                <ColumnHeaders a={view.judgeALabel} b={view.judgeBLabel} />
                 <div className="grid grid-cols-2 gap-2">
                   <p className="text-xs text-[var(--ink-subtle)]">{d.judge_a_value}</p>
                   <p className="text-xs text-[var(--ink-subtle)]">{d.judge_b_value}</p>
                 </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Strategic risks per judge — real response data only */}
+      {view.riskColumns.length > 0 && (
+        <div>
+          <p className="text-[11px] font-medium text-[var(--ink-subtle)] uppercase tracking-wide mb-2">
+            Risks by judge
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {view.riskColumns.map((col) => (
+              <div key={col.judgeLabel} className="rounded-md border border-[var(--surface-3)] p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-[var(--ink-primary)]">{col.judgeLabel}</p>
+                {col.risks.map((r, i) => (
+                  <div key={i} className={`rounded border px-2 py-1.5 ${RISK_LEVEL_COLORS[r.level]}`}>
+                    <p className="text-[11px] font-medium">
+                      <span className="uppercase">{r.level}</span> — {r.description}
+                    </p>
+                    <p className="text-[10px] opacity-80 mt-0.5">Fix: {r.how_to_mitigate}</p>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

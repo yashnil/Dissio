@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AdaptationChangesPanel } from "@/components/judge-adaptation/AdaptationChangesPanel";
 import { JudgeComparisonPanel } from "@/components/judge-adaptation/JudgeComparisonPanel";
 import { JudgeProfileSelector } from "@/components/judge-adaptation/JudgeProfileSelector";
 import { JudgeReadinessCard } from "@/components/judge-adaptation/JudgeReadinessCard";
@@ -10,9 +9,13 @@ import { JudgeWorkoutCard } from "@/components/judge-adaptation/JudgeWorkoutCard
 import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
 import { MaterialPicker, SelectedMaterialPreview } from "@/components/judge-adaptation/MaterialPicker";
+import { AdaptationResultView } from "@/components/judge-adaptation/AdaptationResultView";
 import {
   adaptationRequestBody,
   deriveAdaptationReadiness,
+  formatHistoryEntry,
+  type AdaptationHistoryRow,
+  type AdaptationNote,
   type SelectedMaterial,
 } from "@/lib/judgeAdaptationModel";
 import type {
@@ -21,6 +24,7 @@ import type {
   JudgeProfile,
   JudgeReadinessReport,
   JudgeType,
+  JudgeWorkoutCreate,
   JudgeWorkoutRow,
 } from "@/types/judgeAdaptation";
 
@@ -54,6 +58,12 @@ function JudgeAdaptationContent() {
   const [isAdapting, setIsAdapting] = useState(false);
   const [isComparing, setIsComparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [notes, setNotes] = useState<AdaptationNote[] | null>(null);
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteErr, setNoteErr] = useState<string | null>(null);
+  const [history, setHistory] = useState<AdaptationHistoryRow[] | null>(null);
+  const [previewWorkouts, setPreviewWorkouts] = useState<JudgeWorkoutCreate[]>([]);
 
   // Require authentication — redirect to /login if no session
   useEffect(() => {
@@ -94,12 +104,25 @@ function JudgeAdaptationContent() {
     return () => clearTimeout(t);
   }, [tab, userId]);
 
+  // Recent adaptation history — real persisted rows (kind + judge + counts).
+  useEffect(() => {
+    if (!userId) return;
+    const t = setTimeout(() => {
+      apiFetch<AdaptationHistoryRow[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
+        .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
+        .catch(() => setHistory([]));
+    }, 0);
+    return () => clearTimeout(t);
+  }, [userId]);
+
   /** Selecting new material invalidates any previously generated output. */
   function handleSelectMaterial(m: SelectedMaterial) {
     setMaterial(m);
     setAdaptResult(null);
     setCompareResult(null);
     setReadinessReport(null);
+    setNotes(null);
+    setNoteErr(null);
     setError(null);
   }
 
@@ -116,6 +139,15 @@ function JudgeAdaptationContent() {
         body: JSON.stringify(adaptationRequestBody(userId, selectedJudge, material)),
       });
       setAdaptResult(result);
+      setNotes(null);
+      if (result.id) {
+        apiFetch<AdaptationNote[]>(`/judge-adaptation/notes/${result.id}?user_id=${userId}`)
+          .then((rows) => setNotes(Array.isArray(rows) ? rows : []))
+          .catch(() => setNotes([]));
+      }
+      apiFetch<AdaptationHistoryRow[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
+        .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
+        .catch(() => {});
     } catch {
       setError("Adaptation didn't generate. Your saved material is untouched — retry in a moment.");
     } finally {
@@ -169,11 +201,13 @@ function JudgeAdaptationContent() {
         source_type: base.source_type,
         source_id: base.source_id,
       });
-      const workout = await apiFetch<JudgeWorkoutRow>(
+      // The endpoint returns an UNPERSISTED workout spec — shown as a
+      // clearly-labeled preview, never merged into saved/assigned workouts.
+      const workout = await apiFetch<JudgeWorkoutCreate>(
         `/judge-adaptation/workouts/generate?${params}`,
         { method: "POST" },
       );
-      setWorkouts((prev) => [{ ...workout, id: Date.now().toString(), status: "not_started", created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]);
+      setPreviewWorkouts((prev) => [workout, ...prev]);
     } catch {}
   }
 
@@ -188,6 +222,29 @@ function JudgeAdaptationContent() {
         prev.map((w) => (w.id === id ? { ...w, status: "completed" as const } : w))
       );
     } catch {}
+  }
+
+  async function addNote(text: string) {
+    if (!adaptResult?.id || !selectedJudge || !userId) return;
+    setNoteSaving(true);
+    setNoteErr(null);
+    try {
+      const saved = await apiFetch<AdaptationNote>("/judge-adaptation/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          adaptation_id: adaptResult.id,
+          judge_type: selectedJudge,
+          note_text: text,
+        }),
+      });
+      setNotes((prev) => [...(prev ?? []), saved]);
+    } catch {
+      setNoteErr("Couldn't save that note. Please try again.");
+    } finally {
+      setNoteSaving(false);
+    }
   }
 
   // No flash of protected content — show loading state while session resolves
@@ -284,66 +341,43 @@ function JudgeAdaptationContent() {
             {isAdapting ? "Generating..." : "Generate Adaptation"}
           </button>
 
-          {adaptResult && (
-            <div className="space-y-4">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ink-subtle)]">
-                Coaching & delivery advice — your evidence text is unchanged
+          {adaptResult && material && (
+            <AdaptationResultView
+              material={material}
+              result={adaptResult}
+              notes={notes}
+              onAddNote={adaptResult.id ? addNote : null}
+              noteSaving={noteSaving}
+              noteError={noteErr}
+            />
+          )}
+
+          {/* Recent adaptations — real persisted history (kinds + judges, no titles yet) */}
+          {history !== null && history.length > 0 && (
+            <section aria-label="Recent adaptations" className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4">
+              <h3 className="text-xs font-medium text-[var(--ink-subtle)] uppercase tracking-wide">
+                Recent adaptations
+              </h3>
+              <ul className="mt-2 space-y-1.5">
+                {history.map((row) => {
+                  const h = formatHistoryEntry(row);
+                  return (
+                    <li key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[var(--ink-subtle)]">
+                      <span className="font-medium text-[var(--ink-primary)]">{h.materialKindLabel}</span>
+                      <span>· {h.judgeLabel}</span>
+                      <span>· {h.summary}</span>
+                      <span className="text-[var(--ink-faint,#999)]">
+                        · {new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[10px] text-[var(--ink-subtle)]">
+                History shows the material type and judge — reopening past adaptations is coming
+                once results can be reloaded by entry.
               </p>
-              <div className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4">
-                <p className="text-xs font-medium text-[var(--ink-subtle)] mb-1">Judge Goal</p>
-                <p className="text-sm text-[var(--ink-primary)]">{adaptResult.judge_goal}</p>
-              </div>
-
-              {adaptResult.what_to_emphasize.length > 0 && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4">
-                  <p className="text-xs font-medium text-emerald-700 mb-2 uppercase tracking-wide">
-                    Emphasize
-                  </p>
-                  <ul className="space-y-1">
-                    {adaptResult.what_to_emphasize.map((e, i) => (
-                      <li key={i} className="text-xs text-emerald-800 flex items-start gap-2">
-                        <span className="shrink-0">↑</span> {e}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {adaptResult.what_to_simplify.length > 0 && (
-                <div className="rounded-lg border border-yellow-200 bg-yellow-50/30 p-4">
-                  <p className="text-xs font-medium text-yellow-700 mb-2 uppercase tracking-wide">
-                    Simplify
-                  </p>
-                  <ul className="space-y-1">
-                    {adaptResult.what_to_simplify.map((e, i) => (
-                      <li key={i} className="text-xs text-yellow-800 flex items-start gap-2">
-                        <span className="shrink-0">↓</span> {e}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {adaptResult.what_must_remain_explicit.length > 0 && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-4">
-                  <p className="text-xs font-medium text-slate-700 mb-2 uppercase tracking-wide">
-                    Never Change
-                  </p>
-                  <ul className="space-y-1">
-                    {adaptResult.what_must_remain_explicit.map((e, i) => (
-                      <li key={i} className="text-xs text-slate-700 flex items-start gap-2">
-                        <span className="shrink-0 text-red-500">✕</span> {e}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <AdaptationChangesPanel
-                changes={adaptResult.changes}
-                risks={adaptResult.risks}
-              />
-            </div>
+            </section>
           )}
         </div>
       )}
@@ -389,17 +423,46 @@ function JudgeAdaptationContent() {
             Generate Workout
           </button>
 
-          {workouts.length === 0 ? (
+          {previewWorkouts.length > 0 && (
+            <section aria-label="Generated workout previews" className="space-y-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ink-subtle)]">
+                Generated preview — practice now; not saved to a plan
+              </p>
+              {previewWorkouts.map((w, i) => (
+                <div key={`${w.title}-${i}`} className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4 space-y-1.5">
+                  <p className="text-sm font-semibold text-[var(--ink-primary)]">{w.title}</p>
+                  {w.description && <p className="text-xs text-[var(--ink-subtle)]">{w.description}</p>}
+                  <p className="text-xs text-[var(--ink-primary)]">{w.prompt}</p>
+                  {w.instructions && <p className="text-[11px] text-[var(--ink-subtle)]">{w.instructions}</p>}
+                  {w.success_criteria.length > 0 && (
+                    <ul className="space-y-0.5">
+                      {w.success_criteria.map((c, j) => (
+                        <li key={j} className="text-[11px] text-[var(--ink-subtle)]">✓ {c}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[10px] text-[var(--ink-subtle)]">
+                    ~{Math.round(w.time_limit_seconds / 60)} min · preview only
+                  </p>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {workouts.length === 0 && previewWorkouts.length === 0 ? (
             <div className="text-center py-8 text-[var(--ink-subtle)]">
               <p className="text-sm">No workouts yet. Generate one above or check back after a coach assigns one.</p>
             </div>
-          ) : (
-            <div className="space-y-3">
+          ) : workouts.length > 0 ? (
+            <section aria-label="Assigned workouts" className="space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ink-subtle)]">
+                Assigned workouts
+              </p>
               {workouts.map((w) => (
                 <JudgeWorkoutCard key={w.id} workout={w} onComplete={completeWorkout} />
               ))}
-            </div>
-          )}
+            </section>
+          ) : null}
         </div>
       )}
 
