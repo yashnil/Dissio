@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { PrepGap, GapSeverity } from "@/types/prep";
 import { AlertTriangle, Info, AlertCircle, ArrowRight } from "lucide-react";
-import { mapGapToTarget } from "@/lib/prepModel";
+import { mapGapToTarget, withPrepReturnContext, type PrepReturnContext } from "@/lib/prepModel";
 
 const SEVERITY_LABELS: Record<GapSeverity, string> = {
   critical: "Critical",
@@ -31,9 +31,11 @@ const SEVERITY_ICON: Record<GapSeverity, React.ReactNode> = {
 
 interface GapsPanelProps {
   gaps: PrepGap[];
+  /** When set, /library links carry from=prep&workspace so users can return. */
+  returnContext?: PrepReturnContext;
 }
 
-export function GapsPanel({ gaps }: GapsPanelProps) {
+export function GapsPanel({ gaps, returnContext }: GapsPanelProps) {
   if (gaps.length === 0) {
     return (
       <p className="py-8 text-center text-[12px] text-ok">
@@ -97,7 +99,7 @@ export function GapsPanel({ gaps }: GapsPanelProps) {
                     const target = mapGapToTarget(gap);
                     return (
                       <Link
-                        href={target.href}
+                        href={withPrepReturnContext(target.href, returnContext)}
                         title={target.explanation}
                         className="ml-auto flex items-center gap-1 rounded text-[11px] font-medium text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
                       >

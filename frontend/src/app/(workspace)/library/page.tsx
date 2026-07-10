@@ -1,10 +1,15 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BookOpen, Search, Plus, FileText, Network, X } from "lucide-react";
 import { SelectedItemPanel } from "@/components/library/SelectedItemPanel";
-import type { LibraryItemKind } from "@/lib/prepModel";
+import {
+  buildLibraryUrl,
+  backToPrepHref,
+  LIBRARY_SELECTION_PARAMS,
+  type LibraryItemKind,
+} from "@/lib/prepModel";
 import { apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import type {
@@ -12,11 +17,10 @@ import type {
   LibrarySearchResponse,
   Resolution,
   Blockfile,
+  Frontline,
   Side,
 } from "@/types/library";
-import { SaveToLibraryDialog } from "@/components/library/SaveToLibraryDialog";
 import { BlockfileEditor } from "@/components/library/BlockfileEditor";
-import { FrontlineBuilder } from "@/components/library/FrontlineBuilder";
 
 // ── Side selector chip ─────────────────────────────────────────────────────
 
@@ -205,23 +209,39 @@ function LibraryPageContent() {
       });
   }, [router]);
 
-  // Item deep links (?card= / ?argument= / ?frontline=) — IDs are URL state
-  // only; the panel shows human labels. Read once on mount.
-  const [selectedItem, setSelectedItem] = useState<{ kind: LibraryItemKind; id: string } | null>(() => {
-    for (const kind of ["card", "argument", "frontline"] as const) {
-      const id = searchParams.get(kind);
-      if (id) return { kind, id };
-    }
-    return null;
-  });
-  function dismissSelected() {
-    setSelectedItem(null);
-    router.replace("/library", { scroll: false });
+  // Selected item: the URL params (?card= / ?argument= / ?frontline=) are the
+  // single source of truth — deep links and in-page clicks go through the same
+  // path. IDs live in the URL only; the panel shows human labels.
+  let selectedItem: { kind: LibraryItemKind; id: string } | null = null;
+  for (const kind of LIBRARY_SELECTION_PARAMS) {
+    const id = searchParams.get(kind);
+    if (id) { selectedItem = { kind, id }; break; }
   }
+
+  // Return context from Tournament Prep (from=prep&workspace=…) — preserved
+  // across in-page selections so "Back to Tournament Prep" keeps working.
+  const backHref = backToPrepHref(searchParams.get("from"), searchParams.get("workspace"));
 
   const [tab, setTab] = useState<Tab>("cards");
   const [query, setQuery] = useState("");
   const [resolutionId, setResolutionId] = useState(searchParams.get("resolution") ?? "");
+
+  function selectItem(kind: LibraryItemKind, id: string) {
+    router.replace(
+      buildLibraryUrl({
+        [kind]: id,
+        resolution: resolutionId || null,
+        from: searchParams.get("from"),
+        workspace: searchParams.get("workspace"),
+      }),
+      { scroll: false },
+    );
+  }
+
+  function dismissSelected() {
+    // Selection + return context are cleared; normal filters survive.
+    router.replace(buildLibraryUrl({ resolution: resolutionId || null }), { scroll: false });
+  }
   const [sideFilter, setSideFilter] = useState<Side | "">("");
   const [verdictFilter, setVerdictFilter] = useState("");
 
@@ -232,28 +252,40 @@ function LibraryPageContent() {
 
   const [results, setResults] = useState<LibrarySearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [selectedCard, setSelectedCard] = useState<LibrarySearchResult | null>(null);
+  const [frontlines, setFrontlines] = useState<Frontline[] | null>(null);
 
-  async function loadResolutions() {
+  const loadResolutions = useCallback(async () => {
     if (!userId) return;
     const data = await apiFetch(`/library/resolutions?user_id=${userId}&active_only=true`);
     setResolutions(data as Resolution[]);
-  }
+  }, [userId]);
 
-  async function loadBlockfiles() {
+  const loadBlockfiles = useCallback(async () => {
     if (!userId) return;
     const data = await apiFetch(
       `/library/blockfiles?user_id=${userId}${resolutionId ? `&resolution_id=${resolutionId}` : ""}`,
     );
     setBlockfiles(data as Blockfile[]);
-  }
+  }, [userId, resolutionId]);
 
-  async function search() {
+  const loadFrontlines = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const data = await apiFetch<Frontline[]>(`/library/frontlines?user_id=${userId}`);
+      // The endpoint has no resolution filter; each row carries resolution_id.
+      setFrontlines(resolutionId ? data.filter((f) => f.resolution_id === resolutionId) : data);
+    } catch {
+      setFrontlines([]);
+    }
+  }, [userId, resolutionId]);
+
+  const search = useCallback(async () => {
     if (!userId) return;
     setSearching(true);
     try {
       const data = await apiFetch("/library/search", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user_id: userId,
           query: query || undefined,
@@ -269,23 +301,32 @@ function LibraryPageContent() {
     } finally {
       setSearching(false);
     }
-  }
+  }, [userId, query, resolutionId, sideFilter, verdictFilter]);
 
+  // Loaders are deferred a tick so effects never set state synchronously; the
+  // cards timer also debounces typing in the search box.
   useEffect(() => {
-    loadResolutions();
-  }, [userId]);
-
-  useEffect(() => {
-    if (tab === "cards") search();
-    if (tab === "blockfiles") loadBlockfiles();
-  }, [tab, userId, resolutionId, sideFilter, verdictFilter]);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (tab === "cards") search();
-    }, 400);
+    const t = setTimeout(() => { loadResolutions(); }, 0);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [loadResolutions]);
+
+  useEffect(() => {
+    if (tab !== "cards") return;
+    const t = setTimeout(() => { search(); }, 250);
+    return () => clearTimeout(t);
+  }, [tab, search]);
+
+  useEffect(() => {
+    if (tab !== "blockfiles") return;
+    const t = setTimeout(() => { loadBlockfiles(); }, 0);
+    return () => clearTimeout(t);
+  }, [tab, loadBlockfiles]);
+
+  useEffect(() => {
+    if (tab !== "frontlines") return;
+    const t = setTimeout(() => { loadFrontlines(); }, 0);
+    return () => clearTimeout(t);
+  }, [tab, loadFrontlines]);
 
   if (!userId) {
     return (
@@ -316,6 +357,9 @@ function LibraryPageContent() {
           id={selectedItem.id}
           userId={userId}
           onDismiss={dismissSelected}
+          backHref={backHref}
+          searchRows={results}
+          resolutionHint={resolutionId || null}
         />
       )}
 
@@ -410,7 +454,7 @@ function LibraryPageContent() {
                 key={r.card_id}
                 result={r}
                 highlighted={selectedItem?.kind === "card" && selectedItem.id === r.card_id}
-                onSelect={() => setSelectedCard(r)}
+                onSelect={() => selectItem("card", r.card_id)}
               />
             ))}
           </div>
@@ -493,13 +537,108 @@ function LibraryPageContent() {
         </div>
       )}
 
-      {/* ── Frontlines tab (placeholder) ──────────────────────────────── */}
+      {/* ── Frontlines tab ────────────────────────────────────────────── */}
       {tab === "frontlines" && (
-        <div className="py-12 text-center">
-          <Network size={28} className="mx-auto mb-3 text-ink-faint" />
-          <p className="text-[13px] text-ink-subtle">
-            Frontlines are associated with blockfile sections. Open a blockfile to add frontlines.
-          </p>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-[13px] text-ink-subtle">
+              {frontlines === null
+                ? "Loading frontlines…"
+                : `${frontlines.length} frontline${frontlines.length !== 1 ? "s" : ""}`}
+              {resolutionId && resolutions.find((r) => r.id === resolutionId) && (
+                <span className="text-ink-faint">
+                  {" "}· {resolutions.find((r) => r.id === resolutionId)!.title}
+                </span>
+              )}
+            </p>
+            <select
+              value={resolutionId}
+              onChange={(e) => setResolutionId(e.target.value)}
+              aria-label="Filter frontlines by resolution"
+              className="text-[12px] border border-border rounded-lg px-2 py-1.5 bg-surface-1 text-ink"
+            >
+              <option value="">All resolutions</option>
+              {resolutions.map((r) => (
+                <option key={r.id} value={r.id}>{r.title}</option>
+              ))}
+            </select>
+          </div>
+
+          {frontlines !== null && frontlines.length === 0 && (
+            <div className="py-12 text-center">
+              <Network size={28} className="mx-auto mb-3 text-ink-faint" />
+              <p className="text-[13px] text-ink-subtle">
+                No frontlines saved yet. Frontlines answer the responses you expect
+                against your case — build them inside a blockfile.
+              </p>
+              <button
+                onClick={() => setTab("blockfiles")}
+                className="mt-3 text-[12px] px-3 py-1.5 rounded-lg border border-border text-ink hover:bg-surface-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/40"
+              >
+                Open blockfiles
+              </button>
+            </div>
+          )}
+
+          {frontlines !== null && frontlines.length > 0 && (
+            <div className="space-y-2">
+              {(["pro", "con", "neutral"] as const).map((side) => {
+                const list = frontlines.filter((f) =>
+                  side === "neutral" ? !f.side || f.side === "neutral" : f.side === side,
+                );
+                if (list.length === 0) return null;
+                return (
+                  <div key={side} className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">
+                      {side === "neutral" ? "General" : side} ({list.length})
+                    </p>
+                    {list.map((f) => (
+                      <div
+                        key={f.id}
+                        className={`rounded-xl border px-4 py-3 transition-all ${
+                          selectedItem?.kind === "frontline" && selectedItem.id === f.id
+                            ? "border-lav/50 ring-2 ring-lav/30 bg-lav/5"
+                            : "border-border"
+                        }`}
+                      >
+                        {selectedItem?.kind === "frontline" && selectedItem.id === f.id && (
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-lav">Selected</p>
+                        )}
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] font-semibold text-ink">{f.title}</p>
+                            {f.opponent_claim && (
+                              <p className="text-[11px] text-ink-subtle mt-0.5">
+                                Answers: <span className="italic">&ldquo;{f.opponent_claim}&rdquo;</span>
+                              </p>
+                            )}
+                            {(f.opponent_warrant || f.opponent_impact) && (
+                              <p className="text-[10px] text-ink-faint mt-0.5 line-clamp-1">
+                                {f.opponent_warrant && `Warrant: ${f.opponent_warrant}`}
+                                {f.opponent_warrant && f.opponent_impact && " · "}
+                                {f.opponent_impact && `Impact: ${f.opponent_impact}`}
+                              </p>
+                            )}
+                          </div>
+                          {f.side && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border capitalize shrink-0 ${SIDE_COLORS[f.side as Side] ?? ""}`}>
+                              {f.side}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => selectItem("frontline", f.id)}
+                            className="shrink-0 text-[12px] px-2.5 py-1 rounded-md border border-border text-ink hover:bg-surface-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/40"
+                          >
+                            Open
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

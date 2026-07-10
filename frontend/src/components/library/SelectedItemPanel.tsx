@@ -61,17 +61,26 @@ type PanelState =
   | { status: "ready"; data: PanelData };
 
 export function SelectedItemPanel({
-  kind, id, userId, onDismiss,
+  kind, id, userId, onDismiss, backHref = "/prep", searchRows = null, resolutionHint = null,
 }: {
   kind: LibraryItemKind;
   id: string;
   userId: string;
   onDismiss: () => void;
+  /** Where "Back to Tournament Prep" goes — exact workspace when known. */
+  backHref?: string;
+  /** Already-loaded search rows; preferred over a lookup fetch for cards. */
+  searchRows?: LibrarySearchResult[] | null;
+  /** Resolution filter from the page — fallback scope for the card lookup. */
+  resolutionHint?: string | null;
 }) {
   // The parent keys this component by `${kind}:${id}`, so a new selection
   // remounts fresh in the loading state — no sync resets inside effects.
   const [state, setState] = useState<PanelState>({ status: "loading" });
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // Lookup inputs are captured once per mount (keyed remount refreshes them);
+  // later search refreshes must not re-trigger the panel fetch.
+  const lookupRef = useRef({ searchRows, resolutionHint });
 
   useEffect(() => {
     let cancelled = false;
@@ -86,22 +95,26 @@ export function SelectedItemPanel({
           const frontline = await apiFetch<Frontline>(`/library/frontlines/${id}?user_id=${userId}`);
           return { status: "ready", data: { kind: "frontline", frontline } };
         }
-        // card: metadata first, then locate the full row (tag/cite/body) via a
-        // scoped search — the detail endpoint returns metadata only.
+        // card: metadata first (ownership check + notes/verdict), then locate
+        // the full row (tag/cite/body). Prefer the page's already-loaded
+        // results; fall back to a resolution-scoped search lookup.
         const metadata = await apiFetch<LibraryCardMetadata>(`/library/cards/${id}?user_id=${userId}`);
-        let searchRow: LibrarySearchResult | null = null;
-        try {
-          const res = await apiFetch<LibrarySearchResponse>("/library/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              user_id: userId,
-              resolution_id: metadata.resolution_id ?? undefined,
-              limit: 100,
-            }),
-          });
-          searchRow = res.results.find((r) => r.card_id === id) ?? null;
-        } catch { /* metadata-only detail is still truthful */ }
+        let searchRow: LibrarySearchResult | null =
+          lookupRef.current.searchRows?.find((r) => r.card_id === id) ?? null;
+        if (!searchRow) {
+          try {
+            const res = await apiFetch<LibrarySearchResponse>("/library/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: userId,
+                resolution_id: metadata.resolution_id ?? lookupRef.current.resolutionHint ?? undefined,
+                limit: 100,
+              }),
+            });
+            searchRow = res.results.find((r) => r.card_id === id) ?? null;
+          } catch { /* metadata-only detail is still truthful */ }
+        }
         return { status: "ready", data: { kind: "card", card: { metadata, searchRow } } };
       } catch {
         return { status: "unavailable" };
@@ -150,7 +163,7 @@ export function SelectedItemPanel({
       {state.status === "unavailable" && (
         <p className="mt-2 text-sm leading-relaxed text-ink-subtle">
           It may have been deleted or belong to another account. Browse your library
-          below, or head back to <Link href="/prep" className="text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded">Tournament Prep</Link>.
+          below, or head back to <Link href={backHref} className="text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 rounded">Tournament Prep</Link>.
         </p>
       )}
 
@@ -201,7 +214,7 @@ export function SelectedItemPanel({
 
       {state.status === "ready" && (
         <Link
-          href="/prep"
+          href={backHref}
           className="mt-3 flex w-fit items-center gap-1.5 text-xs font-medium text-lav transition-colors hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:rounded"
         >
           <Target size={11} aria-hidden="true" /> Back to Tournament Prep

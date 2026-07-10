@@ -635,3 +635,75 @@ describe("frontline response depth helpers", () => {
     expect(frontlineResponseWarning({ is_analytical: false }, null)).toBeNull();
   });
 });
+
+// ── Phase 6D: prep ↔ library round trip ──────────────────────────────────────
+
+import {
+  buildLibraryUrl,
+  withPrepReturnContext,
+  backToPrepHref,
+  LIBRARY_SELECTION_PARAMS,
+} from "@/lib/prepModel";
+
+describe("buildLibraryUrl", () => {
+  it("builds encoded URLs and drops empty params", () => {
+    expect(buildLibraryUrl({ card: "c 1", resolution: "r1", from: null, workspace: undefined }))
+      .toBe("/library?card=c%201&resolution=r1");
+    expect(buildLibraryUrl({})).toBe("/library");
+    expect(buildLibraryUrl({ card: "" })).toBe("/library");
+  });
+
+  it("selection params cover exactly card/argument/frontline", () => {
+    expect([...LIBRARY_SELECTION_PARAMS]).toEqual(["card", "argument", "frontline"]);
+  });
+});
+
+describe("withPrepReturnContext", () => {
+  const ctx = { workspaceId: "ws-1", resolutionId: "res-1" };
+
+  it("appends from=prep, workspace, and resolution to library links", () => {
+    expect(withPrepReturnContext("/library?card=c-1", ctx)).toBe(
+      "/library?card=c-1&from=prep&workspace=ws-1&resolution=res-1",
+    );
+  });
+
+  it("works on bare /library links and encodes IDs", () => {
+    expect(withPrepReturnContext("/library", { workspaceId: "w s" })).toBe(
+      "/library?from=prep&workspace=w%20s",
+    );
+  });
+
+  it("leaves non-library hrefs untouched (evidence/session fallbacks)", () => {
+    expect(withPrepReturnContext("/evidence", ctx)).toBe("/evidence");
+    expect(withPrepReturnContext("/session", ctx)).toBe("/session");
+  });
+
+  it("no context → href unchanged", () => {
+    expect(withPrepReturnContext("/library?card=c-1", null)).toBe("/library?card=c-1");
+    expect(withPrepReturnContext("/library?card=c-1", undefined)).toBe("/library?card=c-1");
+  });
+
+  it("prep item links carry ID + return context end to end", () => {
+    const href = withPrepReturnContext(libraryItemHref("frontline", "f-1"), ctx);
+    expect(href).toContain("frontline=f-1");
+    expect(href).toContain("from=prep");
+    expect(href).toContain("workspace=ws-1");
+  });
+});
+
+describe("backToPrepHref", () => {
+  it("returns to the exact workspace when context is valid", () => {
+    expect(backToPrepHref("prep", "ws-42")).toBe("/prep?workspace=ws-42");
+  });
+
+  it("encodes the workspace id", () => {
+    expect(backToPrepHref("prep", "a/b")).toBe("/prep?workspace=a%2Fb");
+  });
+
+  it("missing or invalid context falls back to /prep", () => {
+    expect(backToPrepHref(null, "ws-42")).toBe("/prep");
+    expect(backToPrepHref("prep", null)).toBe("/prep");
+    expect(backToPrepHref("elsewhere", "ws-42")).toBe("/prep");
+    expect(backToPrepHref(undefined, undefined)).toBe("/prep");
+  });
+});

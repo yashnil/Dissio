@@ -42,7 +42,9 @@ import {
   describeSideFocus,
   filterFrontlinesForResolution,
   mapGapToTarget,
+  withPrepReturnContext,
   type CoverageDisplay,
+  type PrepReturnContext,
   type PrepTone,
 } from "@/lib/prepModel";
 import {
@@ -659,6 +661,12 @@ function WorkspaceView({
   onUpdateWorkspace: (patch: { side?: Side; tournament_date?: string | null }) => Promise<void>;
 }) {
   const [tab, setTab] = useState<DetailTab>("gaps");
+  // Round trip: Library deep links carry this so "Back to Tournament Prep"
+  // returns to THIS workspace (IDs stay in URLs, never in labels).
+  const returnContext: PrepReturnContext = {
+    workspaceId: workspace.id,
+    resolutionId: workspace.resolution_id,
+  };
   const [editing, setEditing] = useState(false);
   const [editSide, setEditSide] = useState<Side>(workspace.side);
   const [editDate, setEditDate] = useState(workspace.tournament_date ?? "");
@@ -685,7 +693,12 @@ function WorkspaceView({
     .filter((g) => !g.resolved && (g.gap_category === "missing_response" || g.gap_category === "frontline_underdeveloped"))
     .map((g) => {
       const target = mapGapToTarget(g); // exact frontline link when the gap carries a ref
-      return { title: g.title, severity: g.severity, action: target.actionLabel, href: target.href };
+      return {
+        title: g.title,
+        severity: g.severity,
+        action: target.actionLabel,
+        href: withPrepReturnContext(target.href, returnContext),
+      };
     });
 
   return (
@@ -786,13 +799,14 @@ function WorkspaceView({
 
       {/* B–D. Working materials — the real rows behind each coverage summary */}
       <section aria-label="Prep materials" className="flex flex-col gap-3">
-        <ArgumentsSection args={args} display={argCoverage} />
-        <EvidenceCardsSection cards={cards} display={evidenceCoverage} />
+        <ArgumentsSection args={args} display={argCoverage} returnContext={returnContext} />
+        <EvidenceCardsSection cards={cards} display={evidenceCoverage} returnContext={returnContext} />
         <FrontlinesSection
           frontlines={frontlines}
           display={frontlineCoverage}
           missingGapTitles={missingFrontlineGaps}
           userId={userId}
+          returnContext={returnContext}
         />
       </section>
 
@@ -857,7 +871,7 @@ function WorkspaceView({
             ))}
           </div>
           <div className="min-h-[280px]">
-            {tab === "gaps" && <GapsPanel gaps={report.gaps} />}
+            {tab === "gaps" && <GapsPanel gaps={report.gaps} returnContext={returnContext} />}
             {tab === "freshness" && <FreshnessPanel assessments={report.freshness_assessments} />}
             {tab === "plan" && <PrepPlanPanel tasks={tasks} onTaskComplete={onTaskComplete} />}
             {tab === "workouts" && (

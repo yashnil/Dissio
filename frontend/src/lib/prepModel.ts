@@ -551,10 +551,62 @@ export function groupFrontlinesBySide(frontlines: Frontline[]): SideFrontlines {
 
 export type LibraryItemKind = "card" | "argument" | "frontline";
 
+export const LIBRARY_SELECTION_PARAMS: readonly LibraryItemKind[] = [
+  "card", "argument", "frontline",
+];
+
+/** Build a /library URL from params; empty/null values are dropped and the
+ *  rest are safely encoded. IDs live in the URL only — never in labels. */
+export function buildLibraryUrl(
+  params: Record<string, string | null | undefined>,
+): string {
+  const query = Object.entries(params)
+    .filter(([, v]) => typeof v === "string" && v.length > 0)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
+    .join("&");
+  return query ? `/library?${query}` : "/library";
+}
+
 /** Deep link to an exact Library item. IDs live in the URL only — visible
  *  labels must always come from titles/tags. */
 export function libraryItemHref(kind: LibraryItemKind, id: string): string {
-  return `/library?${kind}=${encodeURIComponent(id)}`;
+  return buildLibraryUrl({ [kind]: id });
+}
+
+// ── Prep ↔ Library round trip ─────────────────────────────────────────────────
+
+export interface PrepReturnContext {
+  workspaceId: string;
+  resolutionId?: string | null;
+}
+
+/**
+ * Append return context to a Library deep link so "Back to Tournament Prep"
+ * can land on the exact workspace. Non-Library hrefs pass through untouched.
+ */
+export function withPrepReturnContext(
+  href: string,
+  ctx: PrepReturnContext | null | undefined,
+): string {
+  if (!ctx?.workspaceId || !href.startsWith("/library")) return href;
+  const sep = href.includes("?") ? "&" : "?";
+  const parts = [`from=prep`, `workspace=${encodeURIComponent(ctx.workspaceId)}`];
+  if (ctx.resolutionId) parts.push(`resolution=${encodeURIComponent(ctx.resolutionId)}`);
+  return `${href}${sep}${parts.join("&")}`;
+}
+
+/**
+ * Where the Library's "Back to Tournament Prep" goes: the exact workspace
+ * when valid return context exists, otherwise the prep entry page.
+ */
+export function backToPrepHref(
+  fromParam: string | null | undefined,
+  workspaceParam: string | null | undefined,
+): string {
+  if (fromParam === "prep" && workspaceParam) {
+    return `/prep?workspace=${encodeURIComponent(workspaceParam)}`;
+  }
+  return "/prep";
 }
 
 /** Screen-reader label for a selected Library item — human title, never an ID. */

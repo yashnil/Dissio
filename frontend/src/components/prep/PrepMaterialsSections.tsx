@@ -25,7 +25,9 @@ import {
   groupCardsByArgument,
   groupFrontlinesBySide,
   libraryItemHref,
+  withPrepReturnContext,
   type CoverageDisplay,
+  type PrepReturnContext,
   type PrepTone,
 } from "@/lib/prepModel";
 import type {
@@ -106,7 +108,7 @@ function EmptyMaterials({
 
 // ── Arguments ─────────────────────────────────────────────────────────────────
 
-function ArgumentRow({ a }: { a: Argument }) {
+function ArgumentRow({ a, ctx }: { a: Argument; ctx?: PrepReturnContext }) {
   return (
     <li className="flex items-start gap-2 rounded-lg border border-hairline bg-surface-2/50 px-3 py-2">
       <span className="mt-0.5 shrink-0 rounded-full border border-hairline bg-surface-1 px-1.5 py-0.5 text-[10px] font-medium text-ink-faint">
@@ -114,7 +116,7 @@ function ArgumentRow({ a }: { a: Argument }) {
       </span>
       <div className="min-w-0">
         <Link
-          href={libraryItemHref("argument", a.id)}
+          href={withPrepReturnContext(libraryItemHref("argument", a.id), ctx)}
           className="rounded text-sm text-ink transition-colors hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
         >
           {a.title}
@@ -126,10 +128,11 @@ function ArgumentRow({ a }: { a: Argument }) {
 }
 
 export function ArgumentsSection({
-  args, display,
+  args, display, returnContext,
 }: {
   args: Argument[] | null;
   display: CoverageDisplay;
+  returnContext?: PrepReturnContext;
 }) {
   const grouped = args ? groupArgumentsBySide(args) : null;
   return (
@@ -156,7 +159,7 @@ export function ArgumentsSection({
                 </p>
               ) : (
                 <ul className="flex flex-col gap-1.5">
-                  {grouped[side].map((a) => <ArgumentRow key={a.id} a={a} />)}
+                  {grouped[side].map((a) => <ArgumentRow key={a.id} a={a} ctx={returnContext} />)}
                 </ul>
               )}
             </div>
@@ -165,7 +168,7 @@ export function ArgumentsSection({
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <h4 className="text-eyebrow text-ink-subtle">Unassigned side · {grouped.other.length}</h4>
               <ul className="flex flex-col gap-1.5">
-                {grouped.other.map((a) => <ArgumentRow key={a.id} a={a} />)}
+                {grouped.other.map((a) => <ArgumentRow key={a.id} a={a} ctx={returnContext} />)}
               </ul>
             </div>
           )}
@@ -190,14 +193,14 @@ const VERDICT_LABELS: Record<string, string> = {
   contradicted: "Contradicted",
 };
 
-function CardRow({ card }: { card: LibrarySearchResult }) {
+function CardRow({ card, ctx }: { card: LibrarySearchResult; ctx?: PrepReturnContext }) {
   const warnings = deriveCardWarnings(card);
   const verdictTone = TONE[cardVerdictTone(card.support_verdict)];
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2/60 px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <Link
-          href={libraryItemHref("card", card.card_id)}
+          href={withPrepReturnContext(libraryItemHref("card", card.card_id), ctx)}
           className="min-w-0 flex-1 rounded text-sm font-semibold text-ink transition-colors hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
         >
           {card.tag ?? "Untitled card"}
@@ -243,10 +246,11 @@ function CardRow({ card }: { card: LibrarySearchResult }) {
 }
 
 export function EvidenceCardsSection({
-  cards, display,
+  cards, display, returnContext,
 }: {
   cards: LibrarySearchResult[] | null;
   display: CoverageDisplay;
+  returnContext?: PrepReturnContext;
 }) {
   const groups = cards ? groupCardsByArgument(cards) : [];
   return (
@@ -271,7 +275,7 @@ export function EvidenceCardsSection({
                 {g.label} · {g.cards.length} card{g.cards.length === 1 ? "" : "s"}
               </h4>
               <ul className="flex flex-col gap-2">
-                {g.cards.map((c) => <CardRow key={c.card_id} card={c} />)}
+                {g.cards.map((c) => <CardRow key={c.card_id} card={c} ctx={returnContext} />)}
               </ul>
             </div>
           ))}
@@ -301,7 +305,7 @@ interface LoadedResponse {
  * response, its linked-evidence count. Warnings come only from known
  * counts — a failed lookup stays silent rather than guessing.
  */
-function FrontlineRow({ f, userId }: { f: Frontline; userId: string | null }) {
+function FrontlineRow({ f, userId, ctx }: { f: Frontline; userId: string | null; ctx?: PrepReturnContext }) {
   const [responses, setResponses] = useState<LoadedResponse[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -352,7 +356,7 @@ function FrontlineRow({ f, userId }: { f: Frontline; userId: string | null }) {
             )}
           </div>
           <Link
-            href={libraryItemHref("frontline", f.id)}
+            href={withPrepReturnContext(libraryItemHref("frontline", f.id), ctx)}
             onClick={(e) => e.stopPropagation()}
             className="shrink-0 rounded text-xs font-medium text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
           >
@@ -417,13 +421,14 @@ function FrontlineRow({ f, userId }: { f: Frontline; userId: string | null }) {
 }
 
 export function FrontlinesSection({
-  frontlines, missingGapTitles, display, userId,
+  frontlines, missingGapTitles, display, userId, returnContext,
 }: {
   frontlines: Frontline[] | null;
   /** Frontline-category gaps from the readiness report (real absences). */
   missingGapTitles: { title: string; severity: string; action: string; href: string }[];
   display: CoverageDisplay;
   userId: string | null;
+  returnContext?: PrepReturnContext;
 }) {
   const grouped = frontlines ? groupFrontlinesBySide(frontlines) : null;
   const hasAny = (frontlines?.length ?? 0) > 0;
@@ -451,7 +456,7 @@ export function FrontlinesSection({
                       {side === "other" ? "General" : side.toUpperCase()} · {list.length}
                     </h4>
                     <ul className="flex flex-col gap-1.5">
-                      {list.map((f) => <FrontlineRow key={f.id} f={f} userId={userId} />)}
+                      {list.map((f) => <FrontlineRow key={f.id} f={f} userId={userId} ctx={returnContext} />)}
                     </ul>
                   </div>
                 );
