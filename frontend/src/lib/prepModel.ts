@@ -23,6 +23,7 @@ import type {
 import type {
   Argument,
   Frontline,
+  FrontlineResponse,
   LibrarySearchResult,
   Resolution,
 } from "@/types/library";
@@ -546,6 +547,62 @@ export function groupFrontlinesBySide(frontlines: Frontline[]): SideFrontlines {
   };
 }
 
+// ── Item-level Library deep links ─────────────────────────────────────────────
+
+export type LibraryItemKind = "card" | "argument" | "frontline";
+
+/** Deep link to an exact Library item. IDs live in the URL only — visible
+ *  labels must always come from titles/tags. */
+export function libraryItemHref(kind: LibraryItemKind, id: string): string {
+  return `/library?${kind}=${encodeURIComponent(id)}`;
+}
+
+/** Screen-reader label for a selected Library item — human title, never an ID. */
+export function libraryItemA11yLabel(kind: LibraryItemKind, title: string | null | undefined): string {
+  const KIND_LABEL: Record<LibraryItemKind, string> = {
+    card: "evidence card",
+    argument: "argument",
+    frontline: "frontline",
+  };
+  return `Selected ${KIND_LABEL[kind]}: ${title?.trim() || "untitled"}`;
+}
+
+// ── Frontline response warnings ───────────────────────────────────────────────
+
+const RESPONSE_TYPE_LABELS: Record<string, string> = {
+  no_link: "No link",
+  link_defense: "Link defense",
+  impact_defense: "Impact defense",
+  uniqueness_takeout: "Uniqueness takeout",
+  turn: "Turn",
+  counterplan: "Counterplan",
+  mitigation: "Mitigation",
+  non_unique: "Non-unique",
+  weighing: "Weighing",
+  evidence_indictment: "Evidence indictment",
+  source_challenge: "Source challenge",
+};
+
+export function describeResponseType(responseType: string): string {
+  return RESPONSE_TYPE_LABELS[responseType] ?? responseType.replace(/_/g, " ");
+}
+
+/**
+ * Warning for a saved frontline response, from real linkage data.
+ * Analytical responses legitimately carry no cards; an evidence-based
+ * response with zero linked cards is a concrete gap. Unknown counts stay
+ * silent — never warn without evidence.
+ */
+export function frontlineResponseWarning(
+  response: Pick<FrontlineResponse, "is_analytical">,
+  linkedCardCount: number | null,
+): string | null {
+  if (linkedCardCount === null) return null;
+  if (response.is_analytical) return null;
+  if (linkedCardCount === 0) return "No linked evidence — this response is currently unsupported";
+  return null;
+}
+
 // ── Gap → action target mapping (deep links) ──────────────────────────────────
 
 export type GapSection = "arguments" | "evidence" | "frontlines" | "practice";
@@ -575,12 +632,48 @@ const PRACTICE_GAP_CATEGORIES = new Set([
   "missing_summary_extension", "missing_final_focus_extension", "missing_weighing",
 ]);
 
+type GapRefs = Partial<Pick<PrepGap, "card_id" | "argument_id" | "frontline_id">>;
+
 /**
- * Route a readiness gap to the place it can be fixed. Card-level detail
- * routes don't exist yet, so evidence gaps land on Evidence Studio and
- * structural gaps on the Library — each with a one-line why.
+ * When the gap carries a real entity reference, target the exact Library
+ * item. The ref matching the gap's category family wins; otherwise any
+ * available ref (card → frontline → argument).
  */
-export function mapGapToTarget(gap: Pick<PrepGap, "gap_category">): GapTarget {
+function exactGapTarget(gap: Pick<PrepGap, "gap_category"> & GapRefs): GapTarget | null {
+  const cat = gap.gap_category;
+  const card = (): GapTarget | null => gap.card_id ? {
+    section: "evidence",
+    href: libraryItemHref("card", gap.card_id),
+    actionLabel: "Open card",
+    explanation: "Jump to the exact card in your Library.",
+  } : null;
+  const frontline = (): GapTarget | null => gap.frontline_id ? {
+    section: "frontlines",
+    href: libraryItemHref("frontline", gap.frontline_id),
+    actionLabel: "Open frontline",
+    explanation: "Jump to the exact frontline in your Library.",
+  } : null;
+  const argument = (): GapTarget | null => gap.argument_id ? {
+    section: "arguments",
+    href: libraryItemHref("argument", gap.argument_id),
+    actionLabel: "Open argument",
+    explanation: "Jump to the exact argument in your Library.",
+  } : null;
+
+  if (FRONTLINE_GAP_TARGETS.has(cat)) return frontline() ?? argument() ?? card();
+  if (cat === "missing_argument") return argument() ?? null;
+  if (EVIDENCE_GAP_CATEGORIES.has(cat)) return card() ?? argument() ?? frontline();
+  return card() ?? frontline() ?? argument();
+}
+
+/**
+ * Route a readiness gap to the place it can be fixed: the exact Library item
+ * when the gap references one, otherwise the closest working surface — each
+ * with a one-line why.
+ */
+export function mapGapToTarget(gap: Pick<PrepGap, "gap_category"> & GapRefs): GapTarget {
+  const exact = exactGapTarget(gap);
+  if (exact) return exact;
   const cat = gap.gap_category;
   if (cat === "missing_argument") {
     return {

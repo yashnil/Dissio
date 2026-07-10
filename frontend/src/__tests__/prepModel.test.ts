@@ -534,3 +534,104 @@ describe("mapGapToTarget — gaps route to the place they can be fixed", () => {
     expect(t.explanation).toContain("No exact target");
   });
 });
+
+// ── Phase 6C: item-level deep links + frontline response depth ───────────────
+
+import {
+  libraryItemHref,
+  libraryItemA11yLabel,
+  describeResponseType,
+  frontlineResponseWarning,
+} from "@/lib/prepModel";
+
+describe("libraryItemHref / libraryItemA11yLabel", () => {
+  it("builds item-level Library URLs (IDs in params only)", () => {
+    expect(libraryItemHref("card", "c-1")).toBe("/library?card=c-1");
+    expect(libraryItemHref("argument", "a-1")).toBe("/library?argument=a-1");
+    expect(libraryItemHref("frontline", "f-1")).toBe("/library?frontline=f-1");
+  });
+
+  it("URL-encodes IDs safely", () => {
+    expect(libraryItemHref("card", "a b/c")).toBe("/library?card=a%20b%2Fc");
+  });
+
+  it("a11y labels use human titles, never IDs", () => {
+    expect(libraryItemA11yLabel("card", "Carbon pricing cuts emissions"))
+      .toBe("Selected evidence card: Carbon pricing cuts emissions");
+    expect(libraryItemA11yLabel("frontline", null)).toBe("Selected frontline: untitled");
+    expect(libraryItemA11yLabel("argument", "  ")).toBe("Selected argument: untitled");
+  });
+});
+
+describe("mapGapToTarget — exact entity refs", () => {
+  it("gap with card_id → exact card link", () => {
+    const t = mapGapToTarget({ gap_category: "weak_source", card_id: "c-9" });
+    expect(t.href).toBe("/library?card=c-9");
+    expect(t.actionLabel).toBe("Open card");
+  });
+
+  it("gap with frontline_id → exact frontline link", () => {
+    const t = mapGapToTarget({ gap_category: "frontline_underdeveloped", frontline_id: "f-9" });
+    expect(t.href).toBe("/library?frontline=f-9");
+    expect(t.actionLabel).toBe("Open frontline");
+  });
+
+  it("gap with argument_id → exact argument link", () => {
+    const t = mapGapToTarget({ gap_category: "missing_argument", argument_id: "a-9" });
+    expect(t.href).toBe("/library?argument=a-9");
+    expect(t.actionLabel).toBe("Open argument");
+  });
+
+  it("category-matching ref wins over other refs", () => {
+    const t = mapGapToTarget({
+      gap_category: "missing_response",
+      frontline_id: "f-1",
+      card_id: "c-1",
+    });
+    expect(t.href).toBe("/library?frontline=f-1");
+  });
+
+  it("frontline gap without a frontline ref falls back to another ref", () => {
+    const t = mapGapToTarget({ gap_category: "missing_response", argument_id: "a-2" });
+    expect(t.href).toBe("/library?argument=a-2");
+  });
+
+  it("gap without any entity ref keeps the Phase 6B section fallback", () => {
+    const t = mapGapToTarget({ gap_category: "missing_response" });
+    expect(t.href).toBe("/library");
+    expect(t.actionLabel).toBe("Write frontline");
+    const e = mapGapToTarget({ gap_category: "stale_evidence" });
+    expect(e.href).toBe("/evidence");
+  });
+
+  it("action labels never contain raw IDs", () => {
+    const t = mapGapToTarget({ gap_category: "weak_source", card_id: "ce0a11-uuid-visible?" });
+    expect(t.actionLabel).not.toContain("uuid");
+    expect(t.explanation).not.toContain("uuid");
+  });
+});
+
+describe("frontline response depth helpers", () => {
+  it("response types render debate-native labels", () => {
+    expect(describeResponseType("no_link")).toBe("No link");
+    expect(describeResponseType("uniqueness_takeout")).toBe("Uniqueness takeout");
+    expect(describeResponseType("evidence_indictment")).toBe("Evidence indictment");
+    expect(describeResponseType("future_type")).toBe("future type");
+  });
+
+  it("evidence-based response with zero linked cards → unsupported warning", () => {
+    expect(frontlineResponseWarning({ is_analytical: false }, 0)).toContain("No linked evidence");
+  });
+
+  it("analytical responses never warn about missing cards", () => {
+    expect(frontlineResponseWarning({ is_analytical: true }, 0)).toBeNull();
+  });
+
+  it("linked evidence present → no warning", () => {
+    expect(frontlineResponseWarning({ is_analytical: false }, 2)).toBeNull();
+  });
+
+  it("unknown count stays silent — never warn without evidence", () => {
+    expect(frontlineResponseWarning({ is_analytical: false }, null)).toBeNull();
+  });
+});

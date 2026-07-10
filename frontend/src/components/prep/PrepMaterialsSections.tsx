@@ -11,19 +11,26 @@
  * Labels come from titles/tags — never raw IDs.
  */
 
+import { useState } from "react";
 import Link from "next/link";
-import { BarChart3, ChevronDown, ChevronRight, Quote, Shield, Swords } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, Loader2, Quote, Shield, Swords } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import {
   cardVerdictTone,
   deriveCardWarnings,
   describeArgumentType,
+  describeResponseType,
+  frontlineResponseWarning,
   groupArgumentsBySide,
   groupCardsByArgument,
   groupFrontlinesBySide,
+  libraryItemHref,
   type CoverageDisplay,
   type PrepTone,
 } from "@/lib/prepModel";
-import type { Argument, Frontline, LibrarySearchResult } from "@/types/library";
+import type {
+  Argument, Frontline, FrontlineResponse, FrontlineResponseCard, LibrarySearchResult,
+} from "@/types/library";
 
 const TONE: Record<PrepTone, { dot: string; text: string }> = {
   green:   { dot: "bg-ok",        text: "text-ok" },
@@ -106,7 +113,12 @@ function ArgumentRow({ a }: { a: Argument }) {
         {describeArgumentType(a.argument_type)}
       </span>
       <div className="min-w-0">
-        <p className="text-sm text-ink">{a.title}</p>
+        <Link
+          href={libraryItemHref("argument", a.id)}
+          className="rounded text-sm text-ink transition-colors hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+        >
+          {a.title}
+        </Link>
         {a.summary && <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">{a.summary}</p>}
       </div>
     </li>
@@ -184,9 +196,12 @@ function CardRow({ card }: { card: LibrarySearchResult }) {
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2/60 px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="min-w-0 flex-1 text-sm font-semibold text-ink">
+        <Link
+          href={libraryItemHref("card", card.card_id)}
+          className="min-w-0 flex-1 rounded text-sm font-semibold text-ink transition-colors hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+        >
           {card.tag ?? "Untitled card"}
-        </p>
+        </Link>
         {card.support_verdict && (
           <span className={`flex shrink-0 items-center gap-1 text-[10px] font-semibold ${verdictTone.text}`}>
             <span className={`h-1 w-1 rounded-full ${verdictTone.dot}`} aria-hidden="true" />
@@ -274,26 +289,141 @@ export function EvidenceCardsSection({
 
 // ── Frontlines ────────────────────────────────────────────────────────────────
 
-function FrontlineRow({ f }: { f: Frontline }) {
+interface LoadedResponse {
+  response: FrontlineResponse;
+  /** Linked card count; null while unknown (lookup failed). */
+  linkedCardCount: number | null;
+}
+
+/**
+ * Expandable frontline row: header shows title + the opponent claim it
+ * answers; expanding lazily loads the real saved responses and, per
+ * response, its linked-evidence count. Warnings come only from known
+ * counts — a failed lookup stays silent rather than guessing.
+ */
+function FrontlineRow({ f, userId }: { f: Frontline; userId: string | null }) {
+  const [responses, setResponses] = useState<LoadedResponse[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  async function loadResponses() {
+    if (responses !== null || loading || !userId) return;
+    setLoading(true);
+    try {
+      const rows = await apiFetch<FrontlineResponse[]>(
+        `/library/frontlines/${f.id}/responses?user_id=${userId}`,
+      );
+      const loaded: LoadedResponse[] = await Promise.all(
+        rows.map(async (response) => {
+          try {
+            const cards = await apiFetch<FrontlineResponseCard[]>(
+              `/library/responses/${response.id}/cards?user_id=${userId}`,
+            );
+            return { response, linkedCardCount: cards.length };
+          } catch {
+            return { response, linkedCardCount: null };
+          }
+        }),
+      );
+      setResponses(loaded.sort((a, b) => a.response.position - b.response.position));
+    } catch {
+      setLoadFailed(true);
+      setResponses([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <li className="flex flex-col gap-1 rounded-lg border border-hairline bg-surface-2/50 px-3 py-2">
-      <p className="text-sm text-ink">{f.title}</p>
-      {f.opponent_claim && (
-        <p className="text-xs leading-relaxed text-ink-faint">
-          Answers: <span className="italic">&ldquo;{f.opponent_claim}&rdquo;</span>
-        </p>
-      )}
+    <li>
+      <details
+        className="group/fl rounded-lg border border-hairline bg-surface-2/50"
+        onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void loadResponses(); }}
+      >
+        <summary className="flex cursor-pointer list-none items-start gap-2 rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 [&::-webkit-details-marker]:hidden">
+          <ChevronRight size={12} className="mt-1 shrink-0 text-ink-faint group-open/fl:hidden" aria-hidden="true" />
+          <ChevronDown size={12} className="mt-1 hidden shrink-0 text-ink-faint group-open/fl:block" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-ink">{f.title}</p>
+            {f.opponent_claim && (
+              <p className="text-xs leading-relaxed text-ink-faint">
+                Answers: <span className="italic">&ldquo;{f.opponent_claim}&rdquo;</span>
+              </p>
+            )}
+          </div>
+          <Link
+            href={libraryItemHref("frontline", f.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="shrink-0 rounded text-xs font-medium text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50"
+          >
+            Open in Library
+          </Link>
+        </summary>
+
+        <div className="flex flex-col gap-2 border-t border-hairline px-3 py-2.5">
+          {loading && (
+            <p role="status" className="flex items-center gap-1.5 text-xs text-ink-subtle">
+              <Loader2 size={11} className="motion-safe:animate-spin" aria-hidden="true" />
+              Loading saved responses…
+            </p>
+          )}
+          {!loading && loadFailed && (
+            <p className="text-xs text-ink-subtle">
+              Couldn&rsquo;t load response details here — they&rsquo;re available in the Library.
+            </p>
+          )}
+          {!loading && !loadFailed && responses !== null && responses.length === 0 && (
+            <p className="text-xs text-warn">
+              No responses written yet for this frontline.
+            </p>
+          )}
+          {!loading && responses !== null && responses.length > 0 && (
+            <ul className="flex flex-col gap-1.5">
+              {responses.map(({ response, linkedCardCount }) => {
+                const warning = frontlineResponseWarning(response, linkedCardCount);
+                return (
+                  <li key={response.id} className="flex flex-col gap-1 rounded-md border border-hairline bg-surface-1 px-2.5 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-full border border-hairline bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-subtle">
+                        {describeResponseType(response.response_type)}
+                      </span>
+                      {response.is_analytical && (
+                        <span className="text-[10px] text-ink-faint">analytical</span>
+                      )}
+                      {linkedCardCount !== null && linkedCardCount > 0 && (
+                        <span className="text-[10px] text-ink-faint">
+                          {linkedCardCount} linked card{linkedCardCount === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-ink">{response.response_claim}</p>
+                    {response.explanation && (
+                      <p className="text-[11px] leading-relaxed text-ink-faint">{response.explanation}</p>
+                    )}
+                    {warning && (
+                      <p className="w-fit rounded-full border border-warn/30 bg-warn/5 px-1.5 py-0.5 text-[10px] font-medium text-warn">
+                        {warning}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </details>
     </li>
   );
 }
 
 export function FrontlinesSection({
-  frontlines, missingGapTitles, display,
+  frontlines, missingGapTitles, display, userId,
 }: {
   frontlines: Frontline[] | null;
-  /** Titles of frontline-category gaps from the readiness report (real absences). */
-  missingGapTitles: { title: string; severity: string; action: string }[];
+  /** Frontline-category gaps from the readiness report (real absences). */
+  missingGapTitles: { title: string; severity: string; action: string; href: string }[];
   display: CoverageDisplay;
+  userId: string | null;
 }) {
   const grouped = frontlines ? groupFrontlinesBySide(frontlines) : null;
   const hasAny = (frontlines?.length ?? 0) > 0;
@@ -321,7 +451,7 @@ export function FrontlinesSection({
                       {side === "other" ? "General" : side.toUpperCase()} · {list.length}
                     </h4>
                     <ul className="flex flex-col gap-1.5">
-                      {list.map((f) => <FrontlineRow key={f.id} f={f} />)}
+                      {list.map((f) => <FrontlineRow key={f.id} f={f} userId={userId} />)}
                     </ul>
                   </div>
                 );
@@ -345,7 +475,7 @@ export function FrontlinesSection({
                       {m.severity}
                     </span>
                     <Link
-                      href="/library"
+                      href={m.href}
                       className="flex shrink-0 items-center gap-1 text-xs font-medium text-lav hover:text-lav-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 focus-visible:rounded"
                     >
                       {m.action} <ChevronRight size={10} aria-hidden="true" />

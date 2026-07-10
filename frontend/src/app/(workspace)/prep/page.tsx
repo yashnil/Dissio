@@ -384,6 +384,7 @@ function PrepPageContent() {
 
       {phase === "ready" && workspace && !wsLoading && (
         <WorkspaceView
+          userId={userId}
           workspace={workspace}
           resolution={resolutions.find((r) => r.id === workspace.resolution_id) ?? null}
           report={report}
@@ -639,9 +640,10 @@ function ToneBadge({ display }: { display: CoverageDisplay }) {
 }
 
 function WorkspaceView({
-  workspace, resolution, report, tasks, workouts, args, cards, frontlines,
+  userId, workspace, resolution, report, tasks, workouts, args, cards, frontlines,
   generating, onGenerate, onTaskComplete, onWorkoutComplete, onUpdateWorkspace,
 }: {
+  userId: string | null;
   workspace: PrepWorkspace;
   resolution: Resolution | null;
   report: PrepReadinessReport | null;
@@ -681,11 +683,10 @@ function WorkspaceView({
   // Concrete missing responses from the readiness report's frontline gaps.
   const missingFrontlineGaps = (report?.gaps ?? [])
     .filter((g) => !g.resolved && (g.gap_category === "missing_response" || g.gap_category === "frontline_underdeveloped"))
-    .map((g) => ({
-      title: g.title,
-      severity: g.severity,
-      action: mapGapToTarget(g).actionLabel,
-    }));
+    .map((g) => {
+      const target = mapGapToTarget(g); // exact frontline link when the gap carries a ref
+      return { title: g.title, severity: g.severity, action: target.actionLabel, href: target.href };
+    });
 
   return (
     <div className="flex flex-col gap-5">
@@ -791,6 +792,7 @@ function WorkspaceView({
           frontlines={frontlines}
           display={frontlineCoverage}
           missingGapTitles={missingFrontlineGaps}
+          userId={userId}
         />
       </section>
 

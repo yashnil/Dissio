@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BookOpen, Search, Plus, FileText, Network, X } from "lucide-react";
+import { SelectedItemPanel } from "@/components/library/SelectedItemPanel";
+import type { LibraryItemKind } from "@/lib/prepModel";
 import { apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import type {
@@ -29,9 +31,11 @@ const SIDE_COLORS: Record<Side, string> = {
 function LibraryCardRow({
   result,
   onSelect,
+  highlighted = false,
 }: {
   result: LibrarySearchResult;
   onSelect: () => void;
+  highlighted?: boolean;
 }) {
   const verdictColor =
     result.support_verdict === "supported"
@@ -45,8 +49,14 @@ function LibraryCardRow({
   return (
     <button
       onClick={onSelect}
-      className="w-full text-left rounded-xl border border-border hover:border-lav/30 hover:bg-surface-muted/60 transition-all px-4 py-3 space-y-1.5"
+      aria-current={highlighted ? "true" : undefined}
+      className={`w-full text-left rounded-xl border hover:border-lav/30 hover:bg-surface-muted/60 transition-all px-4 py-3 space-y-1.5 ${
+        highlighted ? "border-lav/50 ring-2 ring-lav/30 bg-lav/5" : "border-border"
+      }`}
     >
+      {highlighted && (
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-lav">Selected</p>
+      )}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-[13px] font-semibold text-ink truncate">
@@ -181,10 +191,11 @@ function NewBlockfileForm({
 
 type Tab = "cards" | "blockfiles" | "frontlines";
 
-export default function LibraryPage() {
+function LibraryPageContent() {
   const [userId, setUserId] = useState<string>("");
 
   const router = useRouter();
+  const searchParams = useSearchParams();
   useEffect(() => {
     createClient()
       .auth.getUser()
@@ -194,9 +205,23 @@ export default function LibraryPage() {
       });
   }, [router]);
 
+  // Item deep links (?card= / ?argument= / ?frontline=) — IDs are URL state
+  // only; the panel shows human labels. Read once on mount.
+  const [selectedItem, setSelectedItem] = useState<{ kind: LibraryItemKind; id: string } | null>(() => {
+    for (const kind of ["card", "argument", "frontline"] as const) {
+      const id = searchParams.get(kind);
+      if (id) return { kind, id };
+    }
+    return null;
+  });
+  function dismissSelected() {
+    setSelectedItem(null);
+    router.replace("/library", { scroll: false });
+  }
+
   const [tab, setTab] = useState<Tab>("cards");
   const [query, setQuery] = useState("");
-  const [resolutionId, setResolutionId] = useState("");
+  const [resolutionId, setResolutionId] = useState(searchParams.get("resolution") ?? "");
   const [sideFilter, setSideFilter] = useState<Side | "">("");
   const [verdictFilter, setVerdictFilter] = useState("");
 
@@ -282,6 +307,17 @@ export default function LibraryPage() {
           </div>
         </div>
       </div>
+
+      {/* Deep-linked item (from Tournament Prep or a shared link) */}
+      {selectedItem && (
+        <SelectedItemPanel
+          key={`${selectedItem.kind}:${selectedItem.id}`}
+          kind={selectedItem.kind}
+          id={selectedItem.id}
+          userId={userId}
+          onDismiss={dismissSelected}
+        />
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-hairline">
@@ -373,6 +409,7 @@ export default function LibraryPage() {
               <LibraryCardRow
                 key={r.card_id}
                 result={r}
+                highlighted={selectedItem?.kind === "card" && selectedItem.id === r.card_id}
                 onSelect={() => setSelectedCard(r)}
               />
             ))}
@@ -466,5 +503,20 @@ export default function LibraryPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function LibraryPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <h1 className="text-[20px] font-bold text-ink">Evidence Library</h1>
+          <p role="status" className="mt-2 text-[13px] text-ink-subtle">Loading…</p>
+        </div>
+      }
+    >
+      <LibraryPageContent />
+    </Suspense>
   );
 }
