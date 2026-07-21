@@ -114,6 +114,15 @@ export default function RoundSimulationPage() {
     try {
       const sim = await roundApi.createRound(config);
       localStorage.setItem("dissio_active_round", sim.id);
+      // Build the AI opponent's plan before the round becomes active — the
+      // opponent speech endpoint requires this row to exist, even when no
+      // prep material was selected (it falls back to resolutional analysis).
+      await roundApi.loadPreparation(sim.id, {
+        cardIds: config.approved_card_ids,
+        blockfileIds: config.approved_blockfile_ids,
+        frontlineIds: config.approved_frontline_ids,
+        prepWorkspaceId: config.prep_workspace_id,
+      });
       const started = await roundApi.startRound(sim.id);
       setSimulation(started);
       await refreshState(sim.id);
@@ -398,6 +407,12 @@ export default function RoundSimulationPage() {
                             {s.is_ai ? "AI" : "You"}
                           </span>
                         </div>
+                        {s.is_ai && s.is_fallback && (
+                          <p className="text-amber-600 dark:text-amber-400">
+                            ⚠ Template response — the AI opponent service wasn&#39;t available, so this
+                            is a deterministic fallback, not a generated argument.
+                          </p>
+                        )}
                         {s.transcript && (
                           <p className="text-muted-foreground line-clamp-2">
                             {s.transcript.slice(0, 120)}...

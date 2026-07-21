@@ -534,6 +534,7 @@ def generate_opponent_speech_endpoint(
         "legality_violations": [v.model_dump() for v in violations],
         "word_count": len(result.speech_text.split()),
         "is_immutable": True,
+        "is_fallback": result.is_fallback,
         "created_at": now,
         "idempotency_key": req.idempotency_key,
     }
@@ -1357,6 +1358,7 @@ def _load_speech(row: Dict[str, Any]) -> RoundSpeech:
         legality_violations=row.get("legality_violations") or [],
         word_count=row.get("word_count"),
         is_immutable=row.get("is_immutable", False),
+        is_fallback=row.get("is_fallback", False),
         created_at=row.get("created_at", _now()),
     )
 

@@ -65,6 +65,41 @@ def test_round_simulation_models_importable():
     )
 
 
+def test_round_speech_model_defaults_is_fallback_false():
+    """RoundSpeech.is_fallback must default False so existing rows/tests are unaffected."""
+    from app.models.round_simulation import RoundSpeech
+    s = RoundSpeech(
+        id="s1", round_id="r1", phase="first_constructive", speaker_side="pro",
+        is_ai=True, created_at="2026-01-01T00:00:00Z",
+    )
+    assert s.is_fallback is False
+
+
+def test_load_speech_maps_is_fallback_true():
+    """_load_speech must surface a persisted fallback flag so the UI can disclose
+    that a speech was a deterministic template, not a generated AI response."""
+    from app.api.round_simulations import _load_speech
+    row = {
+        "id": "s1", "round_id": "r1", "phase": "first_constructive",
+        "speaker_side": "con", "is_ai": True, "is_fallback": True,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    speech = _load_speech(row)
+    assert speech.is_fallback is True
+
+
+def test_load_speech_defaults_is_fallback_false_when_column_missing():
+    """Rows written before the is_fallback column existed must not be misread as fallback."""
+    from app.api.round_simulations import _load_speech
+    row = {
+        "id": "s2", "round_id": "r1", "phase": "first_constructive",
+        "speaker_side": "pro", "is_ai": False,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    speech = _load_speech(row)
+    assert speech.is_fallback is False
+
+
 def test_round_services_importable():
     from app.services.round_state_machine import (
         get_phase_order,

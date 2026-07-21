@@ -105,6 +105,7 @@ export interface RoundSpeech {
   legality_violations: Array<{ type: string; description: string; severity: string }>;
   word_count?: number;
   is_immutable: boolean;
+  is_fallback: boolean;
   created_at: string;
 }
 

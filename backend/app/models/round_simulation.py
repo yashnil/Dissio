@@ -206,6 +206,7 @@ class RoundSpeech(BaseModel):
     legality_violations: List[Dict[str, Any]] = Field(default_factory=list)
     word_count: Optional[int] = None
     is_immutable: bool = False
+    is_fallback: bool = False
     created_at: str
 
 

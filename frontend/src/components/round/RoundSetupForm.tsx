@@ -167,8 +167,8 @@ export function RoundSetupForm({ onStart, loading }: Props) {
 
       <div className="pt-2">
         <p className="text-xs text-muted-foreground mb-4">
-          After creating the round, you can load approved evidence cards, blockfiles, and frontlines
-          before starting.
+          This alpha doesn&#39;t yet let you pick specific evidence for the AI opponent here — it
+          argues from resolutional analysis instead of your saved cards.
         </p>
         <button
           onClick={() => onStart(config)}
