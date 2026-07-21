@@ -437,3 +437,61 @@ class SaveOwnWorkoutRequest(BaseModel):
     instructions: Optional[str] = None
     success_criteria: list[str] = Field(default_factory=list)
     time_limit_seconds: int = 90
+
+
+# ── Practice attempts (Phase 7D) ────────────────────────────────────────────────
+#
+# v1 heuristic scoring: deterministic, rule-based, no LLM call. Every
+# dimension score carries its own explanation so the feedback is
+# transparent rather than a black-box number.
+
+AttemptScoreDimensionKey = Literal[
+    "judge_fit",
+    "clarity",
+    "evidence_preservation",
+    "weighing_adaptation",
+    "technical_precision",
+    "risk_avoidance",
+    "delivery_focus",
+]
+
+
+class JudgeAdaptationAttemptDimension(BaseModel):
+    """Score for one v1 heuristic scoring dimension."""
+    dimension: AttemptScoreDimensionKey
+    score: int  # 0-100
+    explanation: str
+
+
+class JudgeAdaptationAttemptScoreRequest(BaseModel):
+    user_id: str
+    adaptation_id: str
+    judge_type: JudgeType
+    source_type: AdaptationTarget
+    source_id: str
+    attempt_text: str
+
+
+class JudgeAdaptationAttemptScoreResponse(BaseModel):
+    attempt_id: str
+    overall_fit: int  # 0-100, average of dimension scores
+    dimensions: list[JudgeAdaptationAttemptDimension]
+    what_improved: list[str]
+    what_still_needs_work: list[str]
+    integrity_warnings: list[str]
+    next_retry_suggestion: str
+    saved: bool
+    scoring_version: str = "v1_heuristic"
+
+
+class JudgeAdaptationAttemptRow(BaseModel):
+    id: str
+    adaptation_id: str
+    user_id: str
+    judge_type: JudgeType
+    source_type: AdaptationTarget
+    source_id: Optional[str] = None
+    attempt_text: str
+    score_json: dict
+    overall_fit: Optional[float] = None
+    created_at: str

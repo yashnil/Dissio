@@ -1193,3 +1193,394 @@ def test_api_has_workouts_save_endpoint():
     from app.api.judge_adaptation import router
     paths = [r.path for r in router.routes]
     assert any("workouts/save" in p for p in paths)
+
+
+# ── Phase 7D: practice-attempt scoring (deterministic v1 heuristic) ───────────
+
+from app.services.judge_attempt_scorer import score_practice_attempt, MIN_ATTEMPT_LENGTH
+
+ADAPTATION_ID = "adapt-uuid-1"
+ATTEMPT_USER = "student-1"
+OTHER_USER = "other-user"
+
+BASE_RESULT_JSON = {
+    "what_to_emphasize": ["the real-world consequence"],
+    "what_to_simplify": ["the methodology detail"],
+    "what_must_remain_explicit": ["the 20% figure itself"],
+    "suggested_phrasing": ["One in five tons of carbon is gone"],
+    "risks": [],
+    "critical_risks": [],
+    "evidence_guide": {"short_citation": "Smith 2026", "card_tag": "Carbon pricing cuts emissions"},
+}
+
+GOOD_ATTEMPT = (
+    "One in five tons of carbon is gone thanks to this policy, according to Smith 2026 — "
+    "specifically the 20% figure itself. "
+    "The real-world consequence for families is huge — imagine your energy bill dropping every year."
+)
+
+
+class TestScorePracticeAttemptHeuristic:
+    """Unit tests on the pure scoring function — no DB, no network."""
+
+    def test_returns_all_seven_dimensions(self):
+        dims, *_ = score_practice_attempt(
+            judge_type="lay", source_type="evidence",
+            attempt_text=GOOD_ATTEMPT, result_json=BASE_RESULT_JSON,
+        )
+        keys = {d.dimension for d in dims}
+        assert keys == {
+            "judge_fit", "clarity", "evidence_preservation", "weighing_adaptation",
+            "technical_precision", "risk_avoidance", "delivery_focus",
+        }
+        assert all(0 <= d.score <= 100 for d in dims)
+        assert all(d.explanation for d in dims)
+
+    def test_lay_judge_jargon_penalizes_judge_fit(self):
+        clean, *_ = score_practice_attempt(
+            judge_type="lay", source_type="argument",
+            attempt_text="This matters because it protects real families every single day of the year.",
+            result_json={},
+        )
+        jargon, *_ = score_practice_attempt(
+            judge_type="lay", source_type="argument",
+            attempt_text="This solvency claim resolves the uniqueness debate via a clean link chain analysis.",
+            result_json={},
+        )
+        clean_fit = next(d for d in clean if d.dimension == "judge_fit").score
+        jargon_fit = next(d for d in jargon if d.dimension == "judge_fit").score
+        assert jargon_fit < clean_fit
+        assert "jargon" in next(d for d in jargon if d.dimension == "judge_fit").explanation.lower()
+
+    def test_parent_judge_also_penalized_by_jargon(self):
+        dims, *_ = score_practice_attempt(
+            judge_type="parent", source_type="argument",
+            attempt_text="The counterplan solves via a topicality shell and a prima facie link chain.",
+            result_json={},
+        )
+        fit = next(d for d in dims if d.dimension == "judge_fit")
+        assert fit.score < 60
+
+    def test_flow_judge_missing_weighing_scores_low_with_explanation(self):
+        dims, *_ = score_practice_attempt(
+            judge_type="flow", source_type="argument",
+            attempt_text="This is a good argument that the judge should like a lot in this round.",
+            result_json={},
+        )
+        weighing = next(d for d in dims if d.dimension == "weighing_adaptation")
+        assert weighing.score < 60
+        assert "weigh" in weighing.explanation.lower()
+
+    def test_technical_judge_missing_weighing_scores_low(self):
+        dims, *_ = score_practice_attempt(
+            judge_type="technical", source_type="argument",
+            attempt_text="Our argument stands and should be preferred by the judge in this round.",
+            result_json={},
+        )
+        weighing = next(d for d in dims if d.dimension == "weighing_adaptation")
+        assert weighing.score < 60
+
+    def test_flow_judge_weighing_language_scores_higher(self):
+        low, *_ = score_practice_attempt(
+            judge_type="flow", source_type="argument",
+            attempt_text="This argument is good and the judge should vote for it in this round today.",
+            result_json={},
+        )
+        high, *_ = score_practice_attempt(
+            judge_type="flow", source_type="argument",
+            attempt_text="Even if you buy their defense, our impact outweighs on magnitude and timeframe.",
+            result_json={},
+        )
+        low_w = next(d for d in low if d.dimension == "weighing_adaptation").score
+        high_w = next(d for d in high if d.dimension == "weighing_adaptation").score
+        assert high_w > low_w
+
+    def test_evidence_preservation_warns_when_citation_missing(self):
+        dims, improved, needs_work, warnings, retry = score_practice_attempt(
+            judge_type="lay", source_type="evidence",
+            attempt_text="Carbon pricing is really good for the environment and helps everyone breathe cleaner air.",
+            result_json=BASE_RESULT_JSON,
+        )
+        evidence = next(d for d in dims if d.dimension == "evidence_preservation")
+        assert evidence.score < 60
+        assert any("source" in w.lower() or "citation" in w.lower() or "attribute" in w.lower() for w in warnings)
+
+    def test_evidence_preservation_passes_with_citation_present(self):
+        dims, *_ = score_practice_attempt(
+            judge_type="lay", source_type="evidence",
+            attempt_text=GOOD_ATTEMPT, result_json=BASE_RESULT_JSON,
+        )
+        evidence = next(d for d in dims if d.dimension == "evidence_preservation")
+        assert evidence.score >= 60
+
+    def test_overclaim_language_triggers_integrity_warning(self):
+        result_json = {**BASE_RESULT_JSON, "risks": [
+            {"category": "causal_overstatement", "level": "high",
+             "description": "overclaims causation", "how_to_mitigate": "hedge it"},
+        ]}
+        dims, improved, needs_work, warnings, retry = score_practice_attempt(
+            judge_type="technical", source_type="argument",
+            attempt_text="This evidence proves the resolution true without a doubt in every single case.",
+            result_json=result_json,
+        )
+        assert any("proves" in w or "overclaim" in w.lower() or "hedge" in w.lower() for w in warnings)
+        risk_dim = next(d for d in dims if d.dimension == "risk_avoidance")
+        assert risk_dim.score < 60
+
+    def test_unsupported_card_verdict_produces_leading_integrity_warning(self):
+        _, _, _, warnings, _ = score_practice_attempt(
+            judge_type="lay", source_type="evidence",
+            attempt_text=GOOD_ATTEMPT, result_json=BASE_RESULT_JSON,
+            card_support_verdict="unsupported",
+        )
+        assert warnings[0].lower().startswith("this card")
+
+    def test_next_retry_suggestion_names_the_weakest_dimension(self):
+        dims, _, _, _, retry = score_practice_attempt(
+            judge_type="lay", source_type="evidence",
+            attempt_text="Carbon pricing helps the environment a lot for everyone living nearby the coast.",
+            result_json=BASE_RESULT_JSON,
+        )
+        weakest = min(dims, key=lambda d: d.score)
+        assert weakest.dimension.replace("_", " ") in retry
+
+    def test_too_short_attempt_constant_matches_endpoint_threshold(self):
+        assert MIN_ATTEMPT_LENGTH >= 20  # sanity: a real minimum, not near-zero
+
+    def test_scorer_module_has_no_llm_or_provider_import(self):
+        import inspect
+        import app.services.judge_attempt_scorer as mod
+        src = inspect.getsource(mod)
+        for banned in ("openai", "anthropic", "requests.", "httpx.", "urllib.request"):
+            assert banned not in src.lower(), f"scorer must not call out to {banned}"
+
+
+# ── API endpoint tests ──────────────────────────────────────────────────────────
+
+def _attempt_table_fn(
+    adaptation_row=None,
+    card_metadata_rows=None,
+    attempts_rows=None,
+    insert_ok=True,
+):
+    """table() factory covering judge_adaptations / library_card_metadata /
+    judge_adaptation_attempts for the score-attempt and list-attempts tests."""
+    state = {"inserted": None}
+
+    def table_fn(name):
+        t = MagicMock()
+        for m in ("select", "eq", "in_", "order", "limit"):
+            getattr(t, m).return_value = t
+
+        def insert_fn(payload, _name=name):
+            state["inserted"] = payload
+            return t
+        t.insert = insert_fn
+
+        def execute_fn(_name=name):
+            r = MagicMock()
+            if _name == "judge_adaptations":
+                r.data = [adaptation_row] if adaptation_row else []
+            elif _name == "library_card_metadata":
+                r.data = card_metadata_rows or []
+            elif _name == "judge_adaptation_attempts":
+                if state["inserted"] is not None:
+                    r.data = [{"id": "attempt-uuid-1", **state["inserted"]}] if insert_ok else []
+                else:
+                    r.data = attempts_rows or []
+            else:
+                r.data = []
+            return r
+
+        t.execute = execute_fn
+        return t
+
+    table_fn._state = state  # type: ignore[attr-defined]
+    return table_fn
+
+
+def _adaptation_row(**over):
+    return {
+        "id": ADAPTATION_ID, "user_id": ATTEMPT_USER, "judge_type": "lay",
+        "source_type": "evidence", "source_evidence_id": "card-1",
+        "source_argument_id": None, "source_frontline_id": None,
+        "result_json": BASE_RESULT_JSON,
+        **over,
+    }
+
+
+def _score_body(**over):
+    return {
+        "user_id": ATTEMPT_USER, "adaptation_id": ADAPTATION_ID, "judge_type": "lay",
+        "source_type": "evidence", "source_id": "card-1", "attempt_text": GOOD_ATTEMPT,
+        **over,
+    }
+
+
+class TestScoreAttemptEndpoint:
+    def test_rejects_too_short_attempt(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(adaptation_row=_adaptation_row())
+            r = _client().post(
+                "/judge-adaptation/score-attempt",
+                json=_score_body(attempt_text="too short"),
+            )
+        assert r.status_code == 400
+
+    def test_rejects_when_adaptation_belongs_to_another_user(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(user_id=OTHER_USER),
+            )
+            r = _client().post("/judge-adaptation/score-attempt", json=_score_body())
+        assert r.status_code == 403
+
+    def test_rejects_when_adaptation_not_found(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(adaptation_row=None)
+            r = _client().post("/judge-adaptation/score-attempt", json=_score_body())
+        assert r.status_code == 404
+
+    def test_rejects_source_mismatch(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(adaptation_row=_adaptation_row())
+            r = _client().post(
+                "/judge-adaptation/score-attempt",
+                json=_score_body(source_id="a-completely-different-card"),
+            )
+        assert r.status_code == 400
+
+    def test_blocks_unsupported_evidence_before_scoring(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(),
+                card_metadata_rows=[{"support_verdict": "unsupported"}],
+            )
+            r = _client().post("/judge-adaptation/score-attempt", json=_score_body())
+        assert r.status_code == 400
+        assert "doesn't support" in r.json()["detail"] or "does not support" in r.json()["detail"].lower()
+
+    def test_scores_and_persists_successfully(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(),
+                card_metadata_rows=[{"support_verdict": "supported"}],
+            )
+            r = _client().post("/judge-adaptation/score-attempt", json=_score_body())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["saved"] is True
+        assert body["attempt_id"] == "attempt-uuid-1"
+        assert len(body["dimensions"]) == 7
+        assert 0 <= body["overall_fit"] <= 100
+        assert body["scoring_version"] == "v1_heuristic"
+
+    def test_score_json_persisted_matches_response(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            factory = _attempt_table_fn(
+                adaptation_row=_adaptation_row(),
+                card_metadata_rows=[{"support_verdict": "supported"}],
+            )
+            mock_sb.return_value.table = factory
+            r = _client().post("/judge-adaptation/score-attempt", json=_score_body())
+        assert r.status_code == 200
+        inserted = factory._state["inserted"]
+        assert inserted is not None
+        assert inserted["score_json"]["scoring_version"] == "v1_heuristic"
+        assert len(inserted["score_json"]["dimensions"]) == 7
+        assert inserted["overall_fit"] == r.json()["overall_fit"]
+        assert inserted["attempt_text"] == GOOD_ATTEMPT
+
+    def test_non_evidence_source_skips_verdict_check(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(
+                    source_type="argument", source_evidence_id=None, source_argument_id="arg-1",
+                ),
+            )
+            r = _client().post(
+                "/judge-adaptation/score-attempt",
+                json=_score_body(source_type="argument", source_id="arg-1"),
+            )
+        assert r.status_code == 200
+
+
+class TestListAttemptsEndpoint:
+    def test_returns_own_attempts_newest_first(self):
+        rows = [
+            {"id": "a2", "adaptation_id": ADAPTATION_ID, "user_id": ATTEMPT_USER,
+             "judge_type": "lay", "source_type": "evidence", "source_id": "card-1",
+             "attempt_text": "second attempt text goes here and is long enough", "score_json": {},
+             "overall_fit": 80, "created_at": "2026-07-21T01:00:00Z"},
+            {"id": "a1", "adaptation_id": ADAPTATION_ID, "user_id": ATTEMPT_USER,
+             "judge_type": "lay", "source_type": "evidence", "source_id": "card-1",
+             "attempt_text": "first attempt text goes here and is long enough", "score_json": {},
+             "overall_fit": 60, "created_at": "2026-07-20T01:00:00Z"},
+        ]
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(), attempts_rows=rows,
+            )
+            r = _client().get(f"/judge-adaptation/adaptations/{ADAPTATION_ID}/attempts?user_id={ATTEMPT_USER}")
+        assert r.status_code == 200
+        body = r.json()
+        assert [row["id"] for row in body] == ["a2", "a1"]
+
+    def test_blocks_other_users(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(user_id=ATTEMPT_USER),
+            )
+            r = _client().get(f"/judge-adaptation/adaptations/{ADAPTATION_ID}/attempts?user_id={OTHER_USER}")
+        assert r.status_code == 403
+
+    def test_returns_empty_list_when_no_attempts(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _attempt_table_fn(
+                adaptation_row=_adaptation_row(), attempts_rows=[],
+            )
+            r = _client().get(f"/judge-adaptation/adaptations/{ADAPTATION_ID}/attempts?user_id={ATTEMPT_USER}")
+        assert r.status_code == 200
+        assert r.json() == []
+
+
+def test_api_has_score_attempt_endpoint():
+    from app.api.judge_adaptation import router
+    paths = [r.path for r in router.routes]
+    assert any("score-attempt" in p for p in paths)
+
+
+def test_api_has_list_attempts_endpoint():
+    from app.api.judge_adaptation import router
+    paths = [r.path for r in router.routes]
+    assert any("attempts" in p for p in paths)
+
+
+def test_attempt_models_importable_with_expected_shape():
+    from app.models.judge_adaptation import (
+        JudgeAdaptationAttemptDimension,
+        JudgeAdaptationAttemptRow,
+        JudgeAdaptationAttemptScoreRequest,
+        JudgeAdaptationAttemptScoreResponse,
+    )
+    dim = JudgeAdaptationAttemptDimension(dimension="clarity", score=80, explanation="ok")
+    assert dim.score == 80
+    resp = JudgeAdaptationAttemptScoreResponse(
+        attempt_id="a1", overall_fit=70, dimensions=[dim],
+        what_improved=[], what_still_needs_work=[], integrity_warnings=[],
+        next_retry_suggestion="try again", saved=True,
+    )
+    assert resp.scoring_version == "v1_heuristic"
+    req = JudgeAdaptationAttemptScoreRequest(
+        user_id="u1", adaptation_id="a1", judge_type="lay",
+        source_type="evidence", source_id="c1", attempt_text="x",
+    )
+    assert req.judge_type == "lay"
+
+
+def test_migration_file_defines_attempts_table_and_rls():
+    migration = (REPO_ROOT / "supabase/migrations/20260721000000_pass22_judge_adaptation_attempts.sql").read_text()
+    assert "CREATE TABLE IF NOT EXISTS judge_adaptation_attempts" in migration
+    assert "ENABLE ROW LEVEL SECURITY" in migration
+    assert "auth.uid() = user_id" in migration
+    assert "REFERENCES judge_adaptations(id) ON DELETE CASCADE" in migration

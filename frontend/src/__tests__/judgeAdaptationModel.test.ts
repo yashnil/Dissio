@@ -466,10 +466,15 @@ import {
   derivePracticePanelState,
   validatePracticeAttempt,
   PRACTICE_ATTEMPT_MIN_LENGTH,
-  practiceScoringStatus,
-  practiceScoringGapMessage,
-  attemptPersistence,
-  describeAttemptPersistence,
+  canScorePracticeAttempt,
+  scoringUnavailableReason,
+  describeAttemptDimension,
+  attemptScoreTone,
+  normalizeAttemptScoreResponse,
+  attemptRetrySuggestionOrFallback,
+  describeAttemptSaveState,
+  formatAttemptHistoryEntry,
+  sortAttemptsByRecency,
   canReopenHistoryEntry,
   formatHistoryEntryV2,
   sourceTypeToMaterialKind,
@@ -477,6 +482,7 @@ import {
   describeWorkoutPersistence,
   WORKOUT_PERSISTENCE_LABELS,
   type AdaptationHistoryRowV2,
+  type AttemptRow,
 } from "@/lib/judgeAdaptationModel";
 
 describe("derivePracticeSuccessCriteria — real fields only, 2–4 items", () => {
@@ -521,6 +527,18 @@ describe("derivePracticePanelState", () => {
     const s = derivePracticePanelState(normalizeCardMaterial(cardRow()), adaptation());
     expect(s.state).toBe("ready");
   });
+
+  it("unsupported/contradicted evidence is blocked BEFORE any score submission — client-side gate matches what the component checks", () => {
+    for (const verdict of ["unsupported", "contradicted"] as const) {
+      const bad = normalizeCardMaterial(cardRow({ support_verdict: verdict }));
+      const result = adaptation();
+      const panelState = derivePracticePanelState(bad, result);
+      // This mirrors PracticePanel's `scorable` computation exactly — proves
+      // the UI can never reach a submit action for unsafe material.
+      const scorable = canScorePracticeAttempt(result) && panelState.state === "ready";
+      expect(scorable).toBe(false);
+    }
+  });
 });
 
 describe("validatePracticeAttempt", () => {
@@ -541,26 +559,148 @@ describe("validatePracticeAttempt", () => {
   });
 });
 
-describe("practice scoring — truthfully not connected", () => {
-  it("status is always not-connected (no attempt-scoring backend exists)", () => {
-    expect(practiceScoringStatus()).toBe("not-connected");
+describe("canScorePracticeAttempt / scoringUnavailableReason", () => {
+  it("scoring requires a persisted adaptation (real id)", () => {
+    expect(canScorePracticeAttempt(adaptation())).toBe(true);
+    expect(canScorePracticeAttempt(adaptation({ id: undefined }))).toBe(false);
   });
 
-  it("the gap message explains what's ready vs not connected, no fake score language", () => {
-    const msg = practiceScoringGapMessage();
-    expect(msg).toContain("ready");
-    expect(msg).toContain("isn't connected");
-    expect(msg).not.toMatch(/score:\s*\d/i);
+  it("the unavailable reason is honest, not a fake score", () => {
+    expect(scoringUnavailableReason()).toContain("wasn't saved");
   });
 });
 
-describe("attempt persistence — session-only until 7D", () => {
-  it("is always session-only (no attempts table exists)", () => {
-    expect(attemptPersistence()).toBe("session-only");
+describe("attempt score normalization — real fields only", () => {
+  const rawResponse = {
+    attempt_id: "attempt-uuid-1",
+    overall_fit: 72,
+    dimensions: [
+      { dimension: "judge_fit", score: 90, explanation: "No jargon detected." },
+      { dimension: "clarity", score: 40, explanation: "Too short to judge clarity." },
+    ],
+    what_improved: ["judge fit: No jargon detected."],
+    what_still_needs_work: ["clarity: Too short to judge clarity."],
+    integrity_warnings: [],
+    next_retry_suggestion: "Focus on clarity next time.",
+    saved: true,
+    scoring_version: "v1_heuristic",
+  };
+
+  it("mirrors real backend fields into the view", () => {
+    const v = normalizeAttemptScoreResponse(rawResponse);
+    expect(v.attemptId).toBe("attempt-uuid-1");
+    expect(v.overallFit).toBe(72);
+    expect(v.overallTone).toBe("amber");
+    expect(v.dimensions).toHaveLength(2);
+    expect(v.saved).toBe(true);
+    expect(v.scoringVersion).toBe("v1_heuristic");
   });
 
-  it("describes the gap honestly, not as a silent failure", () => {
-    expect(describeAttemptPersistence()).toContain("isn't saved");
+  it("missing/malformed fields produce empty states, never fake feedback", () => {
+    const v = normalizeAttemptScoreResponse({});
+    expect(v.overallFit).toBe(0);
+    expect(v.dimensions).toEqual([]);
+    expect(v.whatImproved).toEqual([]);
+    expect(v.whatStillNeedsWork).toEqual([]);
+    expect(v.integrityWarnings).toEqual([]);
+    expect(v.nextRetrySuggestion).toBeNull();
+    expect(v.saved).toBe(false);
+  });
+
+  it("an empty-string retry suggestion is treated as none, not a blank line", () => {
+    const v = normalizeAttemptScoreResponse({ ...rawResponse, next_retry_suggestion: "   " });
+    expect(v.nextRetrySuggestion).toBeNull();
+  });
+});
+
+describe("dimension labels + score tone bands", () => {
+  it("every documented dimension has a debate-readable label", () => {
+    for (const key of ["judge_fit", "clarity", "evidence_preservation", "weighing_adaptation",
+      "technical_precision", "risk_avoidance", "delivery_focus"]) {
+      const label = describeAttemptDimension(key);
+      expect(label).not.toBe(key);
+      expect(label.toLowerCase()).not.toContain("_");
+    }
+  });
+
+  it("unknown dimension keys fall back to a readable version, not a crash", () => {
+    expect(describeAttemptDimension("future_dimension")).toBe("future dimension");
+  });
+
+  it("tone bands: >=75 green, >=55 amber, else red — text-labeled, not color-only", () => {
+    expect(attemptScoreTone(90)).toBe("green");
+    expect(attemptScoreTone(75)).toBe("green");
+    expect(attemptScoreTone(60)).toBe("amber");
+    expect(attemptScoreTone(55)).toBe("amber");
+    expect(attemptScoreTone(30)).toBe("red");
+  });
+});
+
+describe("attemptRetrySuggestionOrFallback", () => {
+  it("uses the backend's real suggestion when present", () => {
+    expect(attemptRetrySuggestionOrFallback({ nextRetrySuggestion: "Focus on clarity." }))
+      .toBe("Focus on clarity.");
+  });
+
+  it("falls back to a generic line ONLY when the backend explicitly returned none", () => {
+    const fallback = attemptRetrySuggestionOrFallback({ nextRetrySuggestion: null });
+    expect(fallback).toContain("Try again");
+  });
+});
+
+describe("describeAttemptSaveState", () => {
+  it("distinguishes saved vs unsaved truthfully", () => {
+    expect(describeAttemptSaveState(true)).toContain("Saved");
+    expect(describeAttemptSaveState(false)).toContain("wasn't saved");
+  });
+});
+
+describe("attempt history labels", () => {
+  function attemptRow(over: Partial<AttemptRow> = {}): AttemptRow {
+    return {
+      id: "attempt-uuid-9", adaptation_id: "adapt-uuid-1", user_id: "u1",
+      judge_type: "lay", source_type: "evidence", source_id: "card-1",
+      attempt_text: "One in five tons of carbon is gone thanks to this policy.",
+      score_json: {
+        dimensions: [
+          { dimension: "judge_fit", score: 90, explanation: "clean" },
+          { dimension: "clarity", score: 40, explanation: "too short" },
+        ],
+      },
+      overall_fit: 65,
+      created_at: "2026-07-21T00:00:00Z",
+      ...over,
+    };
+  }
+
+  it("newest-first sort by created_at", () => {
+    const old = attemptRow({ id: "a", created_at: "2026-07-01T00:00:00Z" });
+    const fresh = attemptRow({ id: "b", created_at: "2026-07-20T00:00:00Z" });
+    expect(sortAttemptsByRecency([old, fresh]).map((r) => r.id)).toEqual(["b", "a"]);
+  });
+
+  it("surfaces the lowest-scoring dimension as the key weakness", () => {
+    const h = formatAttemptHistoryEntry(attemptRow());
+    expect(h.keyWeakness).toContain("Clarity");
+    expect(h.keyWeakness).toContain("too short");
+  });
+
+  it("tone derives from overall_fit; null overall_fit is neutral, not zero", () => {
+    expect(formatAttemptHistoryEntry(attemptRow({ overall_fit: 80 })).tone).toBe("green");
+    expect(formatAttemptHistoryEntry(attemptRow({ overall_fit: null })).tone).toBe("neutral");
+  });
+
+  it("never exposes the raw attempt id or adaptation id in visible fields", () => {
+    const h = formatAttemptHistoryEntry(attemptRow());
+    expect(h.dateLabel).not.toContain("uuid");
+    expect(h.keyWeakness).not.toContain("uuid");
+    // id is retained only for internal use (React key / reopen target).
+    expect(h.id).toBe("attempt-uuid-9");
+  });
+
+  it("no dimensions in score_json → null key weakness, not a fabricated one", () => {
+    const h = formatAttemptHistoryEntry(attemptRow({ score_json: {} }));
+    expect(h.keyWeakness).toBeNull();
   });
 });
 

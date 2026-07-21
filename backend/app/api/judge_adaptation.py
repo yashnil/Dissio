@@ -15,6 +15,9 @@ from app.models.judge_adaptation import (
     AdaptationNoteRow,
     CoachAssignWorkoutRequest,
     CustomJudgeProfileCreate,
+    JudgeAdaptationAttemptRow,
+    JudgeAdaptationAttemptScoreRequest,
+    JudgeAdaptationAttemptScoreResponse,
     JudgeAdaptationRequest,
     JudgeAdaptationResult,
     JudgeComparisonRequest,
@@ -27,6 +30,7 @@ from app.models.judge_adaptation import (
     SaveOwnWorkoutRequest,
 )
 from app.services.adaptation_risk_checker import check_all_risks
+from app.services.judge_attempt_scorer import MIN_ATTEMPT_LENGTH, score_practice_attempt
 from app.services.judge_adaptation_service import generate_adaptation
 from app.services.judge_comparison import compare_profiles
 from app.services.judge_profiles import get_all_builtin_profiles, get_builtin_profile
@@ -467,6 +471,184 @@ def list_notes(adaptation_id: str, user_id: str = Query(...)) -> list[Adaptation
             user_id=r["user_id"],
             judge_type=r["judge_type"],
             note_text=r["note_text"],
+            created_at=r.get("created_at", _now()),
+        )
+        for r in result.data or []
+    ]
+
+
+# ── Practice attempts (Phase 7D) ────────────────────────────────────────────────
+
+# source_type -> (FK column on judge_adaptations, verdict lookup table, its card-id column)
+_EVIDENCE_SOURCE_TYPE = "evidence"
+
+
+def _load_adaptation_for_scoring(sb, adaptation_id: str, user_id: str) -> dict:
+    """Fetch the adaptation and verify it belongs to user_id. Raises 403/404."""
+    res = (
+        sb.table("judge_adaptations")
+        .select("id, user_id, judge_type, source_type, source_evidence_id, "
+                "source_argument_id, source_frontline_id, result_json")
+        .eq("id", adaptation_id)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Adaptation not found")
+    row = res.data[0]
+    if row["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return row
+
+
+def _card_support_verdict(sb, card_id: str, user_id: str) -> str | None:
+    """Best-effort lookup of a card's saved support verdict. Never raises —
+    an unavailable verdict is treated as unknown, not as a block."""
+    try:
+        res = (
+            sb.table("library_card_metadata")
+            .select("support_verdict")
+            .eq("card_id", card_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0].get("support_verdict")
+    except Exception as exc:
+        logger.warning("score_attempt: verdict lookup failed | %s", type(exc).__name__)
+    return None
+
+
+@router.post("/score-attempt", response_model=JudgeAdaptationAttemptScoreResponse)
+def score_attempt(body: JudgeAdaptationAttemptScoreRequest) -> JudgeAdaptationAttemptScoreResponse:
+    """
+    Score a pasted practice-delivery attempt against its adaptation
+    (Phase 7D). Deterministic v1 heuristic scoring — no LLM call. Verifies
+    ownership, rejects too-short attempts, and refuses to score evidence
+    already known to be unsupported/contradicted (adapting delivery can't
+    make bad evidence safe). Persists the attempt + score on success.
+    """
+    attempt_text = body.attempt_text.strip()
+    if len(attempt_text) < MIN_ATTEMPT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Practice attempt is too short — add at least {MIN_ATTEMPT_LENGTH} characters.",
+        )
+
+    sb = get_supabase()
+    adaptation = _load_adaptation_for_scoring(sb, body.adaptation_id, body.user_id)
+
+    # Source/adaptation consistency check where practical — the request's
+    # judge_type/source_type/source_id should match what the adaptation was
+    # actually generated for.
+    if adaptation["source_type"] != body.source_type:
+        raise HTTPException(status_code=400, detail="Source type does not match this adaptation")
+    fk_col = {
+        "evidence": "source_evidence_id",
+        "argument": "source_argument_id",
+        "frontline": "source_frontline_id",
+    }.get(body.source_type)
+    if fk_col and adaptation.get(fk_col) and adaptation[fk_col] != body.source_id:
+        raise HTTPException(status_code=400, detail="Source does not match this adaptation")
+
+    card_verdict: str | None = None
+    if body.source_type == _EVIDENCE_SOURCE_TYPE:
+        card_verdict = _card_support_verdict(sb, body.source_id, body.user_id)
+        if card_verdict in ("unsupported", "contradicted"):
+            raise HTTPException(
+                status_code=400,
+                detail="This card's verdict says it doesn't support its claim — fix the evidence "
+                       "in your Library before practicing its delivery.",
+            )
+
+    result_json = adaptation.get("result_json") or {}
+    dimensions, what_improved, what_still_needs_work, integrity_warnings, next_retry_suggestion = (
+        score_practice_attempt(
+            judge_type=body.judge_type,
+            source_type=body.source_type,
+            attempt_text=attempt_text,
+            result_json=result_json,
+            card_support_verdict=card_verdict,
+        )
+    )
+    overall_fit = round(sum(d.score for d in dimensions) / len(dimensions)) if dimensions else 0
+
+    score_json = {
+        "dimensions": [d.model_dump() for d in dimensions],
+        "what_improved": what_improved,
+        "what_still_needs_work": what_still_needs_work,
+        "integrity_warnings": integrity_warnings,
+        "next_retry_suggestion": next_retry_suggestion,
+        "scoring_version": "v1_heuristic",
+    }
+
+    try:
+        insert = sb.table("judge_adaptation_attempts").insert({
+            "adaptation_id": body.adaptation_id,
+            "user_id": body.user_id,
+            "judge_type": body.judge_type,
+            "source_type": body.source_type,
+            "source_id": body.source_id,
+            "attempt_text": attempt_text,
+            "score_json": score_json,
+            "overall_fit": overall_fit,
+        }).execute()
+        if not insert.data:
+            raise HTTPException(status_code=500, detail="Attempt save failed")
+        attempt_id = insert.data[0]["id"]
+        saved = True
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("score_attempt: persist failed | %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Attempt save failed") from exc
+
+    track_product_event(
+        body.user_id,
+        "judge_practice_attempt_scored",
+        metadata={"judge_type": body.judge_type, "overall_fit": overall_fit},
+    )
+
+    return JudgeAdaptationAttemptScoreResponse(
+        attempt_id=attempt_id,
+        overall_fit=overall_fit,
+        dimensions=dimensions,
+        what_improved=what_improved,
+        what_still_needs_work=what_still_needs_work,
+        integrity_warnings=integrity_warnings,
+        next_retry_suggestion=next_retry_suggestion,
+        saved=saved,
+    )
+
+
+@router.get("/adaptations/{adaptation_id}/attempts", response_model=list[JudgeAdaptationAttemptRow])
+def list_attempts(adaptation_id: str, user_id: str = Query(...)) -> list[JudgeAdaptationAttemptRow]:
+    """List a user's own practice attempts for one adaptation, newest first."""
+    sb = get_supabase()
+    existing = sb.table("judge_adaptations").select("user_id").eq("id", adaptation_id).limit(1).execute()
+    if not existing.data or existing.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    result = (
+        sb.table("judge_adaptation_attempts")
+        .select("id, adaptation_id, user_id, judge_type, source_type, source_id, "
+                "attempt_text, score_json, overall_fit, created_at")
+        .eq("adaptation_id", adaptation_id)
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return [
+        JudgeAdaptationAttemptRow(
+            id=r["id"],
+            adaptation_id=r["adaptation_id"],
+            user_id=r["user_id"],
+            judge_type=r["judge_type"],
+            source_type=r["source_type"],
+            source_id=r.get("source_id"),
+            attempt_text=r["attempt_text"],
+            score_json=r.get("score_json") or {},
+            overall_fit=r.get("overall_fit"),
             created_at=r.get("created_at", _now()),
         )
         for r in result.data or []

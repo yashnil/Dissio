@@ -591,51 +591,161 @@ export function validatePracticeAttempt(text: string): AttemptValidation {
   return { valid: true, reason: null };
 }
 
-// ── Attempt scoring: NOT YET CONNECTED (documented 7D contract) ──────────────
+// ── Attempt scoring (Phase 7D: POST /judge-adaptation/score-attempt) ─────────
 
 /**
- * /judge-adaptation/readiness-score scores the SOURCE MATERIAL's structural
- * adaptation readiness (risks/changes/extensions on the card or argument
- * itself) — it takes no attempt text and cannot score what a student typed.
- * There is no backend endpoint today that scores a practiced delivery
- * attempt, so this is always "not-connected". Never faked into a score.
+ * The score-attempt endpoint requires a PERSISTED adaptation (it looks the
+ * adaptation up by id to re-check ownership and pull result_json). When the
+ * current result has no id, scoring truthfully isn't available for it yet —
+ * never silently attempted.
  */
-export type PracticeScoringStatus = "not-connected";
-
-export function practiceScoringStatus(): PracticeScoringStatus {
-  return "not-connected";
+export function canScorePracticeAttempt(result: Pick<JudgeAdaptationResult, "id">): boolean {
+  return !!result.id;
 }
 
-export function practiceScoringGapMessage(): string {
-  return "Practice capture is ready. Scoring your delivery attempt needs a backend endpoint that isn't connected yet — see the Phase 7D contract.";
+export function scoringUnavailableReason(): string {
+  return "This adaptation wasn't saved by the server, so practice scoring isn't available for it.";
 }
 
-/**
- * Desired Phase 7D contract (not implemented): POST /judge-adaptation/score-attempt
- *   request:  { user_id, adaptation_id, attempt_text }
- *   response: { overall_fit: number, dimensions: { judge_fit, clarity,
- *               evidence_preservation, weighing_relevance, technical_precision,
- *               risk_avoidance, delivery_focus }, what_improved: string[],
- *               what_still_needs_work: string[], integrity_warnings: string[] }
- */
-export interface PracticeScoreRequest {
-  user_id: string;
+export const ATTEMPT_DIMENSION_KEYS = [
+  "judge_fit", "clarity", "evidence_preservation", "weighing_adaptation",
+  "technical_precision", "risk_avoidance", "delivery_focus",
+] as const;
+export type AttemptDimensionKey = (typeof ATTEMPT_DIMENSION_KEYS)[number];
+
+export const ATTEMPT_DIMENSION_LABELS: Record<AttemptDimensionKey, string> = {
+  judge_fit: "Judge fit",
+  clarity: "Clarity",
+  evidence_preservation: "Evidence preservation",
+  weighing_adaptation: "Weighing & adaptation",
+  technical_precision: "Technical precision",
+  risk_avoidance: "Risk avoidance",
+  delivery_focus: "Delivery focus",
+};
+
+export function describeAttemptDimension(key: string): string {
+  return ATTEMPT_DIMENSION_LABELS[key as AttemptDimensionKey] ?? key.replace(/_/g, " ");
+}
+
+export interface AttemptScoreDimension {
+  dimension: string;
+  score: number;
+  explanation: string;
+}
+
+export interface AttemptScoreResponse {
+  attempt_id: string;
+  overall_fit: number;
+  dimensions: AttemptScoreDimension[];
+  what_improved: string[];
+  what_still_needs_work: string[];
+  integrity_warnings: string[];
+  next_retry_suggestion: string;
+  saved: boolean;
+  scoring_version: string;
+}
+
+/** Score bands are text-labeled everywhere they're used — never color-only. */
+export type AttemptScoreTone = "green" | "amber" | "red";
+
+export function attemptScoreTone(score: number): AttemptScoreTone {
+  if (score >= 75) return "green";
+  if (score >= 55) return "amber";
+  return "red";
+}
+
+export interface AttemptFeedbackView {
+  attemptId: string;
+  overallFit: number;
+  overallTone: AttemptScoreTone;
+  dimensions: AttemptScoreDimension[];
+  whatImproved: string[];
+  whatStillNeedsWork: string[];
+  integrityWarnings: string[];
+  nextRetrySuggestion: string | null;
+  saved: boolean;
+  scoringVersion: string;
+}
+
+/** Every field is defensively read — a malformed/partial response renders
+ *  empty states, never a fabricated score. */
+export function normalizeAttemptScoreResponse(r: Partial<AttemptScoreResponse>): AttemptFeedbackView {
+  const overallFit = typeof r.overall_fit === "number" ? r.overall_fit : 0;
+  const suggestion = typeof r.next_retry_suggestion === "string" && r.next_retry_suggestion.trim().length > 0
+    ? r.next_retry_suggestion
+    : null;
+  return {
+    attemptId: str(r.attempt_id) ?? "",
+    overallFit,
+    overallTone: attemptScoreTone(overallFit),
+    dimensions: Array.isArray(r.dimensions) ? r.dimensions : [],
+    whatImproved: arr(r.what_improved),
+    whatStillNeedsWork: arr(r.what_still_needs_work),
+    integrityWarnings: arr(r.integrity_warnings),
+    nextRetrySuggestion: suggestion,
+    saved: r.saved === true,
+    scoringVersion: str(r.scoring_version) ?? "v1_heuristic",
+  };
+}
+
+/** UI-level generic fallback — used ONLY when the backend explicitly
+ *  returned no retry suggestion. Never invents dimension-specific advice. */
+export function attemptRetrySuggestionOrFallback(view: Pick<AttemptFeedbackView, "nextRetrySuggestion">): string {
+  return view.nextRetrySuggestion ?? "Try again, focusing on the lowest-scoring dimension above.";
+}
+
+export function describeAttemptSaveState(saved: boolean): string {
+  return saved
+    ? "Saved to your practice history."
+    : "This attempt wasn't saved — the feedback above is still real, but it won't appear in your history.";
+}
+
+// ── Attempt history ────────────────────────────────────────────────────────────
+
+export interface AttemptRow {
+  id: string;
   adaptation_id: string;
+  user_id: string;
+  judge_type: string;
+  source_type: string;
+  source_id: string | null;
   attempt_text: string;
+  score_json: Record<string, unknown>;
+  overall_fit: number | null;
+  created_at: string;
 }
 
-// ── Attempt / persistence labels ──────────────────────────────────────────────
-
-export type AttemptPersistence = "session-only";
-
-/** No attempts table exists yet — every attempt is session-only. Documented
- *  truthfully rather than faking a "saved" state. */
-export function attemptPersistence(): AttemptPersistence {
-  return "session-only";
+export interface AttemptHistoryDisplay {
+  /** Internal only — React key / reopen target; never rendered. */
+  id: string;
+  dateLabel: string;
+  overallFit: number | null;
+  tone: AttemptScoreTone | "neutral";
+  /** The lowest-scoring dimension from the saved score, when present. */
+  keyWeakness: string | null;
 }
 
-export function describeAttemptPersistence(): string {
-  return "This attempt isn't saved — it will disappear if you leave this page. Attempt history is a Phase 7D contract.";
+/** Newest first — callers should already sort server-side, but this is a
+ *  safe client-side guarantee for reused/cached lists. */
+export function sortAttemptsByRecency(attempts: AttemptRow[]): AttemptRow[] {
+  return [...attempts].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+}
+
+export function formatAttemptHistoryEntry(row: AttemptRow): AttemptHistoryDisplay {
+  const rawDims = (row.score_json as { dimensions?: unknown })?.dimensions;
+  const dims = Array.isArray(rawDims) ? (rawDims as AttemptScoreDimension[]) : [];
+  const weakest = dims.length > 0
+    ? dims.reduce((a, b) => (a.score <= b.score ? a : b))
+    : null;
+  return {
+    id: row.id,
+    dateLabel: new Date(row.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    overallFit: row.overall_fit,
+    tone: row.overall_fit != null ? attemptScoreTone(row.overall_fit) : "neutral",
+    keyWeakness: weakest ? `${describeAttemptDimension(weakest.dimension)}: ${weakest.explanation}` : null,
+  };
 }
 
 // ── History reopen ─────────────────────────────────────────────────────────────

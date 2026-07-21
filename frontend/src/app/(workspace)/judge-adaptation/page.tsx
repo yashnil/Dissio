@@ -406,6 +406,7 @@ function JudgeAdaptationContent() {
               onAddNote={adaptResult.id ? addNote : null}
               noteSaving={noteSaving}
               noteError={noteErr}
+              userId={userId}
             />
           )}
 
