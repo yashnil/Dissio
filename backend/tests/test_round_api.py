@@ -132,6 +132,52 @@ def test_find_pending_crossfire_exchange_returns_none_when_empty():
     assert _find_pending_crossfire_exchange([]) is None
 
 
+# ── Phase 8C — student-asks-AI crossfire direction ────────────────────────────
+
+
+def test_student_question_route_returns_crossfire_exchange_model():
+    """Phase 8C: the student-question endpoint must return a full CrossfireExchange
+    (like the AI-asks endpoints), not the old bespoke {id, question, answer,
+    created_at} dict, so the frontend can merge it into round state uniformly."""
+    from app.api.round_simulations import router
+    route = next(r for r in router.routes if r.path.endswith("/crossfire/student-question"))  # type: ignore[attr-defined]
+    assert route.response_model.__name__ == "CrossfireExchange"
+
+
+def test_crossfire_exchange_model_dump_matches_known_db_columns():
+    """Regression guard for the Phase 8C persistence bug: the student-question
+    endpoint used to hand-build an insert dict with typo'd/nonexistent column
+    names (target_argument_label, concession, status), so every write silently
+    failed against PostgREST and was swallowed by a bare except. Building the
+    insert from a real CrossfireExchange model, as the AI-asks endpoints already
+    did, structurally prevents that class of bug — this locks in the column set."""
+    known_db_columns = {
+        "id", "round_id", "phase", "sequence", "questioner_side", "question",
+        "answer", "target_argument", "exchange_type", "concession_extracted",
+        "contradiction", "evasion_detected", "evidence_challenge",
+        "strategic_significance", "created_at",
+    }
+    exchange = _cx_exchange()
+    assert set(exchange.model_dump().keys()) == known_db_columns
+
+
+def test_generate_ai_answer_used_by_student_question_endpoint():
+    """Phase 8C: the student-question endpoint must call the real, tested
+    crossfire_simulator.generate_ai_answer instead of a duplicate local
+    implementation that never ran concession detection or used exchange history."""
+    import inspect
+    from app.api import round_simulations
+    assert "generate_ai_answer" in dir(round_simulations)
+    src = inspect.getsource(round_simulations.submit_student_crossfire_question)
+    assert "generate_ai_answer(" in src
+
+
+def test_local_duplicate_ai_crossfire_answer_removed():
+    """The old untested duplicate implementation must not silently reappear."""
+    from app.api import round_simulations
+    assert not hasattr(round_simulations, "_generate_ai_crossfire_answer")
+
+
 def test_round_services_importable():
     from app.services.round_state_machine import (
         get_phase_order,

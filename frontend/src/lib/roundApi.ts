@@ -143,8 +143,8 @@ export function submitCrossfireAnswer(
 export function submitStudentCrossfireQuestion(
   roundId: string,
   question: string,
-): Promise<{ id: string; question: string; answer: string; created_at: string }> {
-  return apiFetch(`${BASE}/${roundId}/crossfire/student-question`, {
+): Promise<CrossfireExchange> {
+  return apiFetch<CrossfireExchange>(`${BASE}/${roundId}/crossfire/student-question`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ round_id: roundId, question }),

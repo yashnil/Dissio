@@ -237,6 +237,62 @@ export function isValidCrossfireAnswer(text: string): boolean {
   return text.trim().length > 0;
 }
 
+export function isValidCrossfireQuestion(text: string): boolean {
+  return text.trim().length > 0;
+}
+
+/** Exchanges where the AI opponent is asking (the "AI asks you" lane). */
+export function aiAsksExchanges(
+  exchanges: CrossfireExchange[],
+  studentSide: RoundSide,
+): CrossfireExchange[] {
+  const asker = opponentSide(studentSide);
+  return exchanges.filter((e) => e.questioner_side === asker);
+}
+
+/** Exchanges where the student is asking (the "you ask the opponent" lane). */
+export function studentAsksExchanges(
+  exchanges: CrossfireExchange[],
+  studentSide: RoundSide,
+): CrossfireExchange[] {
+  return exchanges.filter((e) => e.questioner_side === studentSide);
+}
+
+export type CrossfireArtifactKind = "ai_question" | "student_answer" | "student_question" | "ai_answer";
+
+export interface CrossfireArtifact {
+  kind: CrossfireArtifactKind;
+  text: string;
+  exchangeId: string;
+}
+
+/**
+ * Break one exchange into its labeled question/answer artifacts, oriented by
+ * who asked. An unanswered exchange yields only the question artifact — never
+ * a fabricated answer.
+ */
+export function crossfireExchangeArtifacts(
+  exchange: CrossfireExchange,
+  studentSide: RoundSide,
+): CrossfireArtifact[] {
+  const studentIsAsker = exchange.questioner_side === studentSide;
+  const artifacts: CrossfireArtifact[] = [
+    {
+      kind: studentIsAsker ? "student_question" : "ai_question",
+      text: exchange.question,
+      exchangeId: exchange.id,
+    },
+  ];
+  if (exchange.answer) {
+    artifacts.push({
+      kind: studentIsAsker ? "ai_answer" : "student_answer",
+      text: exchange.answer,
+      exchangeId: exchange.id,
+    });
+  }
+  return artifacts;
+}
+
 /** Insert or replace an exchange by id, preserving the existing order. */
 export function upsertCrossfireExchange(
   list: CrossfireExchange[] | undefined,

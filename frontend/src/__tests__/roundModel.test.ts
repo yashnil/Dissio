@@ -39,7 +39,11 @@ import {
   findAnsweredCrossfireExchanges,
   hasCrossfireDiagnostics,
   isValidCrossfireAnswer,
+  isValidCrossfireQuestion,
   upsertCrossfireExchange,
+  aiAsksExchanges,
+  studentAsksExchanges,
+  crossfireExchangeArtifacts,
 } from "@/lib/roundModel";
 import type { CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
 
@@ -539,5 +543,93 @@ describe("upsertCrossfireExchange", () => {
     const existing = [makeExchange({ id: "e1", answer: undefined })];
     upsertCrossfireExchange(existing, makeExchange({ id: "e1", answer: "answered" }));
     expect(existing[0].answer).toBeUndefined();
+  });
+});
+
+// ── Bidirectional crossfire (Phase 8C) ──────────────────────────────────────────
+
+describe("isValidCrossfireQuestion", () => {
+  it("rejects empty text", () => {
+    expect(isValidCrossfireQuestion("")).toBe(false);
+  });
+  it("rejects whitespace-only text", () => {
+    expect(isValidCrossfireQuestion("   ")).toBe(false);
+  });
+  it("accepts real text", () => {
+    expect(isValidCrossfireQuestion("Why does your evidence apply here?")).toBe(true);
+  });
+});
+
+describe("aiAsksExchanges / studentAsksExchanges", () => {
+  const studentSide = "pro" as const;
+  const aiAsked = makeExchange({ id: "ai-1", questioner_side: "con" });
+  const studentAsked = makeExchange({ id: "student-1", questioner_side: "pro" });
+  const mixed = [aiAsked, studentAsked];
+
+  it("aiAsksExchanges returns only exchanges where the opponent is asking", () => {
+    const result = aiAsksExchanges(mixed, studentSide);
+    expect(result.map((e) => e.id)).toEqual(["ai-1"]);
+  });
+
+  it("studentAsksExchanges returns only exchanges where the student is asking", () => {
+    const result = studentAsksExchanges(mixed, studentSide);
+    expect(result.map((e) => e.id)).toEqual(["student-1"]);
+  });
+
+  it("lanes are mutually exclusive and cover every exchange", () => {
+    const ai = aiAsksExchanges(mixed, studentSide);
+    const student = studentAsksExchanges(mixed, studentSide);
+    expect(ai.length + student.length).toBe(mixed.length);
+  });
+
+  it("preserves relative order within a lane when multiple exchanges exist", () => {
+    const exchanges = [
+      makeExchange({ id: "s1", questioner_side: "pro", sequence: 1 }),
+      makeExchange({ id: "a1", questioner_side: "con", sequence: 2 }),
+      makeExchange({ id: "s2", questioner_side: "pro", sequence: 3 }),
+    ];
+    expect(studentAsksExchanges(exchanges, "pro").map((e) => e.id)).toEqual(["s1", "s2"]);
+    expect(aiAsksExchanges(exchanges, "pro").map((e) => e.id)).toEqual(["a1"]);
+  });
+});
+
+describe("crossfireExchangeArtifacts", () => {
+  const studentSide = "pro" as const;
+
+  it("labels an AI-asked, unanswered exchange as ai_question only", () => {
+    const ex = makeExchange({ questioner_side: "con", answer: undefined });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.map((a) => a.kind)).toEqual(["ai_question"]);
+  });
+
+  it("labels an AI-asked, answered exchange as ai_question then student_answer", () => {
+    const ex = makeExchange({ questioner_side: "con", answer: "Our warrant is causal." });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.map((a) => a.kind)).toEqual(["ai_question", "student_answer"]);
+  });
+
+  it("labels a student-asked, unanswered exchange as student_question only", () => {
+    const ex = makeExchange({ questioner_side: "pro", answer: undefined });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.map((a) => a.kind)).toEqual(["student_question"]);
+  });
+
+  it("labels a student-asked, answered exchange as student_question then ai_answer", () => {
+    const ex = makeExchange({ questioner_side: "pro", answer: "We maintain our position." });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.map((a) => a.kind)).toEqual(["student_question", "ai_answer"]);
+  });
+
+  it("never fabricates an answer artifact when the backend returned none", () => {
+    const ex = makeExchange({ questioner_side: "con", answer: undefined });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.some((a) => a.kind === "student_answer" || a.kind === "ai_answer")).toBe(false);
+  });
+
+  it("carries the exchange id on every artifact for stable list keys, never as visible text", () => {
+    const ex = makeExchange({ id: "ex-42", questioner_side: "con", answer: "Fine." });
+    const artifacts = crossfireExchangeArtifacts(ex, studentSide);
+    expect(artifacts.every((a) => a.exchangeId === "ex-42")).toBe(true);
+    artifacts.forEach((a) => expect(a.text).not.toContain("ex-42"));
   });
 });

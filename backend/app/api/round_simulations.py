@@ -21,6 +21,8 @@ from app.models.round_simulation import (
     CoachAnnotation,
     CreateAdaptationReviewRequest,
     CreateRoundRequest,
+    CrossfireExchange,
+    CrossfireExchangeType,
     CrossfireSubmitRequest,
     GenerateDecisionRequest,
     GenerateDrillsRequest,
@@ -57,6 +59,7 @@ from app.services.coach_round_review import (
 )
 from app.services.round_replay import build_replay_timeline, get_replay_timeline, identify_turning_points
 from app.services.crossfire_simulator import (
+    generate_ai_answer,
     generate_crossfire_question,
     load_crossfire_exchanges,
     process_crossfire_response,
@@ -662,13 +665,19 @@ def submit_crossfire_answer(
     return updated.model_dump()
 
 
-@router.post("/{round_id}/crossfire/student-question")
+@router.post("/{round_id}/crossfire/student-question", response_model=CrossfireExchange)
 def submit_student_crossfire_question(
     round_id: str,
     req: StudentCrossfireQuestionRequest,
     user_id: str = Depends(get_current_user_id),
-) -> Dict[str, Any]:
-    """Student asks a question; the AI opponent generates an answer."""
+) -> CrossfireExchange:
+    """Student asks the AI opponent a question; the AI answers immediately.
+
+    Mirrors the AI-asks-student direction: persisted as a CrossfireExchange
+    with questioner_side set to the student's own side, in the same
+    round_crossfire_exchanges table and phase, so both directions appear
+    together in the phase's exchange history.
+    """
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
@@ -678,46 +687,40 @@ def submit_student_crossfire_question(
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
 
-    if not req.question.strip():
+    question = req.question.strip()
+    if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     opponent_side = RoundSide.CON if sim.config.student_side == RoundSide.PRO else RoundSide.PRO
     live_args = load_round_arguments(round_id)
-    prior_speeches = _get_prior_speeches_summary(round_id, supabase)
+    existing = load_crossfire_exchanges(round_id, sim.current_phase)
 
-    ai_answer = _generate_ai_crossfire_answer(
-        question=req.question,
-        questioner_side=sim.config.student_side,
+    answer = generate_ai_answer(
+        question=question,
         opponent_side=opponent_side,
         live_args=live_args,
-        prior_speeches_summary=prior_speeches,
+        prior_exchanges=existing,
         config=sim.config,
     )
 
-    exchange_id = str(uuid.uuid4())
-    now = _now()
-    exchange_row: Dict[str, Any] = {
-        "id": exchange_id,
-        "round_id": round_id,
-        "phase": sim.current_phase.value,
-        "questioner_side": sim.config.student_side.value,
-        "question": req.question,
-        "answer": ai_answer,
-        "target_argument_label": None,
-        "concession": None,
-        "contradiction": None,
-        "evasion_detected": False,
-        "sequence": 0,
-        "created_at": now,
-        "status": "completed",
-    }
+    exchange = CrossfireExchange(
+        id=str(uuid.uuid4()),
+        round_id=round_id,
+        phase=sim.current_phase,
+        sequence=len(existing) + 1,
+        questioner_side=sim.config.student_side,
+        question=question,
+        answer=answer,
+        exchange_type=CrossfireExchangeType.ANSWER,
+        created_at=_now(),
+    )
     try:
-        supabase.table("round_crossfire_exchanges").insert(exchange_row).execute()
+        supabase.table("round_crossfire_exchanges").insert(exchange.model_dump()).execute()
     except Exception as exc:
-        logger.warning("Failed to save student crossfire exchange: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to save your question: {exc}") from exc
 
     track_product_event(user_id, "student_crossfire_questions_asked", {})
-    return {"id": exchange_id, "question": req.question, "answer": ai_answer, "created_at": now}
+    return exchange
 
 
 # ── Phase advancement ─────────────────────────────────────────────────────────
@@ -1402,58 +1405,6 @@ def _get_prior_speeches_summary(round_id: str, supabase: Any) -> str:
         return "\n".join(parts)
     except Exception:
         return ""
-
-
-def _generate_ai_crossfire_answer(
-    question: str,
-    questioner_side: RoundSide,
-    opponent_side: RoundSide,
-    live_args: List[RoundArgument],
-    prior_speeches_summary: str,
-    config: RoundSimulationConfig,
-) -> str:
-    """Generate a short AI opponent answer to a student question.
-
-    No new evidence allowed. Only relies on approved material or analytics.
-    Falls back to a deterministic template on failure.
-    """
-    try:
-        from openai import OpenAI
-        from app.config import settings
-        if not settings.openai_api_key:
-            raise RuntimeError("no key")
-        client = OpenAI(api_key=settings.openai_api_key)
-        opponent_label = f"{opponent_side.value.upper()} debater"
-        args_summary = "; ".join(a.label for a in live_args if a.side == opponent_side) or "none"
-        prompt = (
-            f"You are the {opponent_label} in a Public Forum debate round. "
-            f"Your live arguments: {args_summary}. "
-            f"Prior round context (2 sentences max): {prior_speeches_summary[:300]}. "
-            f"A student just asked you: '{question}'. "
-            f"Answer directly in 1-3 sentences. "
-            f"RULES: Do not introduce new evidence or cite any new sources. "
-            f"Do not concede unless the question is logically airtight. "
-            f"Answer as a {config.opponent_difficulty.value}-level debater."
-        )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=120,
-            temperature=0.4,
-        )
-        answer = resp.choices[0].message.content or ""
-        if answer.strip():
-            return answer.strip()
-    except Exception:
-        pass
-
-    # Deterministic fallback
-    topic = question.split()[:5]
-    return (
-        f"That's an interesting point about {' '.join(topic) if topic else 'your argument'}. "
-        f"Based on our evidence and analysis, we maintain our position. "
-        f"The {opponent_side.value} side's argument still stands as extended."
-    )
 
 
 def _analyze_judge_adaptation(
