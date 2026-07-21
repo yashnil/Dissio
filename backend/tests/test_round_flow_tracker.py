@@ -10,6 +10,7 @@ Covers:
 """
 from __future__ import annotations
 import pytest
+from unittest.mock import patch
 
 from app.models.round_simulation import (
     ArgumentFlowStatus,
@@ -22,6 +23,7 @@ from app.services.round_flow_tracker import (
     _extract_argument_labels,
     _extract_extensions,
     _extract_responses,
+    apply_crossfire_concession,
     apply_event,
     reconstruct_flow_status,
 )
@@ -202,3 +204,91 @@ class TestReconstructFlowStatus:
         status_map = reconstruct_flow_status(events)
         assert status_map["arg_a"] == ArgumentFlowStatus.LIVE
         assert status_map["arg_b"] == ArgumentFlowStatus.DROPPED
+
+
+# ── apply_crossfire_concession (Phase 8D) ───────────────────────────────────────
+
+
+def _arg(label: str, side: RoundSide, status: ArgumentFlowStatus, arg_id: str = "arg-1") -> RoundArgument:
+    return RoundArgument(
+        id=arg_id, round_id="r-1", label=label, side=side, claim=f"Claim for {label}",
+        initial_phase=RoundPhaseType.FIRST_CONSTRUCTIVE, status=status,
+    )
+
+
+class TestApplyCrossfireConcession:
+    def test_concedes_the_targeted_argument(self):
+        live = _arg("P1", RoundSide.PRO, ArgumentFlowStatus.LIVE, arg_id="arg-1")
+        with patch("app.services.round_flow_tracker.load_round_arguments", return_value=[live]), \
+             patch("app.services.round_flow_tracker.upsert_argument") as mock_upsert, \
+             patch("app.services.round_flow_tracker.append_flow_event") as mock_append:
+            result = apply_crossfire_concession(
+                round_id="r-1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+                argument_label="P1", conceding_side=RoundSide.PRO,
+                description="Concession in crossfire: conceded the point.",
+            )
+        assert result is not None
+        assert result.status == ArgumentFlowStatus.CONCEDED
+        mock_upsert.assert_called_once()
+        mock_append.assert_called_once()
+        saved_event = mock_append.call_args[0][0]
+        assert saved_event.event_type == "concede"
+        assert saved_event.argument_id == "arg-1"
+
+    def test_returns_none_when_no_argument_matches_label_and_side(self):
+        live = _arg("P1", RoundSide.PRO, ArgumentFlowStatus.LIVE)
+        with patch("app.services.round_flow_tracker.load_round_arguments", return_value=[live]), \
+             patch("app.services.round_flow_tracker.upsert_argument") as mock_upsert, \
+             patch("app.services.round_flow_tracker.append_flow_event") as mock_append:
+            result = apply_crossfire_concession(
+                round_id="r-1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+                argument_label="P2", conceding_side=RoundSide.PRO,
+                description="irrelevant",
+            )
+        assert result is None
+        mock_upsert.assert_not_called()
+        mock_append.assert_not_called()
+
+    def test_does_not_match_the_same_label_on_the_wrong_side(self):
+        """Guards against cross-side label collisions — a concession on the
+        student's side must never touch an opponent argument with the same label."""
+        live = _arg("C1", RoundSide.CON, ArgumentFlowStatus.LIVE)
+        with patch("app.services.round_flow_tracker.load_round_arguments", return_value=[live]), \
+             patch("app.services.round_flow_tracker.upsert_argument") as mock_upsert:
+            result = apply_crossfire_concession(
+                round_id="r-1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+                argument_label="C1", conceding_side=RoundSide.PRO,
+                description="irrelevant",
+            )
+        assert result is None
+        mock_upsert.assert_not_called()
+
+    def test_idempotent_when_already_conceded(self):
+        already = _arg("P1", RoundSide.PRO, ArgumentFlowStatus.CONCEDED)
+        with patch("app.services.round_flow_tracker.load_round_arguments", return_value=[already]), \
+             patch("app.services.round_flow_tracker.upsert_argument") as mock_upsert, \
+             patch("app.services.round_flow_tracker.append_flow_event") as mock_append:
+            result = apply_crossfire_concession(
+                round_id="r-1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+                argument_label="P1", conceding_side=RoundSide.PRO,
+                description="irrelevant",
+            )
+        assert result is not None
+        assert result.status == ArgumentFlowStatus.CONCEDED
+        mock_upsert.assert_not_called()
+        mock_append.assert_not_called()
+
+    def test_never_touches_an_unrelated_argument(self):
+        target = _arg("P1", RoundSide.PRO, ArgumentFlowStatus.LIVE, arg_id="arg-1")
+        other = _arg("P2", RoundSide.PRO, ArgumentFlowStatus.LIVE, arg_id="arg-2")
+        with patch("app.services.round_flow_tracker.load_round_arguments", return_value=[target, other]), \
+             patch("app.services.round_flow_tracker.upsert_argument") as mock_upsert, \
+             patch("app.services.round_flow_tracker.append_flow_event"):
+            apply_crossfire_concession(
+                round_id="r-1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+                argument_label="P1", conceding_side=RoundSide.PRO,
+                description="irrelevant",
+            )
+        assert mock_upsert.call_count == 1
+        saved_arg = mock_upsert.call_args[0][0]
+        assert saved_arg.label == "P1"

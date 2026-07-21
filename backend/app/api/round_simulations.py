@@ -21,6 +21,7 @@ from app.models.round_simulation import (
     CoachAnnotation,
     CreateAdaptationReviewRequest,
     CreateRoundRequest,
+    CrossfireEffect,
     CrossfireExchange,
     CrossfireExchangeType,
     CrossfireSubmitRequest,
@@ -59,6 +60,7 @@ from app.services.coach_round_review import (
 )
 from app.services.round_replay import build_replay_timeline, get_replay_timeline, identify_turning_points
 from app.services.crossfire_simulator import (
+    derive_crossfire_effects,
     generate_ai_answer,
     generate_crossfire_question,
     load_crossfire_exchanges,
@@ -81,6 +83,7 @@ from app.services.round_drill_generator import (
     save_round_drills,
 )
 from app.services.round_flow_tracker import (
+    apply_crossfire_concession,
     load_round_arguments,
     process_speech_for_flow,
 )
@@ -239,8 +242,10 @@ def get_round_state(
     flow_args = load_round_arguments(round_id)
 
     active_crossfire = None
+    crossfire_effects: List[CrossfireEffect] = []
     if phase in CROSSFIRE_PHASES:
         active_crossfire = load_crossfire_exchanges(round_id, phase)
+        crossfire_effects = derive_crossfire_effects(active_crossfire)
 
     decision: Optional[RoundDecision] = None
     if sim.status == RoundStatus.COMPLETED:
@@ -272,6 +277,7 @@ def get_round_state(
         speeches=speeches,
         flow_arguments=flow_args,
         active_crossfire=active_crossfire,
+        crossfire_effects=crossfire_effects,
         decision=decision,
         coaching_hint=hint,
     )
@@ -661,6 +667,22 @@ def submit_crossfire_answer(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to save answer: {exc}") from exc
 
+    # Phase 8D: a real, extracted concession weakens the specific argument it
+    # targeted, via the existing "concede" flow transition — bounded to that
+    # one argument, best-effort (a flow-write hiccup must not fail the answer
+    # the student already successfully submitted).
+    if updated.concession_extracted and updated.target_argument and updated.target_argument != "general":
+        try:
+            apply_crossfire_concession(
+                round_id=round_id,
+                phase=sim.current_phase,
+                argument_label=updated.target_argument,
+                conceding_side=sim.config.student_side,
+                description=f"Concession in crossfire: {updated.concession_extracted[:160]}",
+            )
+        except Exception as exc:
+            logger.warning("Failed to apply crossfire concession to flow: %s", exc)
+
     track_product_event(user_id, "crossfire_questions_answered", {})
     return updated.model_dump()
 
@@ -852,6 +874,7 @@ def generate_decision(
         all_violations = []
 
     speeches_summary = _get_prior_speeches_summary(round_id, supabase)
+    round_crossfire_effects = derive_crossfire_effects(load_crossfire_exchanges(round_id))
     decision = run_decision_engine(
         round_id=round_id,
         judge_type=judge_type,
@@ -859,6 +882,7 @@ def generate_decision(
         evidence_uses=evidence_uses,
         legality_violations=all_violations,
         speeches_summary=speeches_summary,
+        crossfire_effects=round_crossfire_effects,
     )
 
     try:
@@ -932,6 +956,7 @@ def rejudge(
         all_violations = []
 
     speeches_summary = _get_prior_speeches_summary(round_id, supabase)
+    round_crossfire_effects = derive_crossfire_effects(load_crossfire_exchanges(round_id))
     decision = rejudge_round(
         round_id=round_id,
         new_judge_type=req.judge_type,
@@ -939,6 +964,7 @@ def rejudge(
         evidence_uses=evidence_uses,
         legality_violations=all_violations,
         speeches_summary=speeches_summary,
+        crossfire_effects=round_crossfire_effects,
     )
 
     try:

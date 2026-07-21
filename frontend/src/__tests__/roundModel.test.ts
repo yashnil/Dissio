@@ -44,8 +44,12 @@ import {
   aiAsksExchanges,
   studentAsksExchanges,
   crossfireExchangeArtifacts,
+  CROSSFIRE_EFFECT_LABELS,
+  crossfireEffectTone,
+  crossfireEffectForExchange,
+  crossfireEffectForArgument,
 } from "@/lib/roundModel";
-import type { CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
+import type { CrossfireEffect, CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
 
 function makeExchange(overrides: Partial<CrossfireExchange> = {}): CrossfireExchange {
   return {
@@ -60,6 +64,18 @@ function makeExchange(overrides: Partial<CrossfireExchange> = {}): CrossfireExch
     evasion_detected: false,
     strategic_significance: "low",
     created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeEffect(overrides: Partial<CrossfireEffect> = {}): CrossfireEffect {
+  return {
+    exchange_id: "ex-1",
+    affected_argument_label: "P1",
+    effect_type: "concession_weakened_argument",
+    severity: "high",
+    explanation: "Conceded in crossfire: the figure itself.",
+    ballot_relevance: true,
     ...overrides,
   };
 }
@@ -293,6 +309,7 @@ const makeDecision = (winner: "pro" | "con"): RoundDecision => ({
     judge_profile_effects: [],
     confidence: "decisive",
   },
+  crossfire_effects: [],
   created_at: "2026-06-23T00:00:00",
 });
 
@@ -631,5 +648,64 @@ describe("crossfireExchangeArtifacts", () => {
     const artifacts = crossfireExchangeArtifacts(ex, studentSide);
     expect(artifacts.every((a) => a.exchangeId === "ex-42")).toBe(true);
     artifacts.forEach((a) => expect(a.text).not.toContain("ex-42"));
+  });
+});
+
+// ── Crossfire effects (Phase 8D) ────────────────────────────────────────────────
+
+describe("CROSSFIRE_EFFECT_LABELS", () => {
+  it("labels a real flow-changing consequence as Flow impact", () => {
+    expect(CROSSFIRE_EFFECT_LABELS.concession_weakened_argument).toBe("Flow impact");
+  });
+
+  it("labels advisory-only consequences as Judge note", () => {
+    expect(CROSSFIRE_EFFECT_LABELS.contradiction_warning).toBe("Judge note");
+    expect(CROSSFIRE_EFFECT_LABELS.evasion_warning).toBe("Judge note");
+  });
+});
+
+describe("crossfireEffectTone", () => {
+  it("maps high severity to red", () => {
+    expect(crossfireEffectTone("high")).toBe("red");
+  });
+  it("maps medium severity to amber", () => {
+    expect(crossfireEffectTone("medium")).toBe("amber");
+  });
+  it("maps low or unknown severity to neutral, never a bare color-only signal", () => {
+    expect(crossfireEffectTone("low")).toBe("neutral");
+    expect(crossfireEffectTone("unknown")).toBe("neutral");
+  });
+});
+
+describe("crossfireEffectForExchange", () => {
+  it("returns the effect matching the exchange id", () => {
+    const effects = [makeEffect({ exchange_id: "ex-1" }), makeEffect({ exchange_id: "ex-2" })];
+    expect(crossfireEffectForExchange(effects, "ex-2")?.exchange_id).toBe("ex-2");
+  });
+
+  it("returns undefined — not a fabricated effect — when nothing matches", () => {
+    const effects = [makeEffect({ exchange_id: "ex-1" })];
+    expect(crossfireEffectForExchange(effects, "ex-999")).toBeUndefined();
+  });
+
+  it("returns undefined for an empty effects list (no crossfire happened)", () => {
+    expect(crossfireEffectForExchange([], "ex-1")).toBeUndefined();
+  });
+});
+
+describe("crossfireEffectForArgument", () => {
+  it("returns the effect matching the argument label", () => {
+    const effects = [makeEffect({ affected_argument_label: "P1" })];
+    expect(crossfireEffectForArgument(effects, "P1")?.affected_argument_label).toBe("P1");
+  });
+
+  it("returns undefined when no effect targets that argument", () => {
+    const effects = [makeEffect({ affected_argument_label: "P1" })];
+    expect(crossfireEffectForArgument(effects, "P2")).toBeUndefined();
+  });
+
+  it("returns undefined for effects with no argument target (general questions)", () => {
+    const effects = [makeEffect({ affected_argument_label: undefined })];
+    expect(crossfireEffectForArgument(effects, "P1")).toBeUndefined();
   });
 });

@@ -2,6 +2,8 @@
 
 import type {
   ArgumentFlowStatus,
+  CrossfireEffect,
+  CrossfireEffectType,
   CrossfireExchange,
   RoundArgument,
   RoundDecision,
@@ -304,6 +306,44 @@ export function upsertCrossfireExchange(
   const next = existing.slice();
   next[idx] = exchange;
   return next;
+}
+
+// ── Crossfire effects (Phase 8D) ────────────────────────────────────────────────
+// Bounded, explainable consequences of crossfire diagnostics. Every helper
+// here is a pure lookup/label function over data the backend already
+// returned — nothing is computed or inferred client-side.
+
+/** "Flow impact" for a real flow-changing consequence (concession); "Judge
+ * note" for an advisory-only signal (contradiction/evasion) that never
+ * mutated argument status. */
+export const CROSSFIRE_EFFECT_LABELS: Record<CrossfireEffectType, string> = {
+  concession_weakened_argument: "Flow impact",
+  contradiction_warning: "Judge note",
+  evasion_warning: "Judge note",
+};
+
+export type CrossfireEffectTone = "red" | "amber" | "neutral";
+
+export function crossfireEffectTone(severity: string): CrossfireEffectTone {
+  if (severity === "high") return "red";
+  if (severity === "medium") return "amber";
+  return "neutral";
+}
+
+/** The effect (if any) the backend derived for a specific exchange. */
+export function crossfireEffectForExchange(
+  effects: CrossfireEffect[],
+  exchangeId: string,
+): CrossfireEffect | undefined {
+  return effects.find((e) => e.exchange_id === exchangeId);
+}
+
+/** The effect (if any) targeting a specific flow argument, for the flow panel. */
+export function crossfireEffectForArgument(
+  effects: CrossfireEffect[],
+  argumentLabel: string,
+): CrossfireEffect | undefined {
+  return effects.find((e) => e.affected_argument_label === argumentLabel);
 }
 
 // ── Speech type labels ────────────────────────────────────────────────────────

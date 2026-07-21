@@ -149,6 +149,20 @@ export interface CrossfireExchange {
   created_at: string;
 }
 
+export type CrossfireEffectType =
+  | "concession_weakened_argument"
+  | "contradiction_warning"
+  | "evasion_warning";
+
+export interface CrossfireEffect {
+  exchange_id: string;
+  affected_argument_label?: string;
+  effect_type: CrossfireEffectType;
+  severity: string;
+  explanation: string;
+  ballot_relevance: boolean;
+}
+
 export interface RoundEvidenceUse {
   id: string;
   round_id: string;
@@ -205,6 +219,7 @@ export interface RoundDecision {
   adaptation_successes: string[];
   adaptation_failures: string[];
   decision_trace: RoundDecisionTrace;
+  crossfire_effects: CrossfireEffect[];
   created_at: string;
 }
 
@@ -257,6 +272,7 @@ export interface RoundStateResponse {
   speeches: RoundSpeech[];
   flow_arguments: RoundArgument[];
   active_crossfire?: CrossfireExchange[];
+  crossfire_effects: CrossfireEffect[];
   decision?: RoundDecision;
   coaching_hint?: string;
 }

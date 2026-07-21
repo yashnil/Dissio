@@ -4,8 +4,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import * as roundApi from "@/lib/roundApi";
 import { ApiError } from "@/lib/api";
 import {
+  CROSSFIRE_EFFECT_LABELS,
   PHASE_LABELS,
   aiAsksExchanges,
+  crossfireEffectForExchange,
+  crossfireEffectTone,
   crossfireExchangeArtifacts,
   findAnsweredCrossfireExchanges,
   findPendingCrossfireExchange,
@@ -17,7 +20,7 @@ import {
   studentAsksExchanges,
   type CrossfireArtifactKind,
 } from "@/lib/roundModel";
-import type { CrossfireExchange, RoundPhaseType, RoundSide } from "@/types/round";
+import type { CrossfireEffect, CrossfireExchange, RoundPhaseType, RoundSide } from "@/types/round";
 
 interface Props {
   roundId: string;
@@ -25,6 +28,8 @@ interface Props {
   studentSide: RoundSide;
   /** Exchanges for the current crossfire phase only (from round state), both directions mixed. */
   exchanges: CrossfireExchange[];
+  /** Bounded flow/ballot consequences the backend derived for this phase's exchanges. */
+  crossfireEffects: CrossfireEffect[];
   /** Called with a freshly generated or updated exchange to merge into round state. */
   onExchangeSaved: (exchange: CrossfireExchange) => void;
   onAdvancePhase: () => void;
@@ -64,12 +69,36 @@ const ARTIFACT_LABELS: Record<CrossfireArtifactKind, string> = {
   ai_answer: "AI Opponent answered",
 };
 
+const EFFECT_TONE_CLASSES: Record<ReturnType<typeof crossfireEffectTone>, string> = {
+  red: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400",
+  amber:
+    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-400",
+  neutral: "border-hairline bg-muted/30 text-muted-foreground",
+};
+
+const SEVERITY_TEXT: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
+
+function ExchangeEffectNote({ effect }: { effect: CrossfireEffect }) {
+  const tone = crossfireEffectTone(effect.severity);
+  return (
+    <p className={`rounded-md border px-3 py-2 text-xs ${EFFECT_TONE_CLASSES[tone]}`}>
+      <span className="font-semibold">
+        {CROSSFIRE_EFFECT_LABELS[effect.effect_type]} ({SEVERITY_TEXT[effect.severity] ?? effect.severity}
+        ){" — "}
+      </span>
+      {effect.explanation}
+    </p>
+  );
+}
+
 function ExchangeTranscriptEntry({
   exchange,
   studentSide,
+  effect,
 }: {
   exchange: CrossfireExchange;
   studentSide: RoundSide;
+  effect?: CrossfireEffect;
 }) {
   const artifacts = crossfireExchangeArtifacts(exchange, studentSide);
   return (
@@ -83,6 +112,7 @@ function ExchangeTranscriptEntry({
         </div>
       ))}
       <ExchangeDiagnostics exchange={exchange} />
+      {effect && <ExchangeEffectNote effect={effect} />}
     </div>
   );
 }
@@ -92,6 +122,7 @@ export function CrossfireCapture({
   phase,
   studentSide,
   exchanges,
+  crossfireEffects,
   onExchangeSaved,
   onAdvancePhase,
   isLoading,
@@ -242,7 +273,12 @@ export function CrossfireCapture({
         {aiAnswered.length > 0 && (
           <div className="space-y-2">
             {aiAnswered.map((ex) => (
-              <ExchangeTranscriptEntry key={ex.id} exchange={ex} studentSide={studentSide} />
+              <ExchangeTranscriptEntry
+                key={ex.id}
+                exchange={ex}
+                studentSide={studentSide}
+                effect={crossfireEffectForExchange(crossfireEffects, ex.id)}
+              />
             ))}
           </div>
         )}
@@ -330,7 +366,12 @@ export function CrossfireCapture({
         {studentLane.length > 0 && (
           <div className="space-y-2">
             {studentLane.map((ex) => (
-              <ExchangeTranscriptEntry key={ex.id} exchange={ex} studentSide={studentSide} />
+              <ExchangeTranscriptEntry
+                key={ex.id}
+                exchange={ex}
+                studentSide={studentSide}
+                effect={crossfireEffectForExchange(crossfireEffects, ex.id)}
+              />
             ))}
           </div>
         )}

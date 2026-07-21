@@ -100,6 +100,20 @@ def test_load_speech_defaults_is_fallback_false_when_column_missing():
     assert speech.is_fallback is False
 
 
+def test_round_decision_loads_old_row_missing_crossfire_effects_column():
+    """Phase 8D added crossfire_effects to RoundDecision. Decision rows written
+    before that migration/field existed have no such key at all — model_validate
+    must default to an empty list rather than raising, so old rounds still load."""
+    from app.models.round_simulation import RoundDecision
+    old_row = {
+        "id": "d1", "round_id": "r1", "judge_type": "flow", "winner": "pro",
+        "reason_for_decision": "Pro wins.", "decision_trace": {},
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    decision = RoundDecision.model_validate(old_row)
+    assert decision.crossfire_effects == []
+
+
 def _cx_exchange(**overrides):
     from app.models.round_simulation import CrossfireExchange, RoundPhaseType, RoundSide
     defaults = dict(

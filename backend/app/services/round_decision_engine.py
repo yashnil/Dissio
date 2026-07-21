@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.models.round_simulation import (
     ArgumentFlowStatus,
+    CrossfireEffect,
     DecisionTraceEntry,
     RoundArgument,
     RoundDecision,
@@ -144,6 +145,7 @@ def run_decision_engine(
     evidence_uses: List[RoundEvidenceUse],
     legality_violations: List[Dict[str, Any]],
     speeches_summary: str = "",
+    crossfire_effects: Optional[List[CrossfireEffect]] = None,
 ) -> RoundDecision:
     """
     Deterministic decision engine.
@@ -159,8 +161,12 @@ def run_decision_engine(
     8. Generate RFD via LLM (structured, constrained to trace).
     """
     now = datetime.utcnow().isoformat()
+    crossfire_effects = crossfire_effects or []
 
-    # Step 1 & 2: Identify surviving offense
+    # Step 1 & 2: Identify surviving offense. Any crossfire concession has
+    # already been applied to all_args' status by the crossfire-answer
+    # endpoint (via apply_crossfire_concession), so it flows into surviving
+    # offense here for free — no separate crossfire scoring path exists.
     pro_offense = _get_surviving_offense(all_args, RoundSide.PRO)
     con_offense = _get_surviving_offense(all_args, RoundSide.CON)
 
@@ -279,7 +285,10 @@ def run_decision_engine(
         confidence=confidence,
     )
 
-    # Step 8: Generate natural RFD
+    # Step 8: Generate natural RFD. Only ballot-relevant effects (concessions,
+    # contradictions) are cited — evasion-only signals are coaching notes, not
+    # RFD material, per the bounded crossfire-effect model.
+    crossfire_notes = [e.explanation for e in crossfire_effects if e.ballot_relevance]
     rfd = _generate_rfd(
         winner=winner,
         judge_type=judge_type,
@@ -289,6 +298,7 @@ def run_decision_engine(
         con_score=con_score,
         judge_effects=judge_effects,
         speeches_summary=speeches_summary,
+        crossfire_notes=crossfire_notes,
     )
 
     voting_issues = surviving_voter_labels[:3] if surviving_voter_labels else ["No clear voter identified."]
@@ -321,6 +331,7 @@ def run_decision_engine(
         adaptation_successes=adaptation_successes,
         adaptation_failures=adaptation_failures,
         decision_trace=trace,
+        crossfire_effects=crossfire_effects,
         created_at=now,
     )
 
@@ -435,14 +446,17 @@ def _generate_rfd(
     con_score: float,
     judge_effects: List[str],
     speeches_summary: str,
+    crossfire_notes: Optional[List[str]] = None,
 ) -> str:
     """Generate a natural RFD constrained to the deterministic trace."""
+    crossfire_notes = crossfire_notes or []
     if not settings.openai_api_key:
-        return _deterministic_rfd(winner, surviving_voters, dropped, judge_effects)
+        return _deterministic_rfd(winner, surviving_voters, dropped, judge_effects, crossfire_notes)
 
     voters_text = ", ".join(surviving_voters[:3]) or "no surviving voters"
     dropped_text = ", ".join(dropped[:3]) or "none"
     effects_text = " ".join(judge_effects[:2]) or "No judge-specific adjustments."
+    crossfire_text = " ".join(crossfire_notes[:2]) or "No material crossfire consequences."
 
     system = (
         f"You are a {judge_type} PF judge delivering a reason for decision (RFD). "
@@ -456,6 +470,7 @@ def _generate_rfd(
         f"Surviving voters: {voters_text}\n"
         f"Dropped arguments: {dropped_text}\n"
         f"Judge adjustments: {effects_text}\n"
+        f"Crossfire consequences: {crossfire_text}\n"
         f"Round summary: {speeches_summary[:400] or '(not provided)'}\n\n"
         "Write the RFD now (100-150 words):"
     )
@@ -474,7 +489,7 @@ def _generate_rfd(
         return (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         logger.warning("RFD generation failed: %s", exc)
-        return _deterministic_rfd(winner, surviving_voters, dropped, judge_effects)
+        return _deterministic_rfd(winner, surviving_voters, dropped, judge_effects, crossfire_notes)
 
 
 def _deterministic_rfd(
@@ -482,15 +497,20 @@ def _deterministic_rfd(
     surviving_voters: List[str],
     dropped: List[str],
     judge_effects: List[str],
+    crossfire_notes: Optional[List[str]] = None,
 ) -> str:
     voters = ", ".join(surviving_voters[:2]) or "surviving offense"
     drops = ", ".join(dropped[:2]) or "none"
-    return (
+    crossfire_notes = crossfire_notes or []
+    text = (
         f"I vote for the {winner.value} side. "
         f"The key voter(s) in this round are: {voters}. "
         f"The losing side dropped: {drops}. "
         + (" ".join(judge_effects[:1]) if judge_effects else "")
     ).strip()
+    if crossfire_notes:
+        text += " " + " ".join(crossfire_notes[:2])
+    return text
 
 
 def rejudge_round(
@@ -500,6 +520,7 @@ def rejudge_round(
     evidence_uses: List[RoundEvidenceUse],
     legality_violations: List[Dict[str, Any]],
     speeches_summary: str = "",
+    crossfire_effects: Optional[List[CrossfireEffect]] = None,
 ) -> RoundDecision:
     """
     Re-evaluate a completed round under a different judge profile.
@@ -512,6 +533,7 @@ def rejudge_round(
         evidence_uses=evidence_uses,
         legality_violations=legality_violations,
         speeches_summary=speeches_summary,
+        crossfire_effects=crossfire_effects,
     )
     decision.id = str(uuid.uuid4())  # New record for the rejudged decision
     return decision

@@ -1,7 +1,21 @@
 "use client";
 
-import { getDroppedArguments, getSurvivingOffense, winnerLabel } from "@/lib/roundModel";
+import {
+  CROSSFIRE_EFFECT_LABELS,
+  crossfireEffectTone,
+  getDroppedArguments,
+  getSurvivingOffense,
+  winnerLabel,
+} from "@/lib/roundModel";
 import type { RoundArgument, RoundDecision } from "@/types/round";
+
+const EFFECT_TONE_TEXT: Record<ReturnType<typeof crossfireEffectTone>, string> = {
+  red: "text-red-700 dark:text-red-400",
+  amber: "text-amber-800 dark:text-amber-400",
+  neutral: "text-muted-foreground",
+};
+
+const SEVERITY_TEXT: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
 
 interface Props {
   decision: RoundDecision;
@@ -98,6 +112,25 @@ export function RoundBallotView({ decision, allArguments, onRejudge, isLoading }
         <div className="rounded-lg border p-4">
           <h3 className="text-sm font-semibold mb-2">Weighing</h3>
           <p className="text-sm text-muted-foreground">{decision.weighing_comparison}</p>
+        </div>
+      )}
+
+      {/* Crossfire influence — only when the backend actually derived effects */}
+      {decision.crossfire_effects.length > 0 && (
+        <div className="rounded-lg border p-4">
+          <h3 className="text-sm font-semibold mb-2">Crossfire Influence</h3>
+          <ul className="space-y-2">
+            {decision.crossfire_effects.map((effect, i) => (
+              <li key={i} className="text-sm">
+                <span className={`font-medium ${EFFECT_TONE_TEXT[crossfireEffectTone(effect.severity)]}`}>
+                  {CROSSFIRE_EFFECT_LABELS[effect.effect_type]}
+                  {" "}({SEVERITY_TEXT[effect.severity] ?? effect.severity})
+                  {effect.affected_argument_label ? ` — ${effect.affected_argument_label}` : ""}
+                </span>
+                <p className="text-xs text-muted-foreground mt-0.5">{effect.explanation}</p>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

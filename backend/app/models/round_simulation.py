@@ -238,6 +238,29 @@ class CrossfireSubmitRequest(BaseModel):
     audio_url: Optional[str] = None
 
 
+# ── Crossfire effects (Pass 24 / Phase 8D) ─────────────────────────────────────
+# Bounded, explainable consequences derived from persisted crossfire
+# diagnostics. Never a DB table on their own — always recomputed from
+# CrossfireExchange rows and current RoundArgument status, so they stay
+# consistent with the flow on every refresh and never need their own
+# migration to keep in sync.
+
+
+class CrossfireEffectType(str, Enum):
+    CONCESSION_WEAKENED_ARGUMENT = "concession_weakened_argument"
+    CONTRADICTION_WARNING = "contradiction_warning"
+    EVASION_WARNING = "evasion_warning"
+
+
+class CrossfireEffect(BaseModel):
+    exchange_id: str
+    affected_argument_label: Optional[str] = None
+    effect_type: CrossfireEffectType
+    severity: str = "low"  # "low" | "medium" | "high"
+    explanation: str
+    ballot_relevance: bool = False
+
+
 # ── Arguments and flow ────────────────────────────────────────────────────────
 
 
@@ -338,6 +361,7 @@ class RoundDecision(BaseModel):
     adaptation_successes: List[str] = Field(default_factory=list)
     adaptation_failures: List[str] = Field(default_factory=list)
     decision_trace: RoundDecisionTrace
+    crossfire_effects: List[CrossfireEffect] = Field(default_factory=list)
     created_at: str
 
 
@@ -493,6 +517,7 @@ class RoundStateResponse(BaseModel):
     speeches: List[RoundSpeech] = Field(default_factory=list)
     flow_arguments: List[RoundArgument] = Field(default_factory=list)
     active_crossfire: Optional[List[CrossfireExchange]] = None
+    crossfire_effects: List[CrossfireEffect] = Field(default_factory=list)
     decision: Optional[RoundDecision] = None
     coaching_hint: Optional[str] = None
 

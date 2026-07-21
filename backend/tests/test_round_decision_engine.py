@@ -13,9 +13,11 @@ Covers:
 from __future__ import annotations
 import uuid
 import pytest
+from unittest.mock import patch
 
 from app.models.round_simulation import (
     ArgumentFlowStatus,
+    CrossfireEffect,
     RoundArgument,
     RoundDecision,
     RoundEvidenceUse,
@@ -27,6 +29,8 @@ from app.services.round_decision_engine import (
     _get_dropped_args,
     _get_conceded_args,
     _estimate_speaker_points,
+    _deterministic_rfd,
+    _generate_rfd,
     run_decision_engine,
     rejudge_round,
 )
@@ -249,3 +253,95 @@ class TestRejudgeRound:
         rejudge_round("r1", "lay", args, [], [])
         # Arguments should not be mutated
         assert args[0].status == original_status
+
+
+# ── Crossfire effects on the decision (Phase 8D) ────────────────────────────────
+
+
+def _cf_effect(
+    exchange_id="ex-1", affected_argument_label="AC1",
+    effect_type="concession_weakened_argument", severity="high",
+    explanation="Conceded in crossfire: the 20% figure.", ballot_relevance=True,
+) -> CrossfireEffect:
+    return CrossfireEffect(
+        exchange_id=exchange_id, affected_argument_label=affected_argument_label,
+        effect_type=effect_type, severity=severity, explanation=explanation,
+        ballot_relevance=ballot_relevance,
+    )
+
+
+class TestCrossfireEffectsOnDecision:
+    def test_decision_engine_remains_stable_when_no_crossfire_happened(self):
+        """No crossfire_effects argument at all — matches every pre-Phase-8D caller."""
+        args = [_arg("AC1", RoundSide.PRO, ArgumentFlowStatus.LIVE)]
+        d = run_decision_engine("r1", "flow", args, [], [])
+        assert d.crossfire_effects == []
+        assert d.winner in (RoundSide.PRO, RoundSide.CON)
+
+    def test_empty_crossfire_effects_list_is_stable(self):
+        args = [_arg("AC1", RoundSide.PRO, ArgumentFlowStatus.LIVE)]
+        d = run_decision_engine("r1", "flow", args, [], [], crossfire_effects=[])
+        assert d.crossfire_effects == []
+
+    def test_crossfire_effects_pass_through_onto_the_decision(self):
+        args = [_arg("AC1", RoundSide.PRO, ArgumentFlowStatus.LIVE)]
+        effect = _cf_effect()
+        d = run_decision_engine("r1", "flow", args, [], [], crossfire_effects=[effect])
+        assert len(d.crossfire_effects) == 1
+        assert d.crossfire_effects[0].exchange_id == "ex-1"
+
+    def test_rejudge_also_carries_crossfire_effects(self):
+        args = [_arg("AC1", RoundSide.PRO, ArgumentFlowStatus.LIVE)]
+        effect = _cf_effect()
+        d = rejudge_round("r1", "lay", args, [], [], crossfire_effects=[effect])
+        assert len(d.crossfire_effects) == 1
+
+    def test_deterministic_rfd_cites_material_crossfire_note(self):
+        text = _deterministic_rfd(
+            winner=RoundSide.PRO, surviving_voters=["AC1 (pro)"], dropped=[],
+            judge_effects=[], crossfire_notes=["Conceded in crossfire: the 20% figure."],
+        )
+        assert "Conceded in crossfire" in text
+
+    def test_deterministic_rfd_stable_with_no_crossfire_notes(self):
+        """Old callers that never pass crossfire_notes must produce the same RFD shape as before."""
+        text = _deterministic_rfd(
+            winner=RoundSide.PRO, surviving_voters=["AC1 (pro)"], dropped=[], judge_effects=[],
+        )
+        assert "vote for the pro side" in text.lower()
+        assert "crossfire" not in text.lower()
+
+    def test_generate_rfd_deterministic_fallback_cites_crossfire(self):
+        """With no OpenAI key, the deterministic fallback path must still surface
+        a material crossfire consequence in the RFD."""
+        with patch("app.services.round_decision_engine.settings") as mock_settings:
+            mock_settings.openai_api_key = ""
+            text = _generate_rfd(
+                winner=RoundSide.CON, judge_type="flow", surviving_voters=["NC1 (con)"],
+                dropped=[], pro_score=1.0, con_score=2.0, judge_effects=[],
+                speeches_summary="", crossfire_notes=["Contradiction flagged in crossfire: prior claim."],
+            )
+        assert "Contradiction flagged in crossfire" in text
+
+    def test_generate_rfd_deterministic_fallback_stable_with_no_crossfire(self):
+        with patch("app.services.round_decision_engine.settings") as mock_settings:
+            mock_settings.openai_api_key = ""
+            text = _generate_rfd(
+                winner=RoundSide.CON, judge_type="flow", surviving_voters=["NC1 (con)"],
+                dropped=[], pro_score=1.0, con_score=2.0, judge_effects=[], speeches_summary="",
+            )
+        assert text  # still produces a valid RFD with no crossfire involvement
+
+    def test_evasion_only_notes_are_not_cited_in_rfd(self):
+        """Evasion-only effects are coaching notes (ballot_relevance=False) —
+        run_decision_engine must not pass them into the RFD's crossfire_notes."""
+        args = [_arg("AC1", RoundSide.PRO, ArgumentFlowStatus.LIVE)]
+        evasion_effect = _cf_effect(
+            effect_type="evasion_warning", severity="low",
+            explanation="Answer may not have directly addressed the crossfire question.",
+            ballot_relevance=False,
+        )
+        with patch("app.services.round_decision_engine.settings") as mock_settings:
+            mock_settings.openai_api_key = ""
+            d = run_decision_engine("r1", "flow", args, [], [], crossfire_effects=[evasion_effect])
+        assert "directly addressed" not in d.reason_for_decision

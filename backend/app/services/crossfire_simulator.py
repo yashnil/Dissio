@@ -30,6 +30,8 @@ from pydantic import BaseModel
 from app.config import settings
 from app.models.round_simulation import (
     ArgumentFlowStatus,
+    CrossfireEffect,
+    CrossfireEffectType,
     CrossfireExchange,
     CrossfireExchangeType,
     RoundArgument,
@@ -718,3 +720,83 @@ def load_crossfire_exchanges(
     except Exception as exc:
         logger.warning("Failed to load crossfire exchanges: %s", exc)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Pass 24 (Phase 8D) — crossfire effects: bounded, explainable consequences
+# ---------------------------------------------------------------------------
+#
+# Effects are derived only from fields the crossfire engine already persisted
+# on the exchange (concession_extracted / contradiction / evasion_detected).
+# Nothing here re-reads transcript text or infers a diagnostic that wasn't
+# already returned by process_crossfire_response. One exchange yields at most
+# one effect, in a fixed precedence (concession > contradiction > evasion),
+# matching the same precedence process_crossfire_response already uses when
+# classifying an exchange's exchange_type.
+
+_EFFECT_SEVERITY: Dict[CrossfireEffectType, str] = {
+    CrossfireEffectType.CONCESSION_WEAKENED_ARGUMENT: "high",
+    CrossfireEffectType.CONTRADICTION_WARNING: "medium",
+    CrossfireEffectType.EVASION_WARNING: "low",
+}
+
+
+def derive_crossfire_effect(exchange: CrossfireExchange) -> Optional[CrossfireEffect]:
+    """Translate one persisted crossfire exchange into at most one bounded
+    effect. Returns None for unanswered exchanges or exchanges with no
+    diagnostic fields set — missing diagnostics must never produce an effect.
+    """
+    if not exchange.answer:
+        return None
+
+    target_label = (
+        exchange.target_argument
+        if exchange.target_argument and exchange.target_argument != "general"
+        else None
+    )
+
+    if exchange.concession_extracted:
+        explanation = f"Conceded in crossfire: {exchange.concession_extracted[:160]}"
+        if target_label:
+            explanation += f" — weakened {target_label}."
+        return CrossfireEffect(
+            exchange_id=exchange.id,
+            affected_argument_label=target_label,
+            effect_type=CrossfireEffectType.CONCESSION_WEAKENED_ARGUMENT,
+            severity=_EFFECT_SEVERITY[CrossfireEffectType.CONCESSION_WEAKENED_ARGUMENT],
+            explanation=explanation,
+            ballot_relevance=True,
+        )
+
+    if exchange.contradiction:
+        return CrossfireEffect(
+            exchange_id=exchange.id,
+            affected_argument_label=target_label,
+            effect_type=CrossfireEffectType.CONTRADICTION_WARNING,
+            severity=_EFFECT_SEVERITY[CrossfireEffectType.CONTRADICTION_WARNING],
+            explanation=f"Contradiction flagged in crossfire: {exchange.contradiction[:160]}",
+            ballot_relevance=True,
+        )
+
+    if exchange.evasion_detected:
+        return CrossfireEffect(
+            exchange_id=exchange.id,
+            affected_argument_label=target_label,
+            effect_type=CrossfireEffectType.EVASION_WARNING,
+            severity=_EFFECT_SEVERITY[CrossfireEffectType.EVASION_WARNING],
+            explanation="Answer may not have directly addressed the crossfire question.",
+            ballot_relevance=False,
+        )
+
+    return None
+
+
+def derive_crossfire_effects(exchanges: List[CrossfireExchange]) -> List[CrossfireEffect]:
+    """Derive effects for every exchange in a round/phase, in order, skipping
+    exchanges with no consequence."""
+    effects: List[CrossfireEffect] = []
+    for ex in exchanges:
+        effect = derive_crossfire_effect(ex)
+        if effect:
+            effects.append(effect)
+    return effects

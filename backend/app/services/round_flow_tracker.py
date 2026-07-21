@@ -305,6 +305,53 @@ def _legal_to_introduce(phase: RoundPhaseType, label: str) -> Tuple[bool, Option
     return is_new_argument_legal(phase)
 
 
+def apply_crossfire_concession(
+    round_id: str,
+    phase: RoundPhaseType,
+    argument_label: str,
+    conceding_side: RoundSide,
+    description: str,
+) -> Optional[RoundArgument]:
+    """Apply a crossfire-detected concession to the one argument it targeted.
+
+    Reuses the existing "concede" transition — the same event type speech-flow
+    processing already uses — so this is not a new state machine, just a new
+    caller of the existing one. Only ever touches the single argument matching
+    (label, side); every other argument is untouched. Idempotent: if the
+    argument is already conceded/dropped, apply_event returns the same status
+    and nothing is persisted.
+    """
+    live_args = load_round_arguments(round_id)
+    target = next(
+        (a for a in live_args if a.label == argument_label and a.side == conceding_side),
+        None,
+    )
+    if target is None:
+        return None
+
+    new_status = apply_event(target.status, "concede")
+    if new_status == target.status:
+        return target
+
+    target.status = new_status
+    target.last_updated_phase = phase.value
+    upsert_argument(target)
+
+    event = RoundFlowEvent(
+        id=str(uuid.uuid4()),
+        round_id=round_id,
+        phase=phase,
+        event_type="concede",
+        argument_id=target.id,
+        side=conceding_side,
+        description=description,
+        new_status=new_status,
+        created_at=datetime.utcnow().isoformat(),
+    )
+    append_flow_event(event)
+    return target
+
+
 def reconstruct_flow_status(events: List[RoundFlowEvent]) -> Dict[str, ArgumentFlowStatus]:
     """Replay event log to rebuild current argument statuses deterministically."""
     status_map: Dict[str, ArgumentFlowStatus] = {}
