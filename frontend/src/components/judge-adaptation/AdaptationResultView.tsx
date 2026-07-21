@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Circle, Loader2, OctagonAlert, Quote, TriangleAlert } from "lucide-react";
 import { AdaptationChangesPanel } from "@/components/judge-adaptation/AdaptationChangesPanel";
+import { PracticePanel } from "@/components/judge-adaptation/PracticePanel";
 import {
   normalizeAdaptationResult,
   deriveUnchangedItems,
@@ -206,6 +207,9 @@ export function AdaptationResultView({
         <h4 className="text-eyebrow text-lav-hi">Next practice move</h4>
         <p className="mt-1 text-sm text-ink">{nextAction}</p>
       </div>
+
+      {/* Practice loop — pasted delivery attempt against real success criteria */}
+      <PracticePanel material={material} result={result} judgeType={result.judge_type} />
 
       {/* Notes — only when the adaptation persisted (real id exists) */}
       {onAddNote ? (

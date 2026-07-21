@@ -416,3 +416,24 @@ class CoachAssignWorkoutRequest(BaseModel):
     instructions: Optional[str] = None
     success_criteria: list[str] = Field(default_factory=list)
     time_limit_seconds: int = 90
+
+
+class SaveOwnWorkoutRequest(BaseModel):
+    """
+    Self-service save of a generated workout preview (Phase 7C).
+
+    Deliberately takes a single user_id rather than assigned_by/assigned_to —
+    the endpoint always sets both to that id, so a student can only ever
+    save a workout to themselves.
+    """
+    user_id: str
+    judge_type: JudgeType
+    source_card_id: Optional[str] = None
+    source_card_tag: Optional[str] = None
+    source_card_body_snapshot: Optional[str] = None
+    workout_type: WorkoutJudgeType
+    title: str
+    prompt: str
+    instructions: Optional[str] = None
+    success_criteria: list[str] = Field(default_factory=list)
+    time_limit_seconds: int = 90

@@ -24,6 +24,7 @@ from app.models.judge_adaptation import (
     JudgeWorkoutCreate,
     JudgeWorkoutRow,
     SaveAdaptationNoteRequest,
+    SaveOwnWorkoutRequest,
 )
 from app.services.adaptation_risk_checker import check_all_risks
 from app.services.judge_adaptation_service import generate_adaptation
@@ -362,6 +363,48 @@ def complete_workout(
     return {"ok": True, "note": "Judge readiness updated. Evidence freshness and quality are unchanged."}
 
 
+@router.post("/workouts/save")
+def save_own_workout(body: SaveOwnWorkoutRequest) -> dict:
+    """
+    Student saves a generated workout preview for themselves (Phase 7C).
+
+    Persists into the same judge_workout_assignments table coach assignments
+    use, with assigned_by == assigned_to == the caller — so GET /workouts
+    (already filtered by assigned_to) returns it alongside any coach-assigned
+    workouts with no separate endpoint needed.
+    """
+    payload = {
+        "assigned_by": body.user_id,
+        "assigned_to": body.user_id,
+        "workout_type": body.workout_type,
+        "judge_type": body.judge_type,
+        "title": body.title,
+        "prompt": body.prompt,
+        "instructions": body.instructions,
+        "success_criteria": body.success_criteria,
+        "time_limit_seconds": body.time_limit_seconds,
+        "source_card_id": body.source_card_id,
+        "source_card_tag": body.source_card_tag,
+        "source_card_body_snapshot": body.source_card_body_snapshot,
+        "status": "assigned",
+    }
+    try:
+        sb = get_supabase()
+        result = sb.table("judge_workout_assignments").insert(payload).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Workout save failed")
+        track_product_event(
+            body.user_id,
+            "judge_workouts_self_saved",
+            metadata={"judge_type": body.judge_type},
+        )
+        return {"id": result.data[0]["id"], "status": "assigned"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http(exc) from exc
+
+
 @router.get("/workouts", response_model=list[dict])
 def list_workouts(user_id: str = Query(...)) -> list[dict]:
     """List all judge workout assignments for a student."""
@@ -432,6 +475,43 @@ def list_notes(adaptation_id: str, user_id: str = Query(...)) -> list[Adaptation
 
 # ── History ───────────────────────────────────────────────────────────────────
 
+_HISTORY_SOURCE_COLUMNS: dict[str, tuple[str, str]] = {
+    # source_type -> (row FK column, lookup table)
+    "evidence": ("source_evidence_id", "evidence_cards"),
+    "argument": ("source_argument_id", "arguments"),
+    "frontline": ("source_frontline_id", "frontlines"),
+}
+# Column holding the human label on each lookup table.
+_HISTORY_LABEL_COLUMN: dict[str, str] = {
+    "evidence_cards": "tag",
+    "arguments": "title",
+    "frontlines": "title",
+}
+
+
+def _attach_history_labels(sb, rows: list[dict]) -> None:
+    """
+    Batch-resolve a readable material label per row (bounded to this page —
+    never one query per row). Rows whose source no longer exists, or whose
+    source_type isn't labelable yet, get material_label=None; callers must
+    treat that as truthful "unknown", not an error.
+    """
+    for source_type, (fk_col, table) in _HISTORY_SOURCE_COLUMNS.items():
+        ids = list({r[fk_col] for r in rows if r.get("source_type") == source_type and r.get(fk_col)})
+        if not ids:
+            continue
+        label_col = _HISTORY_LABEL_COLUMN[table]
+        try:
+            res = sb.table(table).select(f"id, {label_col}").in_("id", ids).execute()
+        except Exception as exc:
+            logger.warning("get_history: label lookup failed | table=%s | %s", table, type(exc).__name__)
+            continue
+        labels = {row["id"]: row.get(label_col) for row in (res.data or [])}
+        for r in rows:
+            if r.get("source_type") == source_type and r.get(fk_col):
+                r["material_label"] = labels.get(r[fk_col])
+
+
 @router.get("/history")
 def get_history(
     user_id: str = Query(...),
@@ -439,15 +519,31 @@ def get_history(
     judge_type: Optional[str] = Query(None),
     limit: int = Query(10, le=50),
 ) -> list[dict]:
-    """Retrieve adaptation history for a user."""
+    """
+    Retrieve adaptation history for a user.
+
+    Includes result_json (the full persisted JudgeAdaptationResult, so a
+    history entry can be reopened without regenerating it) and a batch-
+    resolved material_label (the saved card/argument/frontline's real title
+    — never a raw ID). Both are best-effort: a lookup failure never breaks
+    the list, it just leaves material_label null for that row.
+    """
     sb = get_supabase()
     query = sb.table("judge_adaptations").select(
-        "id,judge_type,source_type,risk_count,change_count,created_at"
+        "id,judge_type,source_type,source_evidence_id,source_argument_id,"
+        "source_frontline_id,risk_count,change_count,result_json,created_at"
     ).eq("user_id", user_id)
     if judge_type:
         query = query.eq("judge_type", judge_type)
     result = query.order("created_at", desc=True).limit(limit).execute()
-    return result.data or []
+    rows = result.data or []
+    for r in rows:
+        r.setdefault("material_label", None)
+    try:
+        _attach_history_labels(sb, rows)
+    except Exception as exc:
+        logger.warning("get_history: label attach failed (non-fatal) | %s", type(exc).__name__)
+    return rows
 
 
 # ── Judge readiness score ─────────────────────────────────────────────────────

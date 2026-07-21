@@ -205,6 +205,11 @@ export interface JudgeWorkoutCreate {
 export interface JudgeWorkoutRow extends JudgeWorkoutCreate {
   id: string;
   status: "not_started" | "in_progress" | "completed";
+  /** Present on rows from GET /workouts. assigned_by === assigned_to means
+   *  the student saved it themselves rather than a coach assigning it. */
+  assigned_by?: string;
+  assigned_to?: string;
+  student_notes?: string;
   completed_at?: string;
   created_at: string;
   updated_at: string;

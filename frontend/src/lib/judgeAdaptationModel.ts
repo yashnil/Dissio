@@ -358,12 +358,14 @@ export function deriveIntegrityChecklist(
     detail: "No failing support verdict on this material.",
   });
 
+  const quoteVisible = material.kind === "card" && !!material.exactText;
   items.push({
     label: "Source quote unchanged",
-    status: material.kind === "card" ? "pass" : "verify",
-    detail:
-      material.kind === "card"
-        ? "The exact source text is shown above; the output below is delivery advice, not a rewrite."
+    status: quoteVisible ? "pass" : "verify",
+    detail: quoteVisible
+      ? "The exact source text is shown above; the output below is delivery advice, not a rewrite."
+      : material.kind === "card"
+        ? "This card's exact text isn't loaded here — open it in the Library to confirm it before using this adaptation."
         : "No quoted card text in this material — confirm any evidence you read stays verbatim.",
   });
 
@@ -467,6 +469,10 @@ export interface AdaptationHistoryRow {
   risk_count: number | null;
   change_count: number | null;
   created_at: string;
+  /** Entity refs — used only to fetch/reopen; never rendered directly. */
+  source_evidence_id?: string | null;
+  source_argument_id?: string | null;
+  source_frontline_id?: string | null;
 }
 
 export interface HistoryDisplay {
@@ -524,4 +530,204 @@ export function formatNoteLabel(note: Pick<AdaptationNote, "judge_type" | "creat
   return `${judgeLabel} · ${new Date(note.created_at).toLocaleDateString(undefined, {
     month: "short", day: "numeric",
   })}`;
+}
+
+// ── Phase 7C: practice loop ────────────────────────────────────────────────────
+
+/**
+ * Practice success criteria — derived ONLY from real adaptation-result
+ * fields (emphasis, explicit-keep list, suggested phrasing). 2–4 items;
+ * never padded with invented criteria when the result is sparse.
+ */
+export function derivePracticeSuccessCriteria(result: JudgeAdaptationResult): string[] {
+  const items: string[] = [];
+  for (const e of arr(result.what_to_emphasize)) items.push(`Emphasize: ${e}`);
+  if (arr(result.suggested_phrasing)[0]) {
+    items.push(`Use phrasing like: “${result.suggested_phrasing[0]}”`);
+  }
+  for (const k of arr(result.what_must_remain_explicit)) items.push(`Keep explicit: ${k}`);
+  for (const s of arr(result.what_to_simplify)) items.push(`Simplify: ${s}`);
+  return items.slice(0, 4);
+}
+
+export type PracticePanelState =
+  | { state: "no-result" }
+  | { state: "unsafe-material"; reason: string }
+  | { state: "ready" };
+
+/** The practice panel only ever appears after a REAL adaptation result, and
+ *  never for material that's blocked from adaptation in the first place. */
+export function derivePracticePanelState(
+  material: SelectedMaterial | null,
+  result: JudgeAdaptationResult | null,
+): PracticePanelState {
+  if (!result || !material) return { state: "no-result" };
+  if (!isMaterialSafeToAdapt(material)) {
+    return { state: "unsafe-material", reason: "Fix this evidence in your Library before practicing its delivery." };
+  }
+  return { state: "ready" };
+}
+
+export const PRACTICE_ATTEMPT_MIN_LENGTH = 40;
+
+export interface AttemptValidation {
+  valid: boolean;
+  reason: string | null;
+}
+
+/** Validates a pasted practice-delivery attempt. Trims whitespace; requires
+ *  enough length to be a real practiced attempt, not a placeholder word. */
+export function validatePracticeAttempt(text: string): AttemptValidation {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return { valid: false, reason: "Paste or type how you'd actually say this out loud." };
+  }
+  if (trimmed.length < PRACTICE_ATTEMPT_MIN_LENGTH) {
+    return {
+      valid: false,
+      reason: `Add a bit more — at least ${PRACTICE_ATTEMPT_MIN_LENGTH} characters, so there's a real delivery attempt to review.`,
+    };
+  }
+  return { valid: true, reason: null };
+}
+
+// ── Attempt scoring: NOT YET CONNECTED (documented 7D contract) ──────────────
+
+/**
+ * /judge-adaptation/readiness-score scores the SOURCE MATERIAL's structural
+ * adaptation readiness (risks/changes/extensions on the card or argument
+ * itself) — it takes no attempt text and cannot score what a student typed.
+ * There is no backend endpoint today that scores a practiced delivery
+ * attempt, so this is always "not-connected". Never faked into a score.
+ */
+export type PracticeScoringStatus = "not-connected";
+
+export function practiceScoringStatus(): PracticeScoringStatus {
+  return "not-connected";
+}
+
+export function practiceScoringGapMessage(): string {
+  return "Practice capture is ready. Scoring your delivery attempt needs a backend endpoint that isn't connected yet — see the Phase 7D contract.";
+}
+
+/**
+ * Desired Phase 7D contract (not implemented): POST /judge-adaptation/score-attempt
+ *   request:  { user_id, adaptation_id, attempt_text }
+ *   response: { overall_fit: number, dimensions: { judge_fit, clarity,
+ *               evidence_preservation, weighing_relevance, technical_precision,
+ *               risk_avoidance, delivery_focus }, what_improved: string[],
+ *               what_still_needs_work: string[], integrity_warnings: string[] }
+ */
+export interface PracticeScoreRequest {
+  user_id: string;
+  adaptation_id: string;
+  attempt_text: string;
+}
+
+// ── Attempt / persistence labels ──────────────────────────────────────────────
+
+export type AttemptPersistence = "session-only";
+
+/** No attempts table exists yet — every attempt is session-only. Documented
+ *  truthfully rather than faking a "saved" state. */
+export function attemptPersistence(): AttemptPersistence {
+  return "session-only";
+}
+
+export function describeAttemptPersistence(): string {
+  return "This attempt isn't saved — it will disappear if you leave this page. Attempt history is a Phase 7D contract.";
+}
+
+// ── History reopen ─────────────────────────────────────────────────────────────
+
+export interface AdaptationHistoryRowV2 extends AdaptationHistoryRow {
+  material_label: string | null;
+  result_json: Partial<JudgeAdaptationResult> | null;
+}
+
+/** True when a history row's stored result has enough real fields to reopen
+ *  as a full result view (guards against the DB default empty '{}'). */
+export function canReopenHistoryEntry(row: Pick<AdaptationHistoryRowV2, "result_json">): boolean {
+  const r = row.result_json;
+  return !!r && typeof r.judge_goal === "string" && r.judge_goal.length > 0;
+}
+
+/** Prefer the resolved material title; fall back to the honest kind label —
+ *  never a raw ID either way. */
+export function formatHistoryEntryV2(row: AdaptationHistoryRowV2): HistoryDisplay {
+  const base = formatHistoryEntry(row);
+  return row.material_label ? { ...base, materialKindLabel: row.material_label } : base;
+}
+
+// ── Workout persistence labels ────────────────────────────────────────────────
+
+export type WorkoutPersistence = "preview-only" | "saved-by-you" | "coach-assigned";
+
+/** From real assignment fields only — never inferred/faked. A row with no
+ *  id is an unsaved /workouts/generate preview. */
+export function describeWorkoutPersistence(
+  workout: { id?: string; assigned_by?: string },
+  userId: string | null,
+): WorkoutPersistence {
+  if (!workout.id) return "preview-only";
+  if (userId && workout.assigned_by === userId) return "saved-by-you";
+  return "coach-assigned";
+}
+
+export const WORKOUT_PERSISTENCE_LABELS: Record<WorkoutPersistence, string> = {
+  "preview-only": "Preview — not saved",
+  "saved-by-you": "Saved by you",
+  "coach-assigned": "Assigned by your coach",
+};
+
+// ── History reopen: honest reduced material stub ──────────────────────────────
+
+const SOURCE_TYPE_TO_KIND: Partial<Record<string, AdaptableMaterialKind>> = {
+  evidence: "card",
+  argument: "argument",
+  frontline: "frontline",
+};
+
+/** Only source types the picker itself supports can be reopened. */
+export function sourceTypeToMaterialKind(sourceType: string): AdaptableMaterialKind | null {
+  return SOURCE_TYPE_TO_KIND[sourceType] ?? null;
+}
+
+/**
+ * Reopening from history, we have the result_json and a resolved label, but
+ * NOT the material's live fields (exact card text, verdict, notes — those
+ * are re-fetched fresh from the Library, not reconstructed from an old
+ * adaptation). This stub is honest about that gap via contextText, and
+ * every field either comes from real history data or is null.
+ */
+export function materialStubFromHistory(row: {
+  source_type: string;
+  material_label: string | null;
+  created_at: string;
+  source_evidence_id?: string | null;
+  source_argument_id?: string | null;
+  source_frontline_id?: string | null;
+}): SelectedMaterial | null {
+  const kind = sourceTypeToMaterialKind(row.source_type);
+  if (!kind) return null;
+  const id =
+    kind === "card" ? row.source_evidence_id
+    : kind === "argument" ? row.source_argument_id
+    : row.source_frontline_id;
+  if (!id) return null;
+  return {
+    kind,
+    id,
+    title: row.material_label ?? "Saved material",
+    typeLabel: MATERIAL_KIND_LABELS[kind],
+    side: null,
+    cite: null,
+    exactText: null,
+    userNotes: null,
+    supportVerdict: null,
+    cardStatus: null,
+    contextText: "Reopened from history — open in the Library to see the current exact material.",
+    sortDate: row.created_at,
+    resolutionId: null,
+  };
 }

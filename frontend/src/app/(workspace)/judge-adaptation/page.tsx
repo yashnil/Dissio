@@ -13,8 +13,12 @@ import { AdaptationResultView } from "@/components/judge-adaptation/AdaptationRe
 import {
   adaptationRequestBody,
   deriveAdaptationReadiness,
-  formatHistoryEntry,
-  type AdaptationHistoryRow,
+  formatHistoryEntryV2,
+  canReopenHistoryEntry,
+  materialStubFromHistory,
+  describeWorkoutPersistence,
+  WORKOUT_PERSISTENCE_LABELS,
+  type AdaptationHistoryRowV2,
   type AdaptationNote,
   type SelectedMaterial,
 } from "@/lib/judgeAdaptationModel";
@@ -62,8 +66,10 @@ function JudgeAdaptationContent() {
   const [notes, setNotes] = useState<AdaptationNote[] | null>(null);
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteErr, setNoteErr] = useState<string | null>(null);
-  const [history, setHistory] = useState<AdaptationHistoryRow[] | null>(null);
+  const [history, setHistory] = useState<AdaptationHistoryRowV2[] | null>(null);
   const [previewWorkouts, setPreviewWorkouts] = useState<JudgeWorkoutCreate[]>([]);
+  const [savingWorkoutIndex, setSavingWorkoutIndex] = useState<number | null>(null);
+  const [saveWorkoutErr, setSaveWorkoutErr] = useState<string | null>(null);
 
   // Require authentication — redirect to /login if no session
   useEffect(() => {
@@ -108,12 +114,38 @@ function JudgeAdaptationContent() {
   useEffect(() => {
     if (!userId) return;
     const t = setTimeout(() => {
-      apiFetch<AdaptationHistoryRow[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
+      apiFetch<AdaptationHistoryRowV2[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
         .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
         .catch(() => setHistory([]));
     }, 0);
     return () => clearTimeout(t);
   }, [userId]);
+
+  /**
+   * Reopen a history entry: the stored result_json is a real persisted
+   * result, so it renders exactly as a fresh generation would. The material
+   * shown is an honest reduced stub (real label, no fabricated card text —
+   * see materialStubFromHistory) since history doesn't carry live material
+   * fields. Requires canReopenHistoryEntry(row) to have been checked by the
+   * caller.
+   */
+  function reopenHistoryEntry(row: AdaptationHistoryRowV2) {
+    const stub = materialStubFromHistory(row);
+    if (!stub || !row.result_json) return;
+    setMaterial(stub);
+    setSelectedJudge(row.judge_type as JudgeType);
+    setAdaptResult(row.result_json as JudgeAdaptationResult);
+    setCompareResult(null);
+    setReadinessReport(null);
+    setError(null);
+    setTab("adapt");
+    setNotes(null);
+    if (row.id && userId) {
+      apiFetch<AdaptationNote[]>(`/judge-adaptation/notes/${row.id}?user_id=${userId}`)
+        .then((rows) => setNotes(Array.isArray(rows) ? rows : []))
+        .catch(() => setNotes([]));
+    }
+  }
 
   /** Selecting new material invalidates any previously generated output. */
   function handleSelectMaterial(m: SelectedMaterial) {
@@ -145,7 +177,7 @@ function JudgeAdaptationContent() {
           .then((rows) => setNotes(Array.isArray(rows) ? rows : []))
           .catch(() => setNotes([]));
       }
-      apiFetch<AdaptationHistoryRow[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
+      apiFetch<AdaptationHistoryRowV2[]>(`/judge-adaptation/history?user_id=${userId}&limit=8`)
         .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
         .catch(() => {});
     } catch {
@@ -209,6 +241,31 @@ function JudgeAdaptationContent() {
       );
       setPreviewWorkouts((prev) => [workout, ...prev]);
     } catch {}
+  }
+
+  /** Persist a generated preview for the student themselves — the backend
+   *  endpoint always forces assigned_by === assigned_to === this user. */
+  async function saveWorkout(workout: JudgeWorkoutCreate, index: number) {
+    if (!userId || savingWorkoutIndex !== null) return;
+    setSavingWorkoutIndex(index);
+    try {
+      const saved = await apiFetch<{ id: string; status: string }>("/judge-adaptation/workouts/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...workout, user_id: userId }),
+      });
+      setPreviewWorkouts((prev) => prev.filter((_, i) => i !== index));
+      setWorkouts((prev) => [
+        { ...workout, id: saved.id, assigned_by: userId, assigned_to: userId,
+          status: "not_started" as const,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        ...prev,
+      ]);
+    } catch {
+      setSaveWorkoutErr("Couldn't save that workout. It's still available above as a preview.");
+    } finally {
+      setSavingWorkoutIndex(null);
+    }
   }
 
   async function completeWorkout(id: string, notes: string) {
@@ -352,7 +409,8 @@ function JudgeAdaptationContent() {
             />
           )}
 
-          {/* Recent adaptations — real persisted history (kinds + judges, no titles yet) */}
+          {/* Recent adaptations — real persisted history, reopenable when the
+              stored result has enough data (canReopenHistoryEntry). */}
           {history !== null && history.length > 0 && (
             <section aria-label="Recent adaptations" className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4">
               <h3 className="text-xs font-medium text-[var(--ink-subtle)] uppercase tracking-wide">
@@ -360,23 +418,31 @@ function JudgeAdaptationContent() {
               </h3>
               <ul className="mt-2 space-y-1.5">
                 {history.map((row) => {
-                  const h = formatHistoryEntry(row);
+                  const h = formatHistoryEntryV2(row);
+                  const reopenable = canReopenHistoryEntry(row) && !!materialStubFromHistory(row);
                   return (
-                    <li key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[var(--ink-subtle)]">
+                    <li key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--ink-subtle)]">
                       <span className="font-medium text-[var(--ink-primary)]">{h.materialKindLabel}</span>
                       <span>· {h.judgeLabel}</span>
                       <span>· {h.summary}</span>
                       <span className="text-[var(--ink-faint,#999)]">
                         · {new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                       </span>
+                      {reopenable ? (
+                        <button
+                          type="button"
+                          onClick={() => reopenHistoryEntry(row)}
+                          className="ml-auto rounded-md border border-[var(--surface-3)] px-2 py-0.5 text-[11px] font-medium text-[var(--lavender-8)] hover:bg-[var(--surface-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lavender-8)]/50"
+                        >
+                          Reopen
+                        </button>
+                      ) : (
+                        <span className="ml-auto text-[10px] text-[var(--ink-faint,#999)]">Not reopenable</span>
+                      )}
                     </li>
                   );
                 })}
               </ul>
-              <p className="mt-2 text-[10px] text-[var(--ink-subtle)]">
-                History shows the material type and judge — reopening past adaptations is coming
-                once results can be reloaded by entry.
-              </p>
             </section>
           )}
         </div>
@@ -423,14 +489,27 @@ function JudgeAdaptationContent() {
             Generate Workout
           </button>
 
+          {saveWorkoutErr && (
+            <p role="alert" className="text-xs text-red-700">{saveWorkoutErr}</p>
+          )}
+
           {previewWorkouts.length > 0 && (
             <section aria-label="Generated workout previews" className="space-y-2">
               <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ink-subtle)]">
-                Generated preview — practice now; not saved to a plan
+                {WORKOUT_PERSISTENCE_LABELS["preview-only"]} — save it to keep it after you leave
               </p>
               {previewWorkouts.map((w, i) => (
                 <div key={`${w.title}-${i}`} className="rounded-lg border border-[var(--surface-3)] bg-[var(--surface-2)] p-4 space-y-1.5">
-                  <p className="text-sm font-semibold text-[var(--ink-primary)]">{w.title}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold text-[var(--ink-primary)]">{w.title}</p>
+                    <button
+                      onClick={() => saveWorkout(w, i)}
+                      disabled={savingWorkoutIndex !== null}
+                      className="shrink-0 rounded-md border border-[var(--surface-3)] px-2 py-1 text-[11px] font-medium text-[var(--lavender-8)] hover:bg-[var(--surface-1)] disabled:opacity-50"
+                    >
+                      {savingWorkoutIndex === i ? "Saving…" : "Save for me"}
+                    </button>
+                  </div>
                   {w.description && <p className="text-xs text-[var(--ink-subtle)]">{w.description}</p>}
                   <p className="text-xs text-[var(--ink-primary)]">{w.prompt}</p>
                   {w.instructions && <p className="text-[11px] text-[var(--ink-subtle)]">{w.instructions}</p>}
@@ -442,7 +521,7 @@ function JudgeAdaptationContent() {
                     </ul>
                   )}
                   <p className="text-[10px] text-[var(--ink-subtle)]">
-                    ~{Math.round(w.time_limit_seconds / 60)} min · preview only
+                    ~{Math.round(w.time_limit_seconds / 60)} min · {WORKOUT_PERSISTENCE_LABELS["preview-only"].toLowerCase()}
                   </p>
                 </div>
               ))}
@@ -459,7 +538,12 @@ function JudgeAdaptationContent() {
                 Assigned workouts
               </p>
               {workouts.map((w) => (
-                <JudgeWorkoutCard key={w.id} workout={w} onComplete={completeWorkout} />
+                <div key={w.id} className="space-y-1">
+                  <p className="text-[10px] font-medium text-[var(--ink-subtle)]">
+                    {WORKOUT_PERSISTENCE_LABELS[describeWorkoutPersistence(w, userId)]}
+                  </p>
+                  <JudgeWorkoutCard workout={w} onComplete={completeWorkout} />
+                </div>
               ))}
             </section>
           ) : null}

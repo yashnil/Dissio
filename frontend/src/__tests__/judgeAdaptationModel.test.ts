@@ -458,3 +458,196 @@ describe("history + note labels", () => {
       .toContain("Coach Judge");
   });
 });
+
+// ── Phase 7C: practice loop, scoring gap, persistence labels, history reopen ─
+
+import {
+  derivePracticeSuccessCriteria,
+  derivePracticePanelState,
+  validatePracticeAttempt,
+  PRACTICE_ATTEMPT_MIN_LENGTH,
+  practiceScoringStatus,
+  practiceScoringGapMessage,
+  attemptPersistence,
+  describeAttemptPersistence,
+  canReopenHistoryEntry,
+  formatHistoryEntryV2,
+  sourceTypeToMaterialKind,
+  materialStubFromHistory,
+  describeWorkoutPersistence,
+  WORKOUT_PERSISTENCE_LABELS,
+  type AdaptationHistoryRowV2,
+} from "@/lib/judgeAdaptationModel";
+
+describe("derivePracticeSuccessCriteria — real fields only, 2–4 items", () => {
+  it("builds from emphasis, phrasing, explicit-keep, and simplify fields", () => {
+    const items = derivePracticeSuccessCriteria(adaptation());
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items.length).toBeLessThanOrEqual(4);
+    expect(items.some((i) => i.startsWith("Emphasize:"))).toBe(true);
+    expect(items.some((i) => i.includes("One in five tons"))).toBe(true);
+  });
+
+  it("a sparse result yields fewer criteria — never padded with fake ones", () => {
+    const items = derivePracticeSuccessCriteria(adaptation({
+      what_to_emphasize: [], what_to_simplify: [], what_must_remain_explicit: [],
+      suggested_phrasing: [],
+    }));
+    expect(items).toEqual([]);
+  });
+
+  it("caps at 4 even when the result has more real items", () => {
+    const items = derivePracticeSuccessCriteria(adaptation({
+      what_to_emphasize: ["a", "b", "c"], what_to_simplify: ["d", "e"],
+      what_must_remain_explicit: ["f"], suggested_phrasing: ["g"],
+    }));
+    expect(items).toHaveLength(4);
+  });
+});
+
+describe("derivePracticePanelState", () => {
+  it("no result yet → no-result state (panel doesn't render)", () => {
+    expect(derivePracticePanelState(null, null).state).toBe("no-result");
+    expect(derivePracticePanelState(normalizeCardMaterial(cardRow()), null).state).toBe("no-result");
+  });
+
+  it("unsafe material blocks practice even with a result present", () => {
+    const bad = normalizeCardMaterial(cardRow({ support_verdict: "contradicted" }));
+    const s = derivePracticePanelState(bad, adaptation());
+    expect(s.state).toBe("unsafe-material");
+  });
+
+  it("safe material + real result → ready", () => {
+    const s = derivePracticePanelState(normalizeCardMaterial(cardRow()), adaptation());
+    expect(s.state).toBe("ready");
+  });
+});
+
+describe("validatePracticeAttempt", () => {
+  it("rejects empty and too-short attempts with a helpful reason", () => {
+    expect(validatePracticeAttempt("").valid).toBe(false);
+    expect(validatePracticeAttempt("too short").valid).toBe(false);
+    expect(validatePracticeAttempt("too short").reason).toContain(String(PRACTICE_ATTEMPT_MIN_LENGTH));
+  });
+
+  it("accepts an attempt at or above the minimum length", () => {
+    const long = "One in five tons of carbon — gone. That's what this policy actually does for real families.";
+    expect(long.length).toBeGreaterThanOrEqual(PRACTICE_ATTEMPT_MIN_LENGTH);
+    expect(validatePracticeAttempt(long)).toEqual({ valid: true, reason: null });
+  });
+
+  it("trims whitespace before validating", () => {
+    expect(validatePracticeAttempt("   \n\t  ").valid).toBe(false);
+  });
+});
+
+describe("practice scoring — truthfully not connected", () => {
+  it("status is always not-connected (no attempt-scoring backend exists)", () => {
+    expect(practiceScoringStatus()).toBe("not-connected");
+  });
+
+  it("the gap message explains what's ready vs not connected, no fake score language", () => {
+    const msg = practiceScoringGapMessage();
+    expect(msg).toContain("ready");
+    expect(msg).toContain("isn't connected");
+    expect(msg).not.toMatch(/score:\s*\d/i);
+  });
+});
+
+describe("attempt persistence — session-only until 7D", () => {
+  it("is always session-only (no attempts table exists)", () => {
+    expect(attemptPersistence()).toBe("session-only");
+  });
+
+  it("describes the gap honestly, not as a silent failure", () => {
+    expect(describeAttemptPersistence()).toContain("isn't saved");
+  });
+});
+
+describe("evidence integrity checklist — reopened material without exact text", () => {
+  it("does not falsely claim the quote is shown when exactText is missing", () => {
+    const reopened = materialStubFromHistory({
+      source_type: "evidence", material_label: "Carbon pricing cuts emissions",
+      created_at: "2026-07-10T00:00:00Z", source_evidence_id: "card-1",
+    })!;
+    const items = deriveIntegrityChecklist(reopened, null);
+    const quote = items.find((i) => i.label === "Source quote unchanged")!;
+    expect(quote.status).toBe("verify");
+    expect(quote.detail).not.toContain("shown above");
+  });
+
+  it("a live card with real exact text still passes truthfully", () => {
+    const live = normalizeCardMaterial(cardRow());
+    const items = deriveIntegrityChecklist(live, null);
+    expect(items.find((i) => i.label === "Source quote unchanged")!.status).toBe("pass");
+  });
+});
+
+describe("history reopen contract", () => {
+  function historyRow(over: Partial<AdaptationHistoryRowV2> = {}): AdaptationHistoryRowV2 {
+    return {
+      id: "adapt-uuid-1", judge_type: "lay", source_type: "evidence",
+      risk_count: 1, change_count: 2, created_at: "2026-07-20T00:00:00Z",
+      material_label: "Carbon pricing cuts emissions",
+      result_json: { judge_goal: "Make it a story" },
+      source_evidence_id: "card-1",
+      ...over,
+    } as AdaptationHistoryRowV2;
+  }
+
+  it("canReopenHistoryEntry requires a real stored judge_goal, not the DB default {}", () => {
+    expect(canReopenHistoryEntry(historyRow())).toBe(true);
+    expect(canReopenHistoryEntry(historyRow({ result_json: {} }))).toBe(false);
+    expect(canReopenHistoryEntry(historyRow({ result_json: null }))).toBe(false);
+  });
+
+  it("sourceTypeToMaterialKind only maps the three picker-supported kinds", () => {
+    expect(sourceTypeToMaterialKind("evidence")).toBe("card");
+    expect(sourceTypeToMaterialKind("argument")).toBe("argument");
+    expect(sourceTypeToMaterialKind("frontline")).toBe("frontline");
+    expect(sourceTypeToMaterialKind("summary")).toBeNull();
+    expect(sourceTypeToMaterialKind("transcript")).toBeNull();
+  });
+
+  it("formatHistoryEntryV2 prefers the resolved material label — never an ID", () => {
+    const h = formatHistoryEntryV2(historyRow());
+    expect(h.materialKindLabel).toBe("Carbon pricing cuts emissions");
+    expect(h.materialKindLabel).not.toContain("uuid");
+  });
+
+  it("falls back to the kind label when no material_label resolved", () => {
+    const h = formatHistoryEntryV2(historyRow({ material_label: null }));
+    expect(h.materialKindLabel).toBe("Evidence card");
+  });
+
+  it("materialStubFromHistory builds an honest stub — real label, no fabricated exact text", () => {
+    const stub = materialStubFromHistory(historyRow())!;
+    expect(stub.kind).toBe("card");
+    expect(stub.title).toBe("Carbon pricing cuts emissions");
+    expect(stub.exactText).toBeNull();
+    expect(stub.contextText).toContain("Reopened from history");
+  });
+
+  it("returns null when the source type isn't reopenable or the id is missing", () => {
+    expect(materialStubFromHistory(historyRow({ source_type: "summary" }))).toBeNull();
+    expect(materialStubFromHistory(historyRow({ source_evidence_id: undefined }))).toBeNull();
+  });
+});
+
+describe("workout persistence labels", () => {
+  it("a generated preview (no id) is always preview-only", () => {
+    expect(describeWorkoutPersistence({}, "u1")).toBe("preview-only");
+  });
+
+  it("assigned_by matching the current user means the student saved it", () => {
+    expect(describeWorkoutPersistence({ id: "wo-1", assigned_by: "u1" }, "u1")).toBe("saved-by-you");
+  });
+
+  it("assigned_by differing from the current user means a coach assigned it", () => {
+    expect(describeWorkoutPersistence({ id: "wo-1", assigned_by: "coach-1" }, "u1")).toBe("coach-assigned");
+  });
+
+  it("every persistence state has a human label", () => {
+    expect(Object.values(WORKOUT_PERSISTENCE_LABELS).every((l) => l.length > 0)).toBe(true);
+  });
+});

@@ -999,3 +999,197 @@ def test_judge_adaptation_components_exist():
     ]
     for fname in required:
         assert (base / fname).exists(), f"Missing: {fname}"
+
+
+# ── Phase 7C: history material labels + result_json, self-service workout save ─
+
+from fastapi.testclient import TestClient
+
+
+def _client():
+    from app.main import app
+    return TestClient(app)
+
+
+def _history_table_fn(history_rows, evidence_rows=None, argument_rows=None, frontline_rows=None):
+    """table() factory: judge_adaptations select + batched label lookups."""
+    lookups = {
+        "evidence_cards": evidence_rows or [],
+        "arguments": argument_rows or [],
+        "frontlines": frontline_rows or [],
+    }
+
+    def table_fn(name):
+        t = MagicMock()
+        for m in ("select", "eq", "in_", "order", "limit"):
+            getattr(t, m).return_value = t
+
+        def execute_fn(_name=name):
+            r = MagicMock()
+            r.data = list(history_rows) if _name == "judge_adaptations" else lookups.get(_name, [])
+            return r
+
+        t.execute = execute_fn
+        return t
+
+    return table_fn
+
+
+class TestHistoryEndpoint:
+    def test_history_includes_result_json_and_material_label_for_evidence(self):
+        rows = [{
+            "id": "adapt-1", "judge_type": "lay", "source_type": "evidence",
+            "source_evidence_id": "card-1", "source_argument_id": None, "source_frontline_id": None,
+            "risk_count": 1, "change_count": 2,
+            "result_json": {"judge_goal": "Make it a story"},
+            "created_at": "2026-07-20T00:00:00Z",
+        }]
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _history_table_fn(
+                rows, evidence_rows=[{"id": "card-1", "tag": "Carbon pricing cuts emissions"}],
+            )
+            r = _client().get("/judge-adaptation/history?user_id=u1")
+        assert r.status_code == 200
+        body = r.json()[0]
+        assert body["material_label"] == "Carbon pricing cuts emissions"
+        assert body["result_json"]["judge_goal"] == "Make it a story"
+
+    def test_history_resolves_argument_and_frontline_labels(self):
+        rows = [
+            {"id": "a1", "judge_type": "flow", "source_type": "argument",
+             "source_evidence_id": None, "source_argument_id": "arg-1", "source_frontline_id": None,
+             "risk_count": 0, "change_count": 1, "result_json": {}, "created_at": "2026-07-20T00:00:00Z"},
+            {"id": "a2", "judge_type": "technical", "source_type": "frontline",
+             "source_evidence_id": None, "source_argument_id": None, "source_frontline_id": "fl-1",
+             "risk_count": 0, "change_count": 0, "result_json": {}, "created_at": "2026-07-19T00:00:00Z"},
+        ]
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _history_table_fn(
+                rows,
+                argument_rows=[{"id": "arg-1", "title": "C1: Emissions"}],
+                frontline_rows=[{"id": "fl-1", "title": "AT: Jobs turn"}],
+            )
+            r = _client().get("/judge-adaptation/history?user_id=u1")
+        body = r.json()
+        assert body[0]["material_label"] == "C1: Emissions"
+        assert body[1]["material_label"] == "AT: Jobs turn"
+
+    def test_history_missing_source_row_gives_null_label_not_error(self):
+        rows = [{
+            "id": "a1", "judge_type": "lay", "source_type": "evidence",
+            "source_evidence_id": "deleted-card", "source_argument_id": None, "source_frontline_id": None,
+            "risk_count": 0, "change_count": 0, "result_json": {}, "created_at": "2026-07-20T00:00:00Z",
+        }]
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _history_table_fn(rows, evidence_rows=[])
+            r = _client().get("/judge-adaptation/history?user_id=u1")
+        assert r.status_code == 200
+        assert r.json()[0]["material_label"] is None
+
+    def test_history_label_lookup_failure_is_non_fatal(self):
+        rows = [{
+            "id": "a1", "judge_type": "lay", "source_type": "evidence",
+            "source_evidence_id": "card-1", "source_argument_id": None, "source_frontline_id": None,
+            "risk_count": 0, "change_count": 0, "result_json": {}, "created_at": "2026-07-20T00:00:00Z",
+        }]
+
+        def table_fn(name):
+            if name == "evidence_cards":
+                raise Exception("db unavailable")
+            t = MagicMock()
+            for m in ("select", "eq", "order", "limit"):
+                getattr(t, m).return_value = t
+            t.execute.return_value = MagicMock(data=rows)
+            return t
+
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = table_fn
+            r = _client().get("/judge-adaptation/history?user_id=u1")
+        assert r.status_code == 200
+        assert r.json()[0]["material_label"] is None
+
+    def test_history_empty_list_returns_empty(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _history_table_fn([])
+            r = _client().get("/judge-adaptation/history?user_id=u1")
+        assert r.status_code == 200
+        assert r.json() == []
+
+
+class TestSaveOwnWorkoutEndpoint:
+    def test_save_own_workout_forces_self_assignment(self):
+        captured = {}
+
+        def table_fn(name):
+            t = MagicMock()
+
+            def insert_fn(payload):
+                captured.update(payload)
+                return t
+
+            t.insert = insert_fn
+            t.execute.return_value = MagicMock(data=[{"id": "wo-1"}])
+            return t
+
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = table_fn
+            r = _client().post("/judge-adaptation/workouts/save", json={
+                "user_id": "student-1",
+                "judge_type": "lay",
+                "workout_type": "lay_explanation",
+                "title": "Explain it plainly",
+                "prompt": "Say the claim without jargon.",
+                "time_limit_seconds": 60,
+            })
+        assert r.status_code == 200
+        assert r.json() == {"id": "wo-1", "status": "assigned"}
+        # A student can only ever save a workout to themselves.
+        assert captured["assigned_by"] == "student-1"
+        assert captured["assigned_to"] == "student-1"
+        assert captured["status"] == "assigned"
+
+    def test_save_own_workout_request_has_no_assigned_to_field(self):
+        """The request model must not accept an arbitrary assigned_to — the
+        single user_id field is what prevents assigning to someone else."""
+        from app.models.judge_adaptation import SaveOwnWorkoutRequest
+        assert "assigned_to" not in SaveOwnWorkoutRequest.model_fields
+        assert "assigned_by" not in SaveOwnWorkoutRequest.model_fields
+
+    def test_save_own_workout_failure_returns_500(self):
+        def table_fn(name):
+            t = MagicMock()
+            t.insert.return_value = t
+            t.execute.return_value = MagicMock(data=[])
+            return t
+
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = table_fn
+            r = _client().post("/judge-adaptation/workouts/save", json={
+                "user_id": "student-1", "judge_type": "lay", "workout_type": "lay_explanation",
+                "title": "t", "prompt": "p",
+            })
+        assert r.status_code == 500
+
+    def test_saved_workout_then_listed_via_get_workouts(self):
+        """GET /workouts already filters by assigned_to — confirms the saved
+        row surfaces through the existing list endpoint with no new route."""
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            t = MagicMock()
+            for m in ("select", "eq", "order"):
+                getattr(t, m).return_value = t
+            t.execute.return_value = MagicMock(data=[{
+                "id": "wo-1", "assigned_by": "student-1", "assigned_to": "student-1",
+                "judge_type": "lay", "workout_type": "lay_explanation", "title": "Explain it plainly",
+                "prompt": "p", "success_criteria": [], "time_limit_seconds": 60,
+                "status": "assigned", "created_at": "2026-07-20T00:00:00Z", "updated_at": "2026-07-20T00:00:00Z",
+            }])
+            mock_sb.return_value.table.return_value = t
+            r = _client().get("/judge-adaptation/workouts?user_id=student-1")
+        assert r.status_code == 200
+        assert r.json()[0]["assigned_by"] == r.json()[0]["assigned_to"] == "student-1"
+
+
+def test_api_has_workouts_save_endpoint():
+    from app.api.judge_adaptation import router
+    paths = [r.path for r in router.routes]
+    assert any("workouts/save" in p for p in paths)
