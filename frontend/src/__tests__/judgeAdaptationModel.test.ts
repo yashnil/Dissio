@@ -791,3 +791,202 @@ describe("workout persistence labels", () => {
     expect(Object.values(WORKOUT_PERSISTENCE_LABELS).every((l) => l.length > 0)).toBe(true);
   });
 });
+
+// ── Phase 7E: attempt trend aggregation + within-adaptation improvement ──────
+
+import {
+  normalizeAttemptTrends,
+  emptyAttemptTrendsView,
+  trendEmptyStateMessage,
+  formatScoreDelta,
+  scoreDeltaTone,
+  hasJudgeTypeComparison,
+  strongestJudgeType,
+  weakestJudgeType,
+  weakestRecurringDimension,
+  deriveWithinAdaptationImprovement,
+  type AttemptTrendsResponse,
+  type JudgeTypeTrend,
+} from "@/lib/judgeAdaptationModel";
+
+function rawTrends(over: Partial<AttemptTrendsResponse> = {}): AttemptTrendsResponse {
+  return {
+    total_attempts: 3,
+    latest_attempt_at: "2026-07-21T00:00:00Z",
+    latest_overall_fit: 80,
+    best_overall_fit: 80,
+    average_overall_fit: 65,
+    first_overall_fit: 50,
+    improvement_from_first: 30,
+    attempts_by_judge_type: [
+      { judge_type: "lay", count: 2, latest_score: 80, best_score: 80, average_score: 65,
+        improvement_from_first: 30, latest_attempt_at: "2026-07-21T00:00:00Z" },
+      { judge_type: "flow", count: 1, latest_score: 55, best_score: 55, average_score: 55,
+        improvement_from_first: 0, latest_attempt_at: "2026-07-19T00:00:00Z" },
+    ],
+    weakest_dimensions: [
+      { dimension: "clarity", average_score: 40, count: 2, label: "Clarity" },
+    ],
+    strongest_dimensions: [
+      { dimension: "judge_fit", average_score: 90, count: 2, label: "Judge fit" },
+    ],
+    recent_attempts: [
+      { judge_type: "lay", overall_fit: 80, created_at: "2026-07-21T00:00:00Z", weakest_dimension: "Clarity" },
+    ],
+    ...over,
+  };
+}
+
+describe("normalizeAttemptTrends", () => {
+  it("mirrors real backend fields into the view", () => {
+    const v = normalizeAttemptTrends(rawTrends());
+    expect(v.totalAttempts).toBe(3);
+    expect(v.latestOverallFit).toBe(80);
+    expect(v.improvementFromFirst).toBe(30);
+    expect(v.hasTrendData).toBe(true);
+    expect(v.attemptsByJudgeType).toHaveLength(2);
+    expect(v.weakestDimensions).toHaveLength(1);
+  });
+
+  it("missing/malformed fields produce empty states, never fake progress", () => {
+    const v = normalizeAttemptTrends({});
+    expect(v.totalAttempts).toBe(0);
+    expect(v.latestOverallFit).toBeNull();
+    expect(v.improvementFromFirst).toBeNull();
+    expect(v.hasTrendData).toBe(false);
+    expect(v.attemptsByJudgeType).toEqual([]);
+    expect(v.weakestDimensions).toEqual([]);
+    expect(v.recentAttempts).toEqual([]);
+  });
+
+  it("a single attempt never claims trend data", () => {
+    const v = normalizeAttemptTrends(rawTrends({ total_attempts: 1, improvement_from_first: 0 }));
+    expect(v.hasTrendData).toBe(false);
+  });
+
+  it("emptyAttemptTrendsView matches normalizing an empty object", () => {
+    expect(emptyAttemptTrendsView()).toEqual(normalizeAttemptTrends({}));
+  });
+
+  it("empty-state message is truthful and present", () => {
+    expect(trendEmptyStateMessage()).toBe("No scored practice attempts yet.");
+  });
+});
+
+describe("formatScoreDelta / scoreDeltaTone", () => {
+  it("formats sign explicitly — never color-only", () => {
+    expect(formatScoreDelta(30)).toBe("+30");
+    expect(formatScoreDelta(-15)).toBe("-15");
+    expect(formatScoreDelta(0)).toBe("±0");
+    expect(formatScoreDelta(null)).toBe("—");
+  });
+
+  it("tone follows sign; null/zero are neutral", () => {
+    expect(scoreDeltaTone(30)).toBe("green");
+    expect(scoreDeltaTone(-15)).toBe("red");
+    expect(scoreDeltaTone(0)).toBe("neutral");
+    expect(scoreDeltaTone(null)).toBe("neutral");
+  });
+});
+
+describe("strongest/weakest judge type derivation", () => {
+  it("requires 2+ judge types before claiming a comparison", () => {
+    const v = normalizeAttemptTrends(rawTrends());
+    expect(hasJudgeTypeComparison(v)).toBe(true);
+    expect(hasJudgeTypeComparison({ attemptsByJudgeType: [v.attemptsByJudgeType[0]] })).toBe(false);
+  });
+
+  it("picks the real highest/lowest average_score entries", () => {
+    const v = normalizeAttemptTrends(rawTrends());
+    expect(strongestJudgeType(v)?.judge_type).toBe("lay");
+    expect(weakestJudgeType(v)?.judge_type).toBe("flow");
+  });
+
+  it("returns null when no judge type has a real average score", () => {
+    const noScores: JudgeTypeTrend[] = [
+      { judge_type: "lay", count: 1, latest_score: null, best_score: null, average_score: null, improvement_from_first: null, latest_attempt_at: null },
+    ];
+    expect(strongestJudgeType({ attemptsByJudgeType: noScores })).toBeNull();
+    expect(weakestJudgeType({ attemptsByJudgeType: noScores })).toBeNull();
+  });
+});
+
+describe("weakestRecurringDimension", () => {
+  it("surfaces the backend's real weakest dimension", () => {
+    const v = normalizeAttemptTrends(rawTrends());
+    expect(weakestRecurringDimension(v)?.dimension).toBe("clarity");
+  });
+
+  it("returns null when there's no dimension data yet", () => {
+    expect(weakestRecurringDimension({ weakestDimensions: [] })).toBeNull();
+  });
+});
+
+describe("deriveWithinAdaptationImprovement", () => {
+  function attemptRow(over: Partial<AttemptRow> = {}): AttemptRow {
+    return {
+      id: "attempt-uuid-1", adaptation_id: "adapt-uuid-1", user_id: "u1",
+      judge_type: "lay", source_type: "evidence", source_id: "card-1",
+      attempt_text: "some real delivery attempt text goes here for testing purposes",
+      score_json: { dimensions: [{ dimension: "clarity", score: 40, explanation: "short" }] },
+      overall_fit: 60, created_at: "2026-07-21T00:00:00Z",
+      ...over,
+    };
+  }
+
+  it("zero attempts: no trend, all null", () => {
+    const imp = deriveWithinAdaptationImprovement([]);
+    expect(imp.attemptCount).toBe(0);
+    expect(imp.hasTrendData).toBe(false);
+    expect(imp.delta).toBeNull();
+  });
+
+  it("one attempt: shows the real score but explicitly no trend", () => {
+    const imp = deriveWithinAdaptationImprovement([attemptRow({ overall_fit: 55 })]);
+    expect(imp.attemptCount).toBe(1);
+    expect(imp.hasTrendData).toBe(false);
+    expect(imp.firstScore).toBe(55);
+    expect(imp.latestScore).toBe(55);
+    // first === latest with one attempt, so delta is a real 0 — not a
+    // fabricated null. UI must gate "improving" copy on hasTrendData, not
+    // on this being non-zero (mirrors the backend's same contract).
+    expect(imp.delta).toBe(0);
+  });
+
+  it("two attempts: a real first-to-latest delta", () => {
+    const older = attemptRow({ id: "a1", overall_fit: 40, created_at: "2026-07-19T00:00:00Z" });
+    const newer = attemptRow({ id: "a2", overall_fit: 75, created_at: "2026-07-21T00:00:00Z" });
+    const imp = deriveWithinAdaptationImprovement([older, newer]);
+    expect(imp.hasTrendData).toBe(true);
+    expect(imp.firstScore).toBe(40);
+    expect(imp.latestScore).toBe(75);
+    expect(imp.delta).toBe(35);
+    expect(imp.bestScore).toBe(75);
+  });
+
+  it("works regardless of input order (sorts internally)", () => {
+    const older = attemptRow({ id: "a1", overall_fit: 40, created_at: "2026-07-19T00:00:00Z" });
+    const newer = attemptRow({ id: "a2", overall_fit: 75, created_at: "2026-07-21T00:00:00Z" });
+    const imp = deriveWithinAdaptationImprovement([newer, older]);
+    expect(imp.firstScore).toBe(40);
+    expect(imp.latestScore).toBe(75);
+  });
+
+  it("weakest current dimension comes from the latest attempt's own score", () => {
+    const older = attemptRow({
+      id: "a1", created_at: "2026-07-19T00:00:00Z",
+      score_json: { dimensions: [{ dimension: "judge_fit", score: 10, explanation: "bad" }] },
+    });
+    const newer = attemptRow({
+      id: "a2", created_at: "2026-07-21T00:00:00Z",
+      score_json: { dimensions: [{ dimension: "clarity", score: 30, explanation: "still short" }] },
+    });
+    const imp = deriveWithinAdaptationImprovement([older, newer]);
+    expect(imp.weakestCurrentDimension).toContain("Clarity");
+  });
+
+  it("no raw IDs appear in the derived view's rendered-facing fields", () => {
+    const imp = deriveWithinAdaptationImprovement([attemptRow(), attemptRow({ id: "a2" })]);
+    expect(imp.weakestCurrentDimension ?? "").not.toContain("uuid");
+  });
+});

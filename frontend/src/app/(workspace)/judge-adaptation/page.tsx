@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
 import { MaterialPicker, SelectedMaterialPreview } from "@/components/judge-adaptation/MaterialPicker";
 import { AdaptationResultView } from "@/components/judge-adaptation/AdaptationResultView";
+import { AdaptationProgressSummary } from "@/components/judge-adaptation/AdaptationProgressSummary";
 import {
   adaptationRequestBody,
   deriveAdaptationReadiness,
@@ -18,8 +19,11 @@ import {
   materialStubFromHistory,
   describeWorkoutPersistence,
   WORKOUT_PERSISTENCE_LABELS,
+  normalizeAttemptTrends,
   type AdaptationHistoryRowV2,
   type AdaptationNote,
+  type AttemptTrendsResponse,
+  type AttemptTrendsView,
   type SelectedMaterial,
 } from "@/lib/judgeAdaptationModel";
 import type {
@@ -71,6 +75,10 @@ function JudgeAdaptationContent() {
   const [savingWorkoutIndex, setSavingWorkoutIndex] = useState<number | null>(null);
   const [saveWorkoutErr, setSaveWorkoutErr] = useState<string | null>(null);
 
+  const [trends, setTrends] = useState<AttemptTrendsView | null>(null);
+  const [trendsLoading, setTrendsLoading] = useState(true);
+  const [trendsErr, setTrendsErr] = useState<string | null>(null);
+
   // Require authentication — redirect to /login if no session
   useEffect(() => {
     createClient()
@@ -96,6 +104,27 @@ function JudgeAdaptationContent() {
         .then(setProfiles)
         .catch(() => {});
     }, 0);
+    return () => clearTimeout(t);
+  }, [userId]);
+
+  /**
+   * Entry-level "Adaptation progress" summary — pure aggregation over
+   * already-scored attempts (Phase 7E). A load failure never blocks the
+   * material picker or anything else on the page; the section just omits
+   * itself. Re-callable so a fresh score can refresh the numbers.
+   */
+  function loadTrends(uid: string) {
+    setTrendsErr(null);
+    apiFetch<AttemptTrendsResponse>(`/judge-adaptation/attempt-trends?user_id=${uid}`)
+      .then((res) => setTrends(normalizeAttemptTrends(res)))
+      .catch(() => setTrendsErr("Couldn't load your practice history."))
+      .finally(() => setTrendsLoading(false));
+  }
+
+  useEffect(() => {
+    if (!userId) return;
+    // trendsLoading already starts true — nothing to set synchronously here.
+    const t = setTimeout(() => loadTrends(userId), 0);
     return () => clearTimeout(t);
   }, [userId]);
 
@@ -326,6 +355,8 @@ function JudgeAdaptationContent() {
         </p>
       </div>
 
+      <AdaptationProgressSummary trends={trends} loading={trendsLoading} error={trendsErr} />
+
       {/* Material selection — real saved materials, picked by title */}
       <section
         aria-label="Material to adapt"
@@ -407,6 +438,7 @@ function JudgeAdaptationContent() {
               noteSaving={noteSaving}
               noteError={noteErr}
               userId={userId}
+              onAttemptScored={() => userId && loadTrends(userId)}
             />
           )}
 

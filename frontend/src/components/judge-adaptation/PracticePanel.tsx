@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Mic, TriangleAlert } from "lucide-react";
+import { Check, Loader2, Mic, TrendingUp, TriangleAlert } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import {
   derivePracticeSuccessCriteria,
@@ -30,6 +30,9 @@ import {
   describeAttemptSaveState,
   formatAttemptHistoryEntry,
   sortAttemptsByRecency,
+  deriveWithinAdaptationImprovement,
+  formatScoreDelta,
+  scoreDeltaTone,
   PRACTICE_ATTEMPT_MIN_LENGTH,
   type AttemptFeedbackView,
   type AttemptRow,
@@ -131,6 +134,64 @@ function AttemptFeedbackCard({ feedback }: { feedback: AttemptFeedbackView }) {
   );
 }
 
+/**
+ * Compact within-adaptation improvement view (Phase 7E). Never claims a
+ * trend from a single attempt — with 0 attempts it renders nothing (the
+ * history section below already covers that empty state); with exactly 1
+ * it shows the one real score plus honest "complete another attempt" copy;
+ * only 2+ attempts show a real first→latest delta.
+ */
+function ImprovementSummary({ history }: { history: AttemptRow[] }) {
+  if (history.length === 0) return null;
+  const imp = deriveWithinAdaptationImprovement(history);
+  const deltaTone = scoreDeltaTone(imp.delta);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-surface-2/40 px-3.5 py-3">
+      <div className="flex items-center gap-1.5">
+        <TrendingUp size={13} className="text-lav" aria-hidden="true" />
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+          Improvement on this adaptation
+        </p>
+      </div>
+
+      {!imp.hasTrendData ? (
+        <p className="text-xs leading-relaxed text-ink-subtle">
+          {imp.latestScore !== null && `Your only attempt scored ${imp.latestScore}/100. `}
+          Complete another attempt to see improvement.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div>
+              <p className="text-[10px] text-ink-faint">First</p>
+              <p className="text-sm font-semibold text-ink">{imp.firstScore ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-ink-faint">Latest</p>
+              <p className="text-sm font-semibold text-ink">{imp.latestScore ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-ink-faint">Best</p>
+              <p className="text-sm font-semibold text-ink">{imp.bestScore ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-ink-faint">Change</p>
+              <p className={`text-sm font-semibold ${TONE_TEXT[deltaTone]}`}>
+                {formatScoreDelta(imp.delta)}
+              </p>
+            </div>
+          </div>
+          <p className="text-[11px] text-ink-faint">
+            {imp.attemptCount} attempts on this adaptation
+            {imp.weakestCurrentDimension && ` · Current weak point — ${imp.weakestCurrentDimension}`}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AttemptHistorySection({ history }: { history: AttemptRow[] | null }) {
   if (history === null) {
     return (
@@ -139,6 +200,12 @@ function AttemptHistorySection({ history }: { history: AttemptRow[] | null }) {
       </p>
     );
   }
+  const sorted = sortAttemptsByRecency(history);
+  const bestScore = sorted.reduce<number | null>(
+    (best, r) => (r.overall_fit != null && (best === null || r.overall_fit > best) ? r.overall_fit : best),
+    null,
+  );
+
   return (
     <div className="flex flex-col gap-2">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
@@ -148,18 +215,40 @@ function AttemptHistorySection({ history }: { history: AttemptRow[] | null }) {
         <p className="text-xs text-ink-faint">No practice attempts yet for this adaptation.</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
-          {sortAttemptsByRecency(history).map((row) => {
+          {sorted.map((row, i) => {
             const h = formatAttemptHistoryEntry(row);
             const dims = Array.isArray((row.score_json as { dimensions?: unknown })?.dimensions)
               ? ((row.score_json as { dimensions: AttemptScoreDimension[] }).dimensions)
               : [];
+            // Older attempt is the next entry in this newest-first list.
+            const prev = sorted[i + 1];
+            const delta = row.overall_fit != null && prev?.overall_fit != null
+              ? row.overall_fit - prev.overall_fit
+              : null;
+            const isBest = bestScore !== null && row.overall_fit === bestScore;
+            const isLatest = i === 0;
             return (
               <li key={h.id}>
-                <details className="rounded-md border border-hairline bg-surface-1">
+                <details className="rounded-md border border-hairline bg-surface-1" open={isLatest}>
                   <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lav/50 [&::-webkit-details-marker]:hidden">
                     <span className="text-ink-faint">{h.dateLabel}</span>
                     {h.overallFit != null && (
                       <span className={`font-semibold ${TONE_TEXT[h.tone]}`}>{h.overallFit}/100</span>
+                    )}
+                    {delta !== null && (
+                      <span className={`text-[10px] font-medium ${TONE_TEXT[scoreDeltaTone(delta)]}`}>
+                        {formatScoreDelta(delta)} vs previous
+                      </span>
+                    )}
+                    {isLatest && (
+                      <span className="rounded-full border border-lav/30 bg-lav/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-lav">
+                        Latest
+                      </span>
+                    )}
+                    {isBest && (
+                      <span className="rounded-full border border-ok/30 bg-ok/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-ok">
+                        Best
+                      </span>
                     )}
                     {h.keyWeakness && (
                       <span className="min-w-0 flex-1 truncate text-ink-faint">{h.keyWeakness}</span>
@@ -186,12 +275,14 @@ type SubmissionState =
   | { status: "error"; message: string };
 
 export function PracticePanel({
-  material, result, judgeType, userId,
+  material, result, judgeType, userId, onAttemptScored,
 }: {
   material: SelectedMaterial;
   result: JudgeAdaptationResult;
   judgeType: JudgeType;
   userId: string | null;
+  /** Called after a successful score so entry-level progress can refresh. */
+  onAttemptScored?: () => void;
 }) {
   const criteria = derivePracticeSuccessCriteria(result);
   const [attemptText, setAttemptText] = useState("");
@@ -238,10 +329,12 @@ export function PracticePanel({
       });
       const feedback = normalizeAttemptScoreResponse(response);
       setSubmission({ status: "scored", feedback });
-      // Refresh history so the new attempt appears immediately.
+      // Refresh this adaptation's history so the new attempt appears
+      // immediately, and let the entry-level progress summary refresh too.
       apiFetch<AttemptRow[]>(`/judge-adaptation/adaptations/${adaptationId}/attempts?user_id=${userId}`)
         .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
         .catch(() => {});
+      onAttemptScored?.();
     } catch (e: unknown) {
       // Never fake a score or a saved attempt on failure.
       const message = e instanceof Error && e.message ? e.message : "Couldn't score that attempt. Please try again.";
@@ -297,6 +390,13 @@ export function PracticePanel({
 
       {panelState.state === "ready" && !canScorePracticeAttempt(result) && (
         <p role="status" className="text-xs leading-relaxed text-ink-faint">{scoringUnavailableReason()}</p>
+      )}
+
+      {/* Context before the next attempt — shown only outside the
+          fresh-feedback view, which already has its own "Try again"
+          action, so there's never two competing retry buttons. */}
+      {scorable && submission.status !== "scored" && history !== null && (
+        <ImprovementSummary history={history} />
       )}
 
       {scorable && submission.status !== "scored" && (

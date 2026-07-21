@@ -841,3 +841,163 @@ export function materialStubFromHistory(row: {
     resolutionId: null,
   };
 }
+
+// ── Attempt trends (Phase 7E) — entry-level improvement summary ──────────────
+
+export interface JudgeTypeTrend {
+  judge_type: JudgeType;
+  count: number;
+  latest_score: number | null;
+  best_score: number | null;
+  average_score: number | null;
+  improvement_from_first: number | null;
+  latest_attempt_at: string | null;
+}
+
+export interface DimensionTrend {
+  dimension: string;
+  average_score: number;
+  count: number;
+  label: string;
+}
+
+export interface RecentAttemptSummary {
+  judge_type: JudgeType;
+  overall_fit: number | null;
+  created_at: string | null;
+  weakest_dimension: string | null;
+}
+
+export interface AttemptTrendsResponse {
+  total_attempts: number;
+  latest_attempt_at: string | null;
+  latest_overall_fit: number | null;
+  best_overall_fit: number | null;
+  average_overall_fit: number | null;
+  first_overall_fit: number | null;
+  improvement_from_first: number | null;
+  attempts_by_judge_type: JudgeTypeTrend[];
+  weakest_dimensions: DimensionTrend[];
+  strongest_dimensions: DimensionTrend[];
+  recent_attempts: RecentAttemptSummary[];
+}
+
+export interface AttemptTrendsView {
+  totalAttempts: number;
+  latestAttemptAt: string | null;
+  latestOverallFit: number | null;
+  bestOverallFit: number | null;
+  averageOverallFit: number | null;
+  improvementFromFirst: number | null;
+  /** True only when there's enough data (>=2 attempts) for the improvement
+   *  number to mean anything — never claim a trend from one data point. */
+  hasTrendData: boolean;
+  attemptsByJudgeType: JudgeTypeTrend[];
+  weakestDimensions: DimensionTrend[];
+  strongestDimensions: DimensionTrend[];
+  recentAttempts: RecentAttemptSummary[];
+}
+
+/** Defensive normalization — a missing/malformed field becomes a real empty
+ *  state (0 / null / []), never a fabricated number. */
+export function normalizeAttemptTrends(r: Partial<AttemptTrendsResponse>): AttemptTrendsView {
+  const totalAttempts = typeof r.total_attempts === "number" ? r.total_attempts : 0;
+  return {
+    totalAttempts,
+    latestAttemptAt: str(r.latest_attempt_at),
+    latestOverallFit: typeof r.latest_overall_fit === "number" ? r.latest_overall_fit : null,
+    bestOverallFit: typeof r.best_overall_fit === "number" ? r.best_overall_fit : null,
+    averageOverallFit: typeof r.average_overall_fit === "number" ? r.average_overall_fit : null,
+    improvementFromFirst: typeof r.improvement_from_first === "number" ? r.improvement_from_first : null,
+    hasTrendData: totalAttempts >= 2,
+    attemptsByJudgeType: Array.isArray(r.attempts_by_judge_type) ? r.attempts_by_judge_type : [],
+    weakestDimensions: arr(r.weakest_dimensions),
+    strongestDimensions: arr(r.strongest_dimensions),
+    recentAttempts: arr(r.recent_attempts),
+  };
+}
+
+export function emptyAttemptTrendsView(): AttemptTrendsView {
+  return normalizeAttemptTrends({});
+}
+
+export function trendEmptyStateMessage(): string {
+  return "No scored practice attempts yet.";
+}
+
+/** "+30" / "−15" / "±0" / "—" when unknown — sign is always explicit text,
+ *  never color-only. */
+export function formatScoreDelta(delta: number | null): string {
+  if (delta === null) return "—";
+  if (delta === 0) return "±0";
+  return delta > 0 ? `+${delta}` : `${delta}`;
+}
+
+export function scoreDeltaTone(delta: number | null): AttemptScoreTone | "neutral" {
+  if (delta === null || delta === 0) return "neutral";
+  return delta > 0 ? "green" : "red";
+}
+
+/** Judge type practiced the most/best on average — only meaningful once two
+ *  or more judge types have real attempts to compare. */
+export function hasJudgeTypeComparison(view: Pick<AttemptTrendsView, "attemptsByJudgeType">): boolean {
+  return view.attemptsByJudgeType.length >= 2;
+}
+
+export function strongestJudgeType(view: Pick<AttemptTrendsView, "attemptsByJudgeType">): JudgeTypeTrend | null {
+  const scored = view.attemptsByJudgeType.filter((j) => j.average_score !== null);
+  if (scored.length === 0) return null;
+  return scored.reduce((a, b) => (b.average_score! > a.average_score! ? b : a));
+}
+
+export function weakestJudgeType(view: Pick<AttemptTrendsView, "attemptsByJudgeType">): JudgeTypeTrend | null {
+  const scored = view.attemptsByJudgeType.filter((j) => j.average_score !== null);
+  if (scored.length === 0) return null;
+  return scored.reduce((a, b) => (b.average_score! < a.average_score! ? b : a));
+}
+
+export function weakestRecurringDimension(
+  view: Pick<AttemptTrendsView, "weakestDimensions">,
+): DimensionTrend | null {
+  return view.weakestDimensions[0] ?? null;
+}
+
+// ── Within-adaptation improvement (one adaptation's own attempts) ────────────
+
+export interface WithinAdaptationImprovement {
+  attemptCount: number;
+  firstScore: number | null;
+  latestScore: number | null;
+  bestScore: number | null;
+  delta: number | null;
+  hasTrendData: boolean;
+  weakestCurrentDimension: string | null;
+}
+
+/** Same "no trend from one attempt" rule as the entry-level view, scoped to
+ *  a single adaptation's own attempts. `attempts` may be in any order — this
+ *  sorts newest-first itself so callers don't have to. */
+export function deriveWithinAdaptationImprovement(attempts: AttemptRow[]): WithinAdaptationImprovement {
+  if (attempts.length === 0) {
+    return {
+      attemptCount: 0, firstScore: null, latestScore: null, bestScore: null,
+      delta: null, hasTrendData: false, weakestCurrentDimension: null,
+    };
+  }
+  const sorted = sortAttemptsByRecency(attempts);
+  const latest = sorted[0];
+  const first = sorted[sorted.length - 1];
+  const fits = sorted.map((a) => a.overall_fit).filter((f): f is number => f != null);
+  const latestScore = latest.overall_fit ?? null;
+  const firstScore = first.overall_fit ?? null;
+  const latestEntry = formatAttemptHistoryEntry(latest);
+  return {
+    attemptCount: attempts.length,
+    firstScore,
+    latestScore,
+    bestScore: fits.length > 0 ? Math.max(...fits) : null,
+    delta: latestScore !== null && firstScore !== null ? latestScore - firstScore : null,
+    hasTrendData: attempts.length >= 2,
+    weakestCurrentDimension: latestEntry.keyWeakness,
+  };
+}

@@ -18,6 +18,7 @@ from app.models.judge_adaptation import (
     JudgeAdaptationAttemptRow,
     JudgeAdaptationAttemptScoreRequest,
     JudgeAdaptationAttemptScoreResponse,
+    JudgeAdaptationAttemptTrends,
     JudgeAdaptationRequest,
     JudgeAdaptationResult,
     JudgeComparisonRequest,
@@ -31,6 +32,7 @@ from app.models.judge_adaptation import (
 )
 from app.services.adaptation_risk_checker import check_all_risks
 from app.services.judge_attempt_scorer import MIN_ATTEMPT_LENGTH, score_practice_attempt
+from app.services.judge_attempt_trends import aggregate_attempt_trends
 from app.services.judge_adaptation_service import generate_adaptation
 from app.services.judge_comparison import compare_profiles
 from app.services.judge_profiles import get_all_builtin_profiles, get_builtin_profile
@@ -653,6 +655,35 @@ def list_attempts(adaptation_id: str, user_id: str = Query(...)) -> list[JudgeAd
         )
         for r in result.data or []
     ]
+
+
+ATTEMPT_TRENDS_WINDOW = 100
+
+
+@router.get("/attempt-trends", response_model=JudgeAdaptationAttemptTrends)
+def get_attempt_trends(user_id: str = Query(...)) -> JudgeAdaptationAttemptTrends:
+    """
+    Entry-level improvement summary across ALL of a user's scored practice
+    attempts (Phase 7E). Ownership is implicit — the query is scoped to
+    user_id directly (RLS-equivalent filter, matching every other endpoint
+    in this router). Bounded to the most recent ATTEMPT_TRENDS_WINDOW
+    attempts; aggregates never fabricate data beyond what was persisted, and
+    every field is a real zero/None/empty-list when there's nothing to show.
+
+    No join to judge_adaptations is needed — judge_type, overall_fit, and
+    score_json are already denormalized onto each attempt row.
+    """
+    sb = get_supabase()
+    result = (
+        sb.table("judge_adaptation_attempts")
+        .select("judge_type, overall_fit, score_json, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(ATTEMPT_TRENDS_WINDOW)
+        .execute()
+    )
+    trends = aggregate_attempt_trends(result.data or [])
+    return JudgeAdaptationAttemptTrends(**trends)
 
 
 # ── History ───────────────────────────────────────────────────────────────────

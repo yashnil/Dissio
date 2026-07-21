@@ -1584,3 +1584,215 @@ def test_migration_file_defines_attempts_table_and_rls():
     assert "ENABLE ROW LEVEL SECURITY" in migration
     assert "auth.uid() = user_id" in migration
     assert "REFERENCES judge_adaptations(id) ON DELETE CASCADE" in migration
+
+
+# ── Phase 7E: attempt trend aggregation (pure function) ──────────────────────
+
+from app.services.judge_attempt_trends import aggregate_attempt_trends
+
+
+def _trend_row(judge_type="lay", overall_fit=70, created_at="2026-07-21T00:00:00Z", dims=None):
+    return {
+        "judge_type": judge_type,
+        "overall_fit": overall_fit,
+        "created_at": created_at,
+        "score_json": {"dimensions": dims or []},
+    }
+
+
+class TestAggregateAttemptTrends:
+    def test_empty_rows_returns_real_zeros_not_errors(self):
+        t = aggregate_attempt_trends([])
+        assert t["total_attempts"] == 0
+        assert t["latest_overall_fit"] is None
+        assert t["improvement_from_first"] is None
+        assert t["attempts_by_judge_type"] == []
+        assert t["weakest_dimensions"] == []
+        assert t["recent_attempts"] == []
+
+    def test_single_attempt_improvement_is_zero_not_fabricated(self):
+        """One data point: improvement_from_first is a real 0 (latest==first),
+        never a fabricated positive/negative trend."""
+        t = aggregate_attempt_trends([_trend_row(overall_fit=65)])
+        assert t["total_attempts"] == 1
+        assert t["first_overall_fit"] == 65
+        assert t["latest_overall_fit"] == 65
+        assert t["improvement_from_first"] == 0
+
+    def test_two_attempts_show_a_real_delta(self):
+        rows = [
+            _trend_row(overall_fit=80, created_at="2026-07-21T00:00:00Z"),  # newest
+            _trend_row(overall_fit=50, created_at="2026-07-20T00:00:00Z"),  # oldest
+        ]
+        t = aggregate_attempt_trends(rows)
+        assert t["first_overall_fit"] == 50
+        assert t["latest_overall_fit"] == 80
+        assert t["improvement_from_first"] == 30
+
+    def test_best_latest_average_derivation(self):
+        rows = [
+            _trend_row(overall_fit=60, created_at="2026-07-21T00:00:00Z"),
+            _trend_row(overall_fit=90, created_at="2026-07-20T00:00:00Z"),
+            _trend_row(overall_fit=30, created_at="2026-07-19T00:00:00Z"),
+        ]
+        t = aggregate_attempt_trends(rows)
+        assert t["latest_overall_fit"] == 60
+        assert t["best_overall_fit"] == 90
+        assert t["average_overall_fit"] == 60.0
+
+    def test_attempts_by_judge_type_grouped_and_sorted_by_count(self):
+        rows = [
+            _trend_row(judge_type="lay", overall_fit=80, created_at="2026-07-21T00:00:00Z"),
+            _trend_row(judge_type="lay", overall_fit=50, created_at="2026-07-20T00:00:00Z"),
+            _trend_row(judge_type="flow", overall_fit=40, created_at="2026-07-19T00:00:00Z"),
+        ]
+        t = aggregate_attempt_trends(rows)
+        judges = t["attempts_by_judge_type"]
+        assert judges[0]["judge_type"] == "lay"
+        assert judges[0]["count"] == 2
+        assert judges[0]["improvement_from_first"] == 30
+        assert judges[1]["judge_type"] == "flow"
+        assert judges[1]["improvement_from_first"] == 0  # single attempt, no fake trend
+
+    def test_weakest_and_strongest_dimensions_derived_from_real_scores(self):
+        rows = [
+            _trend_row(dims=[
+                {"dimension": "clarity", "score": 20, "explanation": "short"},
+                {"dimension": "judge_fit", "score": 95, "explanation": "clean"},
+            ]),
+        ]
+        t = aggregate_attempt_trends(rows)
+        assert t["weakest_dimensions"][0]["dimension"] == "clarity"
+        assert t["weakest_dimensions"][0]["label"] == "Clarity"
+        assert t["strongest_dimensions"][0]["dimension"] == "judge_fit"
+
+    def test_malformed_dimension_entries_are_skipped_not_crashed(self):
+        rows = [_trend_row(dims=[{"dimension": None, "score": "not-a-number"}, {"score": 50}])]
+        t = aggregate_attempt_trends(rows)
+        assert t["weakest_dimensions"] == []
+        assert t["strongest_dimensions"] == []
+
+    def test_recent_attempts_bounded_and_newest_first(self):
+        rows = [_trend_row(overall_fit=i, created_at=f"2026-07-{21-i:02d}T00:00:00Z") for i in range(15)]
+        t = aggregate_attempt_trends(rows)
+        assert len(t["recent_attempts"]) == 10
+        assert t["recent_attempts"][0]["overall_fit"] == 0  # rows[0] is "newest" per input order
+
+    def test_recent_attempt_weakest_dimension_uses_that_attempts_own_lowest_score(self):
+        rows = [_trend_row(dims=[
+            {"dimension": "clarity", "score": 10, "explanation": "x"},
+            {"dimension": "judge_fit", "score": 90, "explanation": "y"},
+        ])]
+        t = aggregate_attempt_trends(rows)
+        assert t["recent_attempts"][0]["weakest_dimension"] == "Clarity"
+
+    def test_null_overall_fit_rows_excluded_from_numeric_aggregates(self):
+        rows = [
+            _trend_row(overall_fit=None, created_at="2026-07-21T00:00:00Z"),
+            _trend_row(overall_fit=70, created_at="2026-07-20T00:00:00Z"),
+        ]
+        t = aggregate_attempt_trends(rows)
+        assert t["best_overall_fit"] == 70
+        assert t["average_overall_fit"] == 70.0
+
+
+# ── API endpoint tests ──────────────────────────────────────────────────────────
+
+def _trends_table_fn(attempt_rows):
+    def table_fn(name):
+        t = MagicMock()
+        for m in ("select", "eq", "order", "limit"):
+            getattr(t, m).return_value = t
+        t.execute.return_value = MagicMock(data=attempt_rows if name == "judge_adaptation_attempts" else [])
+        return t
+    return table_fn
+
+
+class TestAttemptTrendsEndpoint:
+    def test_scoped_to_requesting_user_only(self):
+        """The query filters by user_id — no cross-user data can leak in."""
+        captured = {}
+
+        def table_fn(name):
+            t = MagicMock()
+            def eq_fn(col, val):
+                if col == "user_id":
+                    captured["user_id"] = val
+                return t
+            t.select.return_value = t
+            t.eq = eq_fn
+            t.order.return_value = t
+            t.limit.return_value = t
+            t.execute.return_value = MagicMock(data=[])
+            return t
+
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = table_fn
+            r = _client().get("/judge-adaptation/attempt-trends?user_id=student-1")
+        assert r.status_code == 200
+        assert captured["user_id"] == "student-1"
+
+    def test_empty_state_returns_zeros_not_error(self):
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _trends_table_fn([])
+            r = _client().get("/judge-adaptation/attempt-trends?user_id=student-1")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total_attempts"] == 0
+        assert body["attempts_by_judge_type"] == []
+
+    def test_bounded_by_attempt_trends_window(self):
+        from app.api.judge_adaptation import ATTEMPT_TRENDS_WINDOW
+        captured = {}
+
+        def table_fn(name):
+            t = MagicMock()
+            t.select.return_value = t
+            t.eq.return_value = t
+            t.order.return_value = t
+            def limit_fn(n):
+                captured["limit"] = n
+                return t
+            t.limit = limit_fn
+            t.execute.return_value = MagicMock(data=[])
+            return t
+
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = table_fn
+            _client().get("/judge-adaptation/attempt-trends?user_id=student-1")
+        assert captured["limit"] == ATTEMPT_TRENDS_WINDOW
+
+    def test_returns_real_aggregated_data(self):
+        rows = [
+            {"judge_type": "lay", "overall_fit": 80, "created_at": "2026-07-21T00:00:00Z",
+             "score_json": {"dimensions": [{"dimension": "clarity", "score": 90, "explanation": "ok"}]}},
+            {"judge_type": "lay", "overall_fit": 50, "created_at": "2026-07-20T00:00:00Z",
+             "score_json": {"dimensions": [{"dimension": "clarity", "score": 40, "explanation": "short"}]}},
+        ]
+        with patch("app.api.judge_adaptation.get_supabase") as mock_sb:
+            mock_sb.return_value.table = _trends_table_fn(rows)
+            r = _client().get("/judge-adaptation/attempt-trends?user_id=student-1")
+        body = r.json()
+        assert body["total_attempts"] == 2
+        assert body["improvement_from_first"] == 30
+        assert body["attempts_by_judge_type"][0]["judge_type"] == "lay"
+
+
+def test_api_has_attempt_trends_endpoint():
+    from app.api.judge_adaptation import router
+    paths = [r.path for r in router.routes]
+    assert any("attempt-trends" in p for p in paths)
+
+
+def test_trend_models_importable_with_expected_shape():
+    from app.models.judge_adaptation import (
+        DimensionTrend, JudgeAdaptationAttemptTrends, JudgeTypeTrend, RecentAttemptSummary,
+    )
+    trends = JudgeAdaptationAttemptTrends(total_attempts=0)
+    assert trends.attempts_by_judge_type == []
+    jt = JudgeTypeTrend(judge_type="lay", count=1)
+    assert jt.count == 1
+    dt = DimensionTrend(dimension="clarity", average_score=50.0, count=1, label="Clarity")
+    assert dt.label == "Clarity"
+    ra = RecentAttemptSummary(judge_type="flow")
+    assert ra.overall_fit is None

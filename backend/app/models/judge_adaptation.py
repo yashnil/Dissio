@@ -495,3 +495,52 @@ class JudgeAdaptationAttemptRow(BaseModel):
     score_json: dict
     overall_fit: Optional[float] = None
     created_at: str
+
+
+# ── Attempt trends (Phase 7E) ────────────────────────────────────────────────
+#
+# Pure aggregation over Phase 7D's persisted attempts. Nothing here scores
+# anything new — it summarizes overall_fit/score_json across attempts so a
+# student can see whether repeated practice is actually improving.
+
+class JudgeTypeTrend(BaseModel):
+    judge_type: JudgeType
+    count: int
+    latest_score: Optional[float] = None
+    best_score: Optional[float] = None
+    average_score: Optional[float] = None
+    improvement_from_first: Optional[float] = None
+    latest_attempt_at: Optional[str] = None
+
+
+class DimensionTrend(BaseModel):
+    dimension: str
+    average_score: float
+    count: int
+    label: str
+
+
+class RecentAttemptSummary(BaseModel):
+    """Lean recent-attempt row for the trend summary — no attempt id needed
+    here since nothing links back to it from this view."""
+    judge_type: JudgeType
+    overall_fit: Optional[float] = None
+    created_at: Optional[str] = None
+    weakest_dimension: Optional[str] = None
+
+
+class JudgeAdaptationAttemptTrends(BaseModel):
+    total_attempts: int
+    latest_attempt_at: Optional[str] = None
+    latest_overall_fit: Optional[float] = None
+    best_overall_fit: Optional[float] = None
+    average_overall_fit: Optional[float] = None
+    first_overall_fit: Optional[float] = None
+    # Latest minus first, over the (bounded) attempt window returned. Never
+    # meaningful with < 2 attempts — callers must gate "improving" copy on
+    # total_attempts, not just this being non-null/non-zero.
+    improvement_from_first: Optional[float] = None
+    attempts_by_judge_type: list[JudgeTypeTrend] = Field(default_factory=list)
+    weakest_dimensions: list[DimensionTrend] = Field(default_factory=list)
+    strongest_dimensions: list[DimensionTrend] = Field(default_factory=list)
+    recent_attempts: list[RecentAttemptSummary] = Field(default_factory=list)

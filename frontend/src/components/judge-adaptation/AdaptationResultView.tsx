@@ -56,7 +56,7 @@ function GuidanceList({ title, items, tone }: { title: string; items: string[]; 
 }
 
 export function AdaptationResultView({
-  material, result, notes, onAddNote, noteSaving, noteError, userId,
+  material, result, notes, onAddNote, noteSaving, noteError, userId, onAttemptScored,
 }: {
   material: SelectedMaterial;
   result: JudgeAdaptationResult;
@@ -66,6 +66,9 @@ export function AdaptationResultView({
   noteSaving: boolean;
   noteError: string | null;
   userId: string | null;
+  /** Called after a practice attempt is successfully scored, so the entry-
+   *  level "Adaptation progress" summary can refresh. */
+  onAttemptScored?: () => void;
 }) {
   const view = normalizeAdaptationResult(result);
   const unchanged = deriveUnchangedItems(result);
@@ -210,7 +213,13 @@ export function AdaptationResultView({
       </div>
 
       {/* Practice loop — pasted delivery attempt against real success criteria */}
-      <PracticePanel material={material} result={result} judgeType={result.judge_type} userId={userId} />
+      <PracticePanel
+        material={material}
+        result={result}
+        judgeType={result.judge_type}
+        userId={userId}
+        onAttemptScored={onAttemptScored}
+      />
 
       {/* Notes — only when the adaptation persisted (real id exists) */}
       {onAddNote ? (
