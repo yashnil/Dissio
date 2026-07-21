@@ -577,19 +577,36 @@ def generate_opponent_speech_endpoint(
 # ── Crossfire ─────────────────────────────────────────────────────────────────
 
 
+def _find_pending_crossfire_exchange(exchanges: List[CrossfireExchange]) -> Optional[CrossfireExchange]:
+    """Return the most recent unanswered exchange in a phase's exchange list, if any."""
+    for ex in reversed(exchanges):
+        if not ex.answer:
+            return ex
+    return None
+
+
 @router.get("/{round_id}/crossfire/question")
 def get_crossfire_question(
     round_id: str,
     user_id: str = Depends(get_current_user_id),
-    sequence: int = Query(1),
+    sequence: Optional[int] = Query(None),
 ) -> Dict[str, Any]:
-    """Generate the next AI crossfire question targeting a student argument."""
+    """Return the pending AI crossfire question for the current phase, generating
+    one only if none is already pending. Idempotent: repeated calls (refresh,
+    duplicate effect firing, etc.) never spawn a second question while one is
+    still unanswered.
+    """
     supabase = get_supabase()
     row = _verify_owner(round_id, user_id, supabase)
     sim = _load_simulation(row)
 
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
+
+    existing = load_crossfire_exchanges(round_id, sim.current_phase)
+    pending = _find_pending_crossfire_exchange(existing)
+    if pending:
+        return pending.model_dump()
 
     opponent_side = RoundSide.CON if sim.config.student_side == RoundSide.PRO else RoundSide.PRO
     live_args = load_round_arguments(round_id)
@@ -599,8 +616,9 @@ def get_crossfire_question(
         phase=sim.current_phase,
         questioner_side=opponent_side,
         live_args=live_args,
-        sequence=sequence,
+        sequence=sequence if sequence is not None else len(existing) + 1,
         judge_type=sim.config.judge_type,
+        prior_exchanges=existing,
     )
     save_crossfire_exchange(exchange)
     return exchange.model_dump()
@@ -625,8 +643,11 @@ def submit_crossfire_answer(
     if not unanswered:
         raise HTTPException(status_code=400, detail="No pending AI question.")
 
+    student_answer = (req.typed_response or "").strip()
+    if not student_answer:
+        raise HTTPException(status_code=400, detail="Answer is empty.")
+
     exchange = unanswered[-1]
-    student_answer = req.typed_response or ""
     live_args = load_round_arguments(round_id)
     updated = process_crossfire_response(exchange, student_answer, live_args)
 

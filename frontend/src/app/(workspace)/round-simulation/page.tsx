@@ -9,9 +9,12 @@ import { RoundSetupForm } from "@/components/round/RoundSetupForm";
 import { RoundPhaseHeader } from "@/components/round/RoundPhaseHeader";
 import { RoundFlow } from "@/components/round/RoundFlow";
 import { RoundSpeechCapture } from "@/components/round/RoundSpeechCapture";
+import { CrossfireCapture } from "@/components/round/CrossfireCapture";
 import { RoundBallotView } from "@/components/round/RoundBallotView";
 import { RoundDrillsView } from "@/components/round/RoundDrillsView";
+import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
 import type {
+  CrossfireExchange,
   RoundArgument,
   RoundDecision,
   RoundDrill,
@@ -137,6 +140,13 @@ export default function RoundSimulationPage() {
 
   async function handleSpeechSubmitted(speech: RoundSpeech) {
     setSpeeches((s) => [...s, speech]);
+    if (simulation) await refreshState(simulation.id);
+  }
+
+  async function handleCrossfireExchangeSaved(exchange: CrossfireExchange) {
+    setRoundState((prev) =>
+      prev ? { ...prev, active_crossfire: upsertCrossfireExchange(prev.active_crossfire, exchange) } : prev,
+    );
     if (simulation) await refreshState(simulation.id);
   }
 
@@ -369,6 +379,16 @@ export default function RoundSimulationPage() {
                     )}
                   </div>
                 </div>
+              ) : isCrossfire(roundState.current_phase) ? (
+                <CrossfireCapture
+                  roundId={simulation.id}
+                  phase={roundState.current_phase}
+                  studentSide={simulation.config.student_side}
+                  exchanges={roundState.active_crossfire ?? []}
+                  onExchangeSaved={handleCrossfireExchangeSaved}
+                  onAdvancePhase={handleAdvancePhase}
+                  isLoading={loading}
+                />
               ) : (
                 <RoundSpeechCapture
                   roundId={simulation.id}

@@ -100,6 +100,38 @@ def test_load_speech_defaults_is_fallback_false_when_column_missing():
     assert speech.is_fallback is False
 
 
+def _cx_exchange(**overrides):
+    from app.models.round_simulation import CrossfireExchange, RoundPhaseType, RoundSide
+    defaults = dict(
+        id="ex-1", round_id="r1", phase=RoundPhaseType.FIRST_CROSSFIRE, sequence=1,
+        questioner_side=RoundSide.CON, question="Why?", created_at="2026-01-01T00:00:00Z",
+    )
+    defaults.update(overrides)
+    return CrossfireExchange(**defaults)
+
+
+def test_find_pending_crossfire_exchange_returns_latest_unanswered():
+    """Guards Phase 8B idempotency fix: GET /crossfire/question must reuse a
+    still-open question instead of generating a duplicate on refresh/re-render."""
+    from app.api.round_simulations import _find_pending_crossfire_exchange
+    answered = _cx_exchange(id="ex-1", sequence=1, answer="I answered.")
+    unanswered = _cx_exchange(id="ex-2", sequence=2, answer=None)
+    result = _find_pending_crossfire_exchange([answered, unanswered])
+    assert result is not None
+    assert result.id == "ex-2"
+
+
+def test_find_pending_crossfire_exchange_returns_none_when_all_answered():
+    from app.api.round_simulations import _find_pending_crossfire_exchange
+    answered = _cx_exchange(id="ex-1", sequence=1, answer="I answered.")
+    assert _find_pending_crossfire_exchange([answered]) is None
+
+
+def test_find_pending_crossfire_exchange_returns_none_when_empty():
+    from app.api.round_simulations import _find_pending_crossfire_exchange
+    assert _find_pending_crossfire_exchange([]) is None
+
+
 def test_round_services_importable():
     from app.services.round_state_machine import (
         get_phase_order,

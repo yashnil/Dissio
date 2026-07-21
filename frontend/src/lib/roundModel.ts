@@ -203,6 +203,53 @@ export function defaultRoundConfig(overrides?: Partial<RoundSimulationConfig>): 
   };
 }
 
+// ── Crossfire helpers ─────────────────────────────────────────────────────────
+
+export function opponentSide(side: RoundSide): RoundSide {
+  return side === "pro" ? "con" : "pro";
+}
+
+export function sideLabel(side: RoundSide): string {
+  return side === "pro" ? "Pro" : "Con";
+}
+
+/** The most recent exchange in this phase that hasn't been answered yet, if any. */
+export function findPendingCrossfireExchange(
+  exchanges: CrossfireExchange[],
+): CrossfireExchange | undefined {
+  for (let i = exchanges.length - 1; i >= 0; i--) {
+    if (!exchanges[i].answer) return exchanges[i];
+  }
+  return undefined;
+}
+
+/** All answered exchanges in this phase, in the order they occurred. */
+export function findAnsweredCrossfireExchanges(exchanges: CrossfireExchange[]): CrossfireExchange[] {
+  return exchanges.filter((e) => !!e.answer);
+}
+
+/** True only when the backend actually returned a concession, contradiction, or evasion flag. */
+export function hasCrossfireDiagnostics(exchange: CrossfireExchange): boolean {
+  return Boolean(exchange.concession_extracted || exchange.contradiction || exchange.evasion_detected);
+}
+
+export function isValidCrossfireAnswer(text: string): boolean {
+  return text.trim().length > 0;
+}
+
+/** Insert or replace an exchange by id, preserving the existing order. */
+export function upsertCrossfireExchange(
+  list: CrossfireExchange[] | undefined,
+  exchange: CrossfireExchange,
+): CrossfireExchange[] {
+  const existing = list ?? [];
+  const idx = existing.findIndex((e) => e.id === exchange.id);
+  if (idx < 0) return [...existing, exchange];
+  const next = existing.slice();
+  next[idx] = exchange;
+  return next;
+}
+
 // ── Speech type labels ────────────────────────────────────────────────────────
 
 export function speechTypeLabel(phase: RoundPhaseType): string {

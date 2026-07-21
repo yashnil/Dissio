@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { PHASE_LABELS, isCrossfire, speechTypeLabel } from "@/lib/roundModel";
+import { PHASE_LABELS, speechTypeLabel } from "@/lib/roundModel";
 import { useRecorder } from "@/hooks/useRecorder";
 import { createClient } from "@/lib/supabase";
 import * as roundApi from "@/lib/roundApi";
@@ -62,7 +62,6 @@ export function RoundSpeechCapture({
   const textareaId = useId();
 
   const phaseLabel = PHASE_LABELS[phase] ?? phase;
-  const crossfire = isCrossfire(phase);
   const busy = isLoading || submitting;
 
   const recState = recorder.state;
@@ -113,7 +112,7 @@ export function RoundSpeechCapture({
 
   // ── Opponent turn ───────────────────────────────────────────────────────────
 
-  if (!isStudentTurn && !crossfire) {
+  if (!isStudentTurn) {
     return (
       <div className="space-y-4">
         <div className="rounded-lg border bg-muted/20 p-4">
@@ -129,46 +128,6 @@ export function RoundSpeechCapture({
         >
           {busy ? "Generating opponent speech..." : `Generate ${phaseLabel}`}
         </button>
-      </div>
-    );
-  }
-
-  // ── Crossfire ───────────────────────────────────────────────────────────────
-
-  if (crossfire) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-lg border bg-sky-50 dark:bg-sky-950/20 p-4">
-          <p className="text-sm font-medium">{phaseLabel}</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Type your crossfire answers or advance to the next phase.
-          </p>
-        </div>
-        <label htmlFor={textareaId} className="sr-only">Crossfire response</label>
-        <textarea
-          id={textareaId}
-          className="w-full rounded-md border bg-background px-3 py-2 text-sm min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="Type your crossfire response..."
-          value={transcript}
-          onChange={(e) => setTranscript(e.target.value)}
-        />
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            onClick={() => submitWithText(transcript)}
-            disabled={busy || !transcript.trim()}
-            className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-          >
-            {submitting ? "Submitting..." : "Submit Answer"}
-          </button>
-          <button
-            onClick={onAdvancePhase}
-            disabled={busy}
-            className="rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-50"
-          >
-            Advance Phase
-          </button>
-        </div>
       </div>
     );
   }

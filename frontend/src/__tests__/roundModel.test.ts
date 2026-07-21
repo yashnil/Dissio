@@ -33,8 +33,32 @@ import {
   formatSeconds,
   defaultRoundConfig,
   speechTypeLabel,
+  opponentSide,
+  sideLabel,
+  findPendingCrossfireExchange,
+  findAnsweredCrossfireExchanges,
+  hasCrossfireDiagnostics,
+  isValidCrossfireAnswer,
+  upsertCrossfireExchange,
 } from "@/lib/roundModel";
-import type { RoundArgument, RoundDecision } from "@/types/round";
+import type { CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
+
+function makeExchange(overrides: Partial<CrossfireExchange> = {}): CrossfireExchange {
+  return {
+    id: "ex-1",
+    round_id: "r-1",
+    phase: "first_crossfire",
+    sequence: 1,
+    questioner_side: "con",
+    question: "What is the warrant?",
+    target_argument: "P1",
+    exchange_type: "question",
+    evasion_detected: false,
+    strategic_significance: "low",
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 // ── Phase order ────────────────────────────────────────────────────────────────
 
@@ -387,5 +411,133 @@ describe("ARGUMENT_STATUS_COLORS", () => {
 
   it("has colors for live status", () => {
     expect(ARGUMENT_STATUS_COLORS.live).toContain("emerald");
+  });
+});
+
+// ── Crossfire helpers (Phase 8B) ────────────────────────────────────────────────
+
+describe("opponentSide", () => {
+  it("returns con for pro", () => {
+    expect(opponentSide("pro")).toBe("con");
+  });
+  it("returns pro for con", () => {
+    expect(opponentSide("con")).toBe("pro");
+  });
+});
+
+describe("sideLabel", () => {
+  it("labels pro", () => {
+    expect(sideLabel("pro")).toBe("Pro");
+  });
+  it("labels con", () => {
+    expect(sideLabel("con")).toBe("Con");
+  });
+});
+
+describe("findPendingCrossfireExchange", () => {
+  it("returns undefined for an empty list", () => {
+    expect(findPendingCrossfireExchange([])).toBeUndefined();
+  });
+
+  it("returns undefined when every exchange has an answer", () => {
+    const exchanges = [makeExchange({ id: "e1", answer: "Yes." })];
+    expect(findPendingCrossfireExchange(exchanges)).toBeUndefined();
+  });
+
+  it("returns the exchange with no answer", () => {
+    const exchanges = [
+      makeExchange({ id: "e1", sequence: 1, answer: "Yes." }),
+      makeExchange({ id: "e2", sequence: 2, answer: undefined }),
+    ];
+    expect(findPendingCrossfireExchange(exchanges)?.id).toBe("e2");
+  });
+
+  it("returns the most recent unanswered exchange when multiple exist", () => {
+    const exchanges = [
+      makeExchange({ id: "e1", sequence: 1, answer: undefined }),
+      makeExchange({ id: "e2", sequence: 2, answer: undefined }),
+    ];
+    expect(findPendingCrossfireExchange(exchanges)?.id).toBe("e2");
+  });
+});
+
+describe("findAnsweredCrossfireExchanges", () => {
+  it("filters out unanswered exchanges", () => {
+    const exchanges = [
+      makeExchange({ id: "e1", answer: "Yes." }),
+      makeExchange({ id: "e2", answer: undefined }),
+    ];
+    const result = findAnsweredCrossfireExchanges(exchanges);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("e1");
+  });
+
+  it("returns an empty array when nothing is answered", () => {
+    expect(findAnsweredCrossfireExchanges([makeExchange({ answer: undefined })])).toEqual([]);
+  });
+});
+
+describe("hasCrossfireDiagnostics", () => {
+  it("is false when the backend returned no diagnostics fields", () => {
+    expect(hasCrossfireDiagnostics(makeExchange({ answer: "Fine." }))).toBe(false);
+  });
+
+  it("is true when a concession was extracted", () => {
+    expect(
+      hasCrossfireDiagnostics(makeExchange({ concession_extracted: "I concede that point." })),
+    ).toBe(true);
+  });
+
+  it("is true when a contradiction was flagged", () => {
+    expect(hasCrossfireDiagnostics(makeExchange({ contradiction: "Conflicts with prior claim." }))).toBe(
+      true,
+    );
+  });
+
+  it("is true when evasion was detected", () => {
+    expect(hasCrossfireDiagnostics(makeExchange({ evasion_detected: true }))).toBe(true);
+  });
+});
+
+describe("isValidCrossfireAnswer", () => {
+  it("rejects empty text", () => {
+    expect(isValidCrossfireAnswer("")).toBe(false);
+  });
+  it("rejects whitespace-only text", () => {
+    expect(isValidCrossfireAnswer("   ")).toBe(false);
+  });
+  it("accepts real text", () => {
+    expect(isValidCrossfireAnswer("Our warrant is causal.")).toBe(true);
+  });
+});
+
+describe("upsertCrossfireExchange", () => {
+  it("appends a new exchange to an undefined list", () => {
+    const result = upsertCrossfireExchange(undefined, makeExchange({ id: "e1" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("e1");
+  });
+
+  it("appends a new exchange to an existing list", () => {
+    const existing = [makeExchange({ id: "e1" })];
+    const result = upsertCrossfireExchange(existing, makeExchange({ id: "e2" }));
+    expect(result.map((e) => e.id)).toEqual(["e1", "e2"]);
+  });
+
+  it("replaces an exchange with the same id in place, preserving order", () => {
+    const existing = [
+      makeExchange({ id: "e1", answer: undefined }),
+      makeExchange({ id: "e2", answer: "already answered" }),
+    ];
+    const updated = makeExchange({ id: "e1", answer: "now answered" });
+    const result = upsertCrossfireExchange(existing, updated);
+    expect(result.map((e) => e.id)).toEqual(["e1", "e2"]);
+    expect(result[0].answer).toBe("now answered");
+  });
+
+  it("does not mutate the original list", () => {
+    const existing = [makeExchange({ id: "e1", answer: undefined })];
+    upsertCrossfireExchange(existing, makeExchange({ id: "e1", answer: "answered" }));
+    expect(existing[0].answer).toBeUndefined();
   });
 });
