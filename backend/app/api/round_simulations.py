@@ -58,6 +58,7 @@ from app.models.round_simulation import (
     RoundStatus,
     StudentCrossfireQuestionRequest,
     SubmitRoundDrillAttemptRequest,
+    TurnContext,
     SubmitStudentSpeechRequest,
     TurningPoint,
     UpdateRoomParticipantRequest,
@@ -332,6 +333,43 @@ def _require_general_mutate_access(access: "_RoundAccess") -> None:
     raise HTTPException(status_code=403, detail="Observers and coaches cannot perform this action.")
 
 
+def _require_coach_or_owner_access(access: "_RoundAccess") -> None:
+    """Coach-authored content (annotations, finding ratings): the room owner,
+    or a joined participant with role='coach'."""
+    if access.is_owner:
+        return
+    if access.participant and access.participant.get("role") == "coach":
+        return
+    raise HTTPException(status_code=403, detail="Only the room owner or a coach participant can do this.")
+
+
+def _participant_turn_state(
+    room: Optional[Dict[str, Any]],
+    participant: Optional[Dict[str, Any]],
+    is_owner: bool,
+    expected_side: Optional[RoundSide],
+) -> tuple[bool, Optional[str]]:
+    """Pure: can this caller act on expected_side right now? Returns
+    (allowed, reason) -- reason is None iff allowed. Shared by
+    _require_turn_access (raises) and _build_turn_context (reports)."""
+    if expected_side is None:
+        return False, "No one submits during this phase."
+    if room is None:
+        # Solo -- is_owner was already required by _load_round_access to reach here.
+        return True, None
+    if participant is None or participant.get("status") != "joined":
+        return False, "You're not an active participant in this room yet."
+    role = participant.get("role")
+    if role == "coach":
+        return False, "Coaches can watch the round but can't submit speeches or crossfire answers."
+    if role == "observer":
+        return False, "Observers can watch the round but can't submit speeches or crossfire answers."
+    if participant.get("side") != expected_side.value:
+        assigned = participant.get("side") or "no side yet"
+        return False, f"You're assigned to {assigned} — this action belongs to {expected_side.value}."
+    return True, None
+
+
 def _require_turn_access(access: "_RoundAccess", expected_side: RoundSide) -> None:
     """Only the participant occupying expected_side may submit a speech or
     crossfire action on its behalf. Solo rounds (access.room is None) are
@@ -343,15 +381,41 @@ def _require_turn_access(access: "_RoundAccess", expected_side: RoundSide) -> No
     isn't a round's debater can't spoof a participant's speech."""
     if access.room is None:
         return
-    participant = access.participant
-    if (
-        participant is None
-        or participant.get("status") != "joined"
-        or participant.get("role") in ("coach", "observer")
-    ):
-        raise HTTPException(status_code=403, detail="Observers and coaches cannot submit for a side.")
-    if participant.get("side") != expected_side.value:
-        raise HTTPException(status_code=403, detail="You are not assigned to the side that acts now.")
+    allowed, reason = _participant_turn_state(access.room, access.participant, access.is_owner, expected_side)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=reason or "You can't act right now.")
+
+
+def _build_turn_context(
+    access: "_RoundAccess", phase: RoundPhaseType, config: RoundSimulationConfig,
+) -> TurnContext:
+    """Phase 9B: the authoritative, API-exposed answer to "can the viewer
+    submit a speech/crossfire action right now, and if not, why not" --
+    surfaced on RoundRoomStateResponse so the frontend consumes one source
+    of truth instead of re-deriving this rule client-side."""
+    student_side = config.student_side
+
+    if phase in (RoundPhaseType.JUDGE_DELIBERATION, RoundPhaseType.COMPLETED):
+        return TurnContext(
+            can_submit_current_turn=False,
+            disabled_reason="The round isn't accepting live submissions in this phase.",
+        )
+
+    if phase not in CROSSFIRE_PHASES and not student_speaks_in_phase(phase, config):
+        return TurnContext(
+            can_submit_current_turn=False,
+            disabled_reason="The AI opponent speaks in this phase.",
+            expected_side=student_side,
+            expected_role="debater",
+        )
+
+    allowed, reason = _participant_turn_state(access.room, access.participant, access.is_owner, student_side)
+    return TurnContext(
+        can_submit_current_turn=allowed,
+        disabled_reason=reason,
+        expected_side=student_side,
+        expected_role="debater",
+    )
 
 
 def _load_room_access(room_id: str, user_id: str, supabase: Any) -> Dict[str, Any]:
@@ -384,11 +448,21 @@ def _build_room_state_response(room: Dict[str, Any], user_id: str, supabase: Any
     except Exception:
         round_state = None
 
+    turn_context: Optional[TurnContext] = None
+    if round_state is not None:
+        viewer_access = _RoundAccess(
+            round_row={}, room=room, participant=viewer_raw, is_owner=room["owner_user_id"] == user_id,
+        )
+        turn_context = _build_turn_context(
+            viewer_access, round_state.current_phase, round_state.simulation.config,
+        )
+
     return RoundRoomStateResponse(
         room=RoundRoom.model_validate(room),
         participants=participants,
         viewer_participant=RoundRoomParticipant.model_validate(viewer_raw),
         round_state=round_state,
+        turn_context=turn_context,
     )
 
 
@@ -587,7 +661,9 @@ def start_round(
 ) -> RoundSimulation:
     """Transition round from SETUP to ACTIVE."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
     if sim.status != RoundStatus.SETUP:
         raise HTTPException(status_code=400, detail="Round must be in SETUP to start.")
@@ -617,8 +693,8 @@ def get_prep_warnings(
 ) -> Dict[str, Any]:
     """Get pre-round readiness warnings from Tournament Prep."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    sim = _load_simulation(access.round_row)
     warnings = get_pre_round_readiness_warnings(sim.config, user_id)
     return {"warnings": warnings, "count": len(warnings)}
 
@@ -633,8 +709,9 @@ def load_preparation(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_general_mutate_access(access)
+    sim = _load_simulation(access.round_row)
     config = sim.config
 
     card_set = set(config.approved_card_ids) | set(req.card_ids)
@@ -1483,8 +1560,9 @@ def generate_drills_endpoint(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_general_mutate_access(access)
+    sim = _load_simulation(access.round_row)
 
     all_args = load_round_arguments(round_id)
     evidence_uses = load_evidence_uses(round_id)
@@ -1517,7 +1595,7 @@ def get_round_drills(
 ) -> List[RoundDrill]:
     """Retrieve generated drills for a round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
     return load_round_drills(round_id)
 
 
@@ -1544,7 +1622,8 @@ def submit_round_drill_attempt(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_general_mutate_access(access)
 
     drills = load_round_drills(round_id)
     drill = next((d for d in drills if d.id == drill_id), None)
@@ -1635,7 +1714,7 @@ def get_round_drill_attempts(
 ) -> List[RoundDrillAttempt]:
     """List prior attempts for one drill, newest first."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
 
     drills = load_round_drills(round_id)
     if not any(d.id == drill_id for d in drills):
@@ -1655,11 +1734,12 @@ def create_annotation(
 ) -> Dict[str, Any]:
     """
     Add a coach annotation to a round.
-    Coach must own the round or be a team member — ownership verified by _verify_owner.
+    Caller must be the room owner or a joined participant with role='coach'.
     Coach feedback never alters historical records.
     """
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_coach_or_owner_access(access)
 
     try:
         annotation = add_coach_annotation(
@@ -1700,7 +1780,7 @@ def list_annotations(
 ) -> List[Dict[str, Any]]:
     """List coach annotations for a round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
 
     try:
         annotations = list_coach_annotations(round_id, coach_id=coach_id)
@@ -1733,7 +1813,8 @@ def rate_finding(
 ) -> Dict[str, Any]:
     """Rate an automated finding (correct / incorrect / useful / not_useful)."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_coach_or_owner_access(access)
 
     try:
         rating = rate_automated_finding(
@@ -1768,7 +1849,7 @@ def get_round_report(
 ) -> Dict[str, Any]:
     """Export a round report suitable for display or sharing."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
 
     try:
         report = export_round_report(round_id, include_private_notes=include_private_notes)
@@ -1788,7 +1869,7 @@ def get_round_replay(
 ) -> List[Dict[str, Any]]:
     """Return the phase-by-phase replay timeline for a completed round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
 
     try:
         phases = get_replay_timeline(round_id)
@@ -1818,7 +1899,7 @@ def get_turning_points(
 ) -> List[Dict[str, Any]]:
     """Return the key turning points identified in this round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
 
     # Fetch all data needed for turning point analysis
     try:
@@ -1875,7 +1956,7 @@ def get_round_flow(
 ) -> List[RoundArgument]:
     """Retrieve live round flow."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
     return load_round_arguments(round_id)
 
 
@@ -1886,7 +1967,7 @@ def get_evidence_report(
 ) -> Dict[str, Any]:
     """Retrieve evidence-use report for the round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
     uses = load_evidence_uses(round_id)
     return generate_evidence_report(uses)
 

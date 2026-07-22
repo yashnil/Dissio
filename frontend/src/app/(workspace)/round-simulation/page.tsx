@@ -16,7 +16,13 @@ import { RoundDrillsView } from "@/components/round/RoundDrillsView";
 import { ModeSelect } from "@/components/round/ModeSelect";
 import { RoomLobby } from "@/components/round/RoomLobby";
 import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
-import { canSubmitCurrentTurn, disabledSubmitReason, myParticipant } from "@/lib/roomModel";
+import {
+  canPerformRoundAction,
+  canSubmitCurrentTurn,
+  describeCapabilities,
+  disabledSubmitReason,
+  myParticipant,
+} from "@/lib/roomModel";
 import type {
   CrossfireExchange,
   RoomRole,
@@ -25,11 +31,13 @@ import type {
   RoundDrill,
   RoundRoom,
   RoundRoomParticipant,
+  RoundRoomStateResponse,
   RoundSide,
   RoundSimulation,
   RoundSimulationConfig,
   RoundSpeech,
   RoundStateResponse,
+  TurnContext,
 } from "@/types/round";
 
 type View =
@@ -76,6 +84,25 @@ export default function RoundSimulationPage() {
   // Multiplayer-only state — unused, and never read, in solo mode.
   const [room, setRoom] = useState<RoundRoom | null>(null);
   const [participants, setParticipants] = useState<RoundRoomParticipant[]>([]);
+  const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
+
+  // Applies a full RoundRoomStateResponse to every piece of state it covers —
+  // used by the resume effect, create/join, and refreshRoom so those four
+  // places never drift from each other (in particular, turn_context always
+  // stays in sync with the phase it was computed for).
+  function applyRoomState(state: RoundRoomStateResponse) {
+    setRoom(state.room);
+    setParticipants(state.participants);
+    setTurnContext(state.turn_context ?? null);
+    const rs = state.round_state;
+    if (rs) {
+      setRoundState(rs);
+      setSimulation(rs.simulation);
+      setSpeeches(rs.speeches);
+      setFlowArgs(rs.flow_arguments);
+      if (rs.decision) setDecision(rs.decision);
+    }
+  }
 
   // ── Auth check ──────────────────────────────────────────────────────────────
 
@@ -101,15 +128,11 @@ export default function RoundSimulationPage() {
     if (savedRoomId) {
       setMode("multiplayer");
       roomApi.getRoom(savedRoomId).then((state) => {
-        setRoom(state.room);
-        setParticipants(state.participants);
         const rs = state.round_state;
-        if (rs && rs.simulation.status !== "completed" && rs.simulation.status !== "abandoned") {
-          setRoundState(rs);
-          setSimulation(rs.simulation);
-          setSpeeches(rs.speeches);
-          setFlowArgs(rs.flow_arguments);
-          if (rs.decision) setDecision(rs.decision);
+        if (rs && (rs.simulation.status === "completed" || rs.simulation.status === "abandoned")) {
+          applyRoomState({ ...state, round_state: undefined });
+        } else {
+          applyRoomState(state);
         }
         setView(state.room.status === "waiting" ? "lobby" : "round");
       }).catch(() => {
@@ -165,19 +188,23 @@ export default function RoundSimulationPage() {
   const refreshRoom = useCallback(async (roomId: string) => {
     try {
       const state = await roomApi.getRoom(roomId);
-      setRoom(state.room);
-      setParticipants(state.participants);
-      if (state.round_state) {
-        setRoundState(state.round_state);
-        setSimulation(state.round_state.simulation);
-        setSpeeches(state.round_state.speeches);
-        setFlowArgs(state.round_state.flow_arguments);
-        if (state.round_state.decision) setDecision(state.round_state.decision);
-      }
+      applyRoomState(state);
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Dispatches to whichever refresh keeps turn_context fresh for the current
+  // mode — multiplayer must go through refreshRoom (the only response that
+  // carries turn_context), not the plain round-state endpoint.
+  async function refreshCurrent() {
+    if (mode === "multiplayer" && room) {
+      await refreshRoom(room.id);
+    } else if (simulation) {
+      await refreshState(simulation.id);
+    }
+  }
 
   // ── Solo handlers ────────────────────────────────────────────────────────────
 
@@ -218,12 +245,7 @@ export default function RoundSimulationPage() {
       const state = await roomApi.createRoom({ config });
       setMode("multiplayer");
       localStorage.setItem(ACTIVE_ROOM_KEY, state.room.id);
-      setRoom(state.room);
-      setParticipants(state.participants);
-      if (state.round_state) {
-        setRoundState(state.round_state);
-        setSimulation(state.round_state.simulation);
-      }
+      applyRoomState(state);
       setView("lobby");
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to create room.";
@@ -240,15 +262,7 @@ export default function RoundSimulationPage() {
       const state = await roomApi.joinRoom(inviteCode, displayName);
       setMode("multiplayer");
       localStorage.setItem(ACTIVE_ROOM_KEY, state.room.id);
-      setRoom(state.room);
-      setParticipants(state.participants);
-      if (state.round_state) {
-        setRoundState(state.round_state);
-        setSimulation(state.round_state.simulation);
-        setSpeeches(state.round_state.speeches);
-        setFlowArgs(state.round_state.flow_arguments);
-        if (state.round_state.decision) setDecision(state.round_state.decision);
-      }
+      applyRoomState(state);
       setView("lobby");
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Couldn't join that room — check the code and try again.";
@@ -300,14 +314,14 @@ export default function RoundSimulationPage() {
 
   async function handleSpeechSubmitted(speech: RoundSpeech) {
     setSpeeches((s) => [...s, speech]);
-    if (simulation) await refreshState(simulation.id);
+    await refreshCurrent();
   }
 
   async function handleCrossfireExchangeSaved(exchange: CrossfireExchange) {
     setRoundState((prev) =>
       prev ? { ...prev, active_crossfire: upsertCrossfireExchange(prev.active_crossfire, exchange) } : prev,
     );
-    if (simulation) await refreshState(simulation.id);
+    await refreshCurrent();
   }
 
   async function handleOpponentSpeechRequested() {
@@ -325,7 +339,7 @@ export default function RoundSimulationPage() {
         const exists = s.some((x) => x.id === speech.id);
         return exists ? s : [...s, speech];
       });
-      await refreshState(simulation.id);
+      await refreshCurrent();
       await handleAdvancePhase();
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to generate opponent speech.";
@@ -341,7 +355,7 @@ export default function RoundSimulationPage() {
     try {
       const updated = await roundApi.advancePhase(simulation.id);
       setSimulation(updated);
-      await refreshState(simulation.id);
+      await refreshCurrent();
     } catch (e) {
       // Phase advance can fail if already at final phase — not an error to surface
       if (e instanceof ApiError && e.status !== 400) {
@@ -529,13 +543,19 @@ export default function RoundSimulationPage() {
 
   const viewerParticipant = mode === "multiplayer" ? myParticipant(participants, userId) : undefined;
   const studentSide = simulation.config.student_side;
+  // Prefer the backend's own computed result (fresh after every
+  // refreshCurrent()); fall back to the client-side mirror only before the
+  // first room response has turn_context populated.
   const turnGate =
     mode === "multiplayer"
-      ? {
-          allowed: canSubmitCurrentTurn(viewerParticipant, studentSide),
-          reason: disabledSubmitReason(viewerParticipant, studentSide),
-        }
+      ? turnContext
+        ? { allowed: turnContext.can_submit_current_turn, reason: turnContext.disabled_reason ?? null }
+        : {
+            allowed: canSubmitCurrentTurn(viewerParticipant, studentSide),
+            reason: disabledSubmitReason(viewerParticipant, studentSide),
+          }
       : undefined;
+  const canManageRoundContent = mode === "multiplayer" ? canPerformRoundAction(viewerParticipant) : true;
 
   return (
     <div className="flex flex-col">
@@ -581,9 +601,14 @@ export default function RoundSimulationPage() {
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-      {turnGate && !turnGate.allowed && (
-        <div className="mx-4 mt-3 rounded-md border bg-muted/20 px-3 py-2">
-          <p className="text-xs text-muted-foreground">{turnGate.reason}</p>
+      {mode === "multiplayer" && (
+        <div className="mx-4 mt-3 rounded-md border bg-muted/20 px-3 py-2 space-y-1">
+          <p className="text-xs text-muted-foreground">
+            {describeCapabilities(viewerParticipant, studentSide)}
+          </p>
+          {turnGate && !turnGate.allowed && turnGate.reason && (
+            <p className="text-xs text-muted-foreground">{turnGate.reason}</p>
+          )}
         </div>
       )}
 
@@ -597,24 +622,31 @@ export default function RoundSimulationPage() {
                   <p className="text-sm text-muted-foreground">
                     Round complete. Generate the final decision and post-round drills.
                   </p>
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={handleGenerateDecision}
-                      disabled={loading}
-                      className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                    >
-                      {loading ? "Generating..." : "Generate Decision"}
-                    </button>
-                    {decision && (
+                  {canManageRoundContent ? (
+                    <div className="flex gap-2 flex-wrap">
                       <button
-                        onClick={handleGenerateDrills}
+                        onClick={handleGenerateDecision}
                         disabled={loading}
-                        className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
                       >
-                        Generate Drills
+                        {loading ? "Generating..." : "Generate Decision"}
                       </button>
-                    )}
-                  </div>
+                      {decision && (
+                        <button
+                          onClick={handleGenerateDrills}
+                          disabled={loading}
+                          className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                        >
+                          Generate Drills
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Ask a debater in the room to generate the decision and drills — you&#39;ll be able
+                      to view them here once they do.
+                    </p>
+                  )}
                 </div>
               ) : isCrossfire(roundState.current_phase) ? (
                 <CrossfireCapture
@@ -705,7 +737,7 @@ export default function RoundSimulationPage() {
             <RoundBallotView
               decision={decision}
               allArguments={flowArgs}
-              onRejudge={handleRejudge}
+              onRejudge={canManageRoundContent ? handleRejudge : undefined}
               isLoading={loading}
             />
           ) : (
@@ -713,7 +745,7 @@ export default function RoundSimulationPage() {
               <p className="text-sm text-muted-foreground">
                 No decision yet. Complete the round first.
               </p>
-              {isCompleted && (
+              {isCompleted && canManageRoundContent && (
                 <button
                   onClick={handleGenerateDecision}
                   disabled={loading}
@@ -732,6 +764,8 @@ export default function RoundSimulationPage() {
             drills={drills}
             onGenerateDrills={handleGenerateDrills}
             isLoading={loading}
+            canManageDrills={canManageRoundContent}
+            disabledReason={turnGate?.reason ?? null}
           />
         )}
       </div>

@@ -1,5 +1,5 @@
 /**
- * Pass 27 — Phase 9A. Tests for room/lobby pure helpers.
+ * Pass 27/28 — Phase 9A/9B. Tests for room/lobby pure helpers.
  *
  * Same convention as roundModel.test.ts: no React, no DOM, pure functions
  * called directly with fixture factories.
@@ -18,8 +18,10 @@ import {
   joinedParticipants,
   canSubmitCurrentTurn,
   disabledSubmitReason,
+  canPerformRoundAction,
+  describeCapabilities,
 } from "@/lib/roomModel";
-import type { RoundRoom, RoundRoomParticipant } from "@/types/round";
+import type { RoundRoom, RoundRoomParticipant, RoundRoomStateResponse } from "@/types/round";
 
 function makeRoom(overrides: Partial<RoundRoom> = {}): RoundRoom {
   return {
@@ -233,5 +235,111 @@ describe("disabledSubmitReason", () => {
 
   it("explains a missing participant record without inventing a false certainty", () => {
     expect(disabledSubmitReason(undefined, "pro")).toMatch(/not an active participant/i);
+  });
+});
+
+// ── Phase 9B: round-content actions ─────────────────────────────────────────
+
+describe("canPerformRoundAction", () => {
+  it("allows the owner", () => {
+    const p = makeParticipant({ role: "owner", status: "joined" });
+    expect(canPerformRoundAction(p)).toBe(true);
+  });
+
+  it("allows a joined debater regardless of side", () => {
+    const p = makeParticipant({ role: "debater_b", side: "con", status: "joined" });
+    expect(canPerformRoundAction(p)).toBe(true);
+  });
+
+  it("rejects a coach", () => {
+    const p = makeParticipant({ role: "coach", status: "joined" });
+    expect(canPerformRoundAction(p)).toBe(false);
+  });
+
+  it("rejects an observer", () => {
+    const p = makeParticipant({ role: "observer", status: "joined" });
+    expect(canPerformRoundAction(p)).toBe(false);
+  });
+
+  it("rejects a participant who hasn't joined", () => {
+    const p = makeParticipant({ role: "debater_a", status: "invited" });
+    expect(canPerformRoundAction(p)).toBe(false);
+  });
+
+  it("rejects when there is no participant record", () => {
+    expect(canPerformRoundAction(undefined)).toBe(false);
+  });
+});
+
+describe("describeCapabilities", () => {
+  it("describes a joined debater on the matching side", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined" });
+    const desc = describeCapabilities(p, "pro");
+    expect(desc).toMatch(/Debater A/);
+    expect(desc).toMatch(/Pro/);
+  });
+
+  it("describes an observer as watch-only", () => {
+    const p = makeParticipant({ role: "observer", side: undefined, status: "joined" });
+    expect(describeCapabilities(p, "pro")).toMatch(/watch/i);
+  });
+
+  it("describes a coach as watch-only", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(describeCapabilities(p, "pro")).toMatch(/watch/i);
+  });
+
+  it("describes an unassigned debater as needing a side assignment", () => {
+    const p = makeParticipant({ role: "debater_a", side: undefined, status: "joined" });
+    expect(describeCapabilities(p, "pro")).toMatch(/assign/i);
+  });
+
+  it("describes a missing/unjoined participant plainly", () => {
+    expect(describeCapabilities(undefined, "pro")).toMatch(/not an active participant/i);
+  });
+});
+
+// ── Phase 9B: turn_context end-to-end through the label helpers ────────────
+
+describe("RoundRoomStateResponse turn_context shape", () => {
+  function makeRoomState(overrides: Partial<RoundRoomStateResponse> = {}): RoundRoomStateResponse {
+    const room = makeRoom();
+    const viewer = makeParticipant();
+    return {
+      room,
+      participants: [viewer],
+      viewer_participant: viewer,
+      turn_context: {
+        can_submit_current_turn: true,
+        expected_side: "pro",
+        expected_role: "debater",
+      },
+      ...overrides,
+    };
+  }
+
+  it("a can-submit turn_context matches canSubmitCurrentTurn for the same participant", () => {
+    const state = makeRoomState();
+    const viewer = state.participants[0];
+    expect(state.turn_context?.can_submit_current_turn).toBe(true);
+    expect(canSubmitCurrentTurn(viewer, "pro")).toBe(true);
+  });
+
+  it("a disabled turn_context carries a human-readable reason", () => {
+    const state = makeRoomState({
+      turn_context: {
+        can_submit_current_turn: false,
+        disabled_reason: "Observers can watch the round but can't submit speeches or crossfire answers.",
+        expected_side: "pro",
+        expected_role: "debater",
+      },
+    });
+    expect(state.turn_context?.can_submit_current_turn).toBe(false);
+    expect(state.turn_context?.disabled_reason).toMatch(/observer/i);
+  });
+
+  it("turn_context is optional — a solo-shaped response can omit it entirely", () => {
+    const state = makeRoomState({ turn_context: undefined });
+    expect(state.turn_context).toBeUndefined();
   });
 });

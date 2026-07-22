@@ -11,6 +11,11 @@ interface Props {
   drills: RoundDrill[];
   onGenerateDrills: () => void;
   isLoading: boolean;
+  /** Multiplayer only. Omitted (default true) => solo behavior, unchanged.
+   * false => the viewer can view drills/attempt history but can't generate
+   * new drills or submit an attempt (observer/coach in a room). */
+  canManageDrills?: boolean;
+  disabledReason?: string | null;
 }
 
 const SKILL_COLORS: Record<string, string> = {
@@ -86,7 +91,17 @@ function AttemptHistoryEntry({ attempt }: { attempt: RoundDrillAttempt }) {
   );
 }
 
-function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
+function DrillCard({
+  roundId,
+  drill,
+  canManageDrills = true,
+  disabledReason,
+}: {
+  roundId: string;
+  drill: RoundDrill;
+  canManageDrills?: boolean;
+  disabledReason?: string | null;
+}) {
   const colorClass = SKILL_COLORS[drill.skill_target] ?? "bg-muted text-muted-foreground";
   const minutes = Math.floor(drill.time_limit_seconds / 60);
   const secs = drill.time_limit_seconds % 60;
@@ -187,11 +202,17 @@ function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
           aria-expanded={expanded}
           className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-opacity"
         >
-          {expanded ? "Close" : "Practice"}
+          {expanded ? "Close" : canManageDrills ? "Practice" : "View"}
         </button>
       </div>
 
-      {expanded && (
+      {expanded && !canManageDrills && (
+        <p className="text-xs text-muted-foreground rounded-md border bg-muted/20 px-3 py-2 pt-2">
+          {disabledReason ?? "You can view this drill but can't submit an attempt."}
+        </p>
+      )}
+
+      {expanded && canManageDrills && (
         <div className="space-y-3 pt-2 border-t">
           <label htmlFor={textareaId} className="text-xs font-medium block pt-2">
             Write or paste your response
@@ -236,48 +257,63 @@ function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
               <AttemptFeedback attempt={lastResult.attempt} />
             </div>
           )}
+        </div>
+      )}
 
-          <div className="space-y-2 pt-1">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Attempt history
-            </p>
-            {attemptsLoadState === "loading" && (
-              <p className="text-xs text-muted-foreground">Loading past attempts…</p>
-            )}
-            {attemptsLoadState === "error" && (
-              <p className="text-xs text-red-600">Couldn&#39;t load past attempts.</p>
-            )}
-            {attemptsLoadState === "idle" && attempts !== null && attempts.length === 0 && (
-              <p className="text-xs text-muted-foreground">No attempts yet.</p>
-            )}
-            {attemptsLoadState === "idle" && attempts !== null && attempts.length > 0 && (
-              <div className="space-y-1.5">
-                {attempts.map((a) => (
-                  <AttemptHistoryEntry key={a.id} attempt={a} />
-                ))}
-              </div>
-            )}
-          </div>
+      {expanded && (
+        <div className="space-y-2 pt-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Attempt history
+          </p>
+          {attemptsLoadState === "loading" && (
+            <p className="text-xs text-muted-foreground">Loading past attempts…</p>
+          )}
+          {attemptsLoadState === "error" && (
+            <p className="text-xs text-red-600">Couldn&#39;t load past attempts.</p>
+          )}
+          {attemptsLoadState === "idle" && attempts !== null && attempts.length === 0 && (
+            <p className="text-xs text-muted-foreground">No attempts yet.</p>
+          )}
+          {attemptsLoadState === "idle" && attempts !== null && attempts.length > 0 && (
+            <div className="space-y-1.5">
+              {attempts.map((a) => (
+                <AttemptHistoryEntry key={a.id} attempt={a} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function RoundDrillsView({ roundId, drills, onGenerateDrills, isLoading }: Props) {
+export function RoundDrillsView({
+  roundId,
+  drills,
+  onGenerateDrills,
+  isLoading,
+  canManageDrills = true,
+  disabledReason,
+}: Props) {
   if (drills.length === 0) {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Generate targeted drills from this round&#39;s failures and dropped arguments.
         </p>
-        <button
-          onClick={onGenerateDrills}
-          disabled={isLoading}
-          className="rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
-        >
-          {isLoading ? "Generating drills..." : "Generate Post-Round Drills"}
-        </button>
+        {canManageDrills ? (
+          <button
+            onClick={onGenerateDrills}
+            disabled={isLoading}
+            className="rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
+          >
+            {isLoading ? "Generating drills..." : "Generate Post-Round Drills"}
+          </button>
+        ) : (
+          <p className="text-xs text-muted-foreground rounded-md border bg-muted/20 px-3 py-2">
+            {disabledReason ?? "No drills yet — ask a debater in the room to generate them."}
+          </p>
+        )}
       </div>
     );
   }
@@ -286,16 +322,26 @@ export function RoundDrillsView({ roundId, drills, onGenerateDrills, isLoading }
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Post-Round Drills ({drills.length})</h2>
-        <button
-          onClick={onGenerateDrills}
-          disabled={isLoading}
-          className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50 transition-colors"
-        >
-          {isLoading ? "Regenerating..." : "Regenerate"}
-        </button>
+        {canManageDrills && (
+          <button
+            onClick={onGenerateDrills}
+            disabled={isLoading}
+            className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+          >
+            {isLoading ? "Regenerating..." : "Regenerate"}
+          </button>
+        )}
       </div>
       <div className="grid gap-4">
-        {drills.map((d) => <DrillCard key={d.id} roundId={roundId} drill={d} />)}
+        {drills.map((d) => (
+          <DrillCard
+            key={d.id}
+            roundId={roundId}
+            drill={d}
+            canManageDrills={canManageDrills}
+            disabledReason={disabledReason}
+          />
+        ))}
       </div>
     </div>
   );

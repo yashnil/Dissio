@@ -1,4 +1,4 @@
-"""Pass 27 — Phase 9A multiplayer room tests.
+"""Pass 27/28 — Phase 9A/9B multiplayer room tests.
 
 Endpoint-level tests via direct function call with mocked collaborators —
 the established pattern in this repo's round_simulations tests, avoiding a
@@ -8,15 +8,23 @@ Covers:
 - round_room_service: invite code generation/uniqueness, room creation,
   idempotent join, participant updates.
 - round_simulations._load_round_access / _require_general_mutate_access /
-  _require_turn_access: the permission layer, including the solo-round
-  regression (no room row -> identical to the legacy _verify_owner).
-- The new /rooms endpoints: create, get, join, list participants, assign
+  _require_turn_access / _require_coach_or_owner_access: the permission
+  layer, including the solo-round regression (no room row -> identical to
+  the legacy _verify_owner).
+- _participant_turn_state / _build_turn_context (Phase 9B): the pure
+  turn-contract predicate and the API-exposed TurnContext it builds.
+- The /rooms endpoints: create, get, join, list participants, assign
   role/side (owner-only), leave.
+- Phase 9B participant access expansion: report/replay/drills/annotations
+  read access, start/load-preparation/drill-generation/drill-attempt-submit
+  general-mutate access, annotations/finding-rating coach-or-owner access.
 """
 from __future__ import annotations
 
 import pytest
 from unittest.mock import patch, MagicMock, ANY
+
+from app.services.drill_attempt_scoring import DrillScoringError
 
 from app.services import round_room_service
 
@@ -286,6 +294,187 @@ class TestRequireTurnAccess:
                 self._access(is_owner=True, room={"id": "room-1"}, participant=owner_participant), RoundSide.PRO,
             )
         assert exc_info.value.status_code == 403
+
+
+class TestRequireCoachOrOwnerAccess:
+    """Phase 9B: annotations/finding-ratings are owner-or-coach only."""
+
+    def _access(self, is_owner, room=None, participant=None):
+        from app.api import round_simulations as mod
+        return mod._RoundAccess(round_row={"id": "r1"}, room=room, participant=participant, is_owner=is_owner)
+
+    def test_owner_always_passes(self):
+        from app.api import round_simulations as mod
+        mod._require_coach_or_owner_access(self._access(is_owner=True))  # must not raise
+
+    def test_coach_participant_passes(self):
+        from app.api import round_simulations as mod
+        participant = {"role": "coach", "status": "joined"}
+        mod._require_coach_or_owner_access(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant)
+        )  # must not raise
+
+    def test_debater_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined"}
+        with pytest.raises(HTTPException) as exc_info:
+            mod._require_coach_or_owner_access(
+                self._access(is_owner=False, room={"id": "room-1"}, participant=participant)
+            )
+        assert exc_info.value.status_code == 403
+
+    def test_observer_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        participant = {"role": "observer", "status": "joined"}
+        with pytest.raises(HTTPException):
+            mod._require_coach_or_owner_access(
+                self._access(is_owner=False, room={"id": "room-1"}, participant=participant)
+            )
+
+    def test_non_member_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        with pytest.raises(HTTPException):
+            mod._require_coach_or_owner_access(
+                self._access(is_owner=False, room={"id": "room-1"}, participant=None)
+            )
+
+
+class TestParticipantTurnState:
+    """Pure predicate shared by _require_turn_access and _build_turn_context."""
+
+    def test_none_expected_side_is_never_allowed(self):
+        from app.api import round_simulations as mod
+        allowed, reason = mod._participant_turn_state(None, None, True, None)
+        assert allowed is False
+        assert reason
+
+    def test_solo_room_none_is_always_allowed(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        allowed, reason = mod._participant_turn_state(None, None, True, RoundSide.PRO)
+        assert allowed is True
+        assert reason is None
+
+    def test_matching_side_allowed(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro"}
+        allowed, reason = mod._participant_turn_state({"id": "room-1"}, participant, False, RoundSide.PRO)
+        assert allowed is True
+        assert reason is None
+
+    def test_wrong_side_names_both_sides_in_reason(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "con"}
+        allowed, reason = mod._participant_turn_state({"id": "room-1"}, participant, False, RoundSide.PRO)
+        assert allowed is False
+        assert "con" in reason and "pro" in reason
+
+    def test_coach_and_observer_have_distinct_reasons(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        coach = {"role": "coach", "status": "joined", "side": None}
+        observer = {"role": "observer", "status": "joined", "side": None}
+        _, coach_reason = mod._participant_turn_state({"id": "room-1"}, coach, False, RoundSide.PRO)
+        _, observer_reason = mod._participant_turn_state({"id": "room-1"}, observer, False, RoundSide.PRO)
+        assert "coach" in coach_reason.lower()
+        assert "observer" in observer_reason.lower()
+
+    def test_not_joined_rejected(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "invited", "side": "pro"}
+        allowed, _ = mod._participant_turn_state({"id": "room-1"}, participant, False, RoundSide.PRO)
+        assert allowed is False
+
+
+class TestBuildTurnContext:
+    """The API-exposed turn contract surfaced on RoundRoomStateResponse."""
+
+    def _access(self, is_owner, room=None, participant=None):
+        from app.api import round_simulations as mod
+        return mod._RoundAccess(round_row={"id": "r1"}, room=room, participant=participant, is_owner=is_owner)
+
+    def _config(self, student_side="pro"):
+        from app.models.round_simulation import RoundSimulationConfig
+        return RoundSimulationConfig(student_side=student_side, speaking_order="first", resolution="Test.")
+
+    def test_deliberation_phase_no_one_can_act(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        ctx = mod._build_turn_context(
+            self._access(is_owner=True, room=None), RoundPhaseType.JUDGE_DELIBERATION, self._config(),
+        )
+        assert ctx.can_submit_current_turn is False
+        assert ctx.expected_side is None
+        assert ctx.expected_role is None
+
+    def test_completed_phase_no_one_can_act(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        ctx = mod._build_turn_context(self._access(is_owner=True, room=None), RoundPhaseType.COMPLETED, self._config())
+        assert ctx.can_submit_current_turn is False
+
+    def test_ai_turn_speech_phase_is_disabled_for_everyone(self):
+        """second_constructive: student_side=pro speaks first, so the AI
+        (con) speaks second_constructive -- no human submission expected."""
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "owner", "status": "joined", "side": "pro"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=True, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.SECOND_CONSTRUCTIVE, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is False
+        assert ctx.disabled_reason == "The AI opponent speaks in this phase."
+        assert ctx.expected_side.value == "pro"
+        assert ctx.expected_role == "debater"
+
+    def test_crossfire_phase_allowed_for_matching_side(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CROSSFIRE, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is True
+        assert ctx.disabled_reason is None
+        assert ctx.expected_side.value == "pro"
+
+    def test_speech_phase_allowed_for_the_students_own_turn(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "owner", "status": "joined", "side": "pro"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=True, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CONSTRUCTIVE, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is True
+
+    def test_solo_round_always_allowed_in_a_student_phase(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        ctx = mod._build_turn_context(
+            self._access(is_owner=True, room=None), RoundPhaseType.FIRST_CONSTRUCTIVE, self._config(),
+        )
+        assert ctx.can_submit_current_turn is True
+        assert ctx.disabled_reason is None
+
+    def test_observer_disabled_in_crossfire_with_reason(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "observer", "status": "joined", "side": None}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CROSSFIRE, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is False
+        assert "observer" in (ctx.disabled_reason or "").lower()
 
 
 # ── /rooms endpoints ─────────────────────────────────────────────────────────
@@ -565,3 +754,388 @@ class TestLeaveRoomEndpoint:
             with pytest.raises(HTTPException) as exc_info:
                 mod.leave_room_endpoint("room-1", "stranger")
         assert exc_info.value.status_code == 404
+
+
+# ── Phase 9B: participant access expansion ──────────────────────────────────
+#
+# These exercise the real _load_round_access chain (not mocked) against a
+# mocked supabase + round_room_service, mirroring TestLoadRoundAccess's
+# pattern, so the endpoint-level tests actually prove the access swap, not
+# just that some helper was called.
+
+
+def _configure_round_access(round_row, room=None, participant=None):
+    """Returns a MagicMock supabase configured so _load_round_access resolves
+    to (round_row, room, participant) when called for round_row['id']."""
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+        MagicMock(data=round_row)
+    )
+    return supabase
+
+
+def _full_round_row(round_id="r1", user_id="owner-1", status="setup"):
+    """A round_simulations row complete enough for _load_simulation to
+    validate -- needed by endpoints (start, load-preparation, drills) that
+    read sim.config, not just check ownership."""
+    return {
+        "id": round_id, "user_id": user_id, "status": status,
+        "config_json": {
+            "student_side": "pro", "speaking_order": "first", "resolution": "Test resolution.",
+        },
+        "current_phase": "first_constructive", "phase_history": [],
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def _drill(drill_id="drill-1", round_id="r1"):
+    from app.models.round_simulation import RoundDrill, RoundDrillSource
+    return RoundDrill(
+        id=drill_id, round_id=round_id, drill_id="logical-1",
+        source=RoundDrillSource(round_id=round_id, speech_phase="first_rebuttal", weakness_description="Dropped C1."),
+        skill_target="drops", title="Dropped-Response Recovery Drill",
+        prompt="Practice covering all opponent arguments.",
+        success_criteria=["Every opponent argument is named and addressed."],
+        time_limit_seconds=90, created_at="2026-01-01T00:00:00Z",
+    )
+
+
+class TestReadTierEndpoints:
+    """report / replay / turning-points / flow / evidence-report / drills-get
+    / drill-attempts-get / annotations-list: owner or any joined participant
+    (any role) can read; a non-member cannot."""
+
+    def test_owner_can_read_report(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None), \
+             patch.object(mod, "export_round_report", return_value={"ok": True}) as mock_export:
+            result = mod.get_round_report("r1", False, "owner-1")
+        mock_export.assert_called_once()
+        assert result == {"ok": True}
+
+    def test_joined_participant_can_read_report(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "export_round_report", return_value={"ok": True}) as mock_export:
+            result = mod.get_round_report("r1", False, "u2")
+        mock_export.assert_called_once()
+        assert result == {"ok": True}
+
+    def test_non_member_cannot_read_report(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(mod, "export_round_report") as mock_export:
+            with pytest.raises(HTTPException) as exc_info:
+                mod.get_round_report("r1", False, "stranger")
+        assert exc_info.value.status_code == 403
+        mock_export.assert_not_called()
+
+    def test_joined_participant_can_read_replay(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "get_replay_timeline", return_value=[]) as mock_replay:
+            result = mod.get_round_replay("r1", "u2")
+        mock_replay.assert_called_once()
+        assert result == []
+
+    def test_non_member_cannot_read_replay(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(mod, "get_replay_timeline") as mock_replay:
+            with pytest.raises(HTTPException) as exc_info:
+                mod.get_round_replay("r1", "stranger")
+        assert exc_info.value.status_code == 403
+        mock_replay.assert_not_called()
+
+    def test_joined_participant_can_view_drills(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_drills", return_value=[_drill()]) as mock_load:
+            result = mod.get_round_drills("r1", "u2")
+        mock_load.assert_called_once_with("r1")
+        assert result == [_drill()]
+
+    def test_non_member_cannot_view_drills(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(mod, "load_round_drills") as mock_load:
+            with pytest.raises(HTTPException) as exc_info:
+                mod.get_round_drills("r1", "stranger")
+        assert exc_info.value.status_code == 403
+        mock_load.assert_not_called()
+
+    def test_joined_participant_can_view_drill_attempts(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_drills", return_value=[_drill(drill_id="drill-1")]), \
+             patch.object(mod, "load_round_drill_attempts", return_value=[]) as mock_attempts:
+            result = mod.get_round_drill_attempts("r1", "drill-1", "u2")
+        mock_attempts.assert_called_once_with("drill-1")
+        assert result == []
+
+    def test_joined_participant_can_list_annotations(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "list_coach_annotations", return_value=[]) as mock_list:
+            result = mod.list_annotations("r1", "u2", None)
+        mock_list.assert_called_once()
+        assert result == []
+
+
+class TestGeneralMutateEndpoints:
+    """start / load-preparation / generate-drills / submit-drill-attempt: any
+    joined debater (not observer/coach) may act; solo owner is unaffected."""
+
+    def test_solo_owner_can_start_round(self):
+        from app.api import round_simulations as mod
+        round_row = _full_round_row(user_id="owner-1")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None):
+            result = mod.start_round("r1", "owner-1")
+        assert result.status.value == "active"
+
+    def test_joined_debater_can_start_round(self):
+        from app.api import round_simulations as mod
+        round_row = _full_round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "sync_room_status"):
+            result = mod.start_round("r1", "u2")
+        assert result.status.value == "active"
+
+    def test_observer_cannot_start_round(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = {"id": "r1", "user_id": "owner-1", "status": "setup"}
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.start_round("r1", "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_joined_debater_can_generate_drills(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import GenerateDrillsRequest
+        round_row = _full_round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "load_evidence_uses", return_value=[]), \
+             patch.object(mod, "generate_post_round_drills", return_value=[]) as mock_gen, \
+             patch.object(mod, "save_round_drills"), \
+             patch.object(mod, "track_product_event"):
+            result = mod.generate_drills_endpoint("r1", GenerateDrillsRequest(round_id="r1"), "u2")
+        mock_gen.assert_called_once()
+        assert result == []
+
+    def test_coach_cannot_generate_drills(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import GenerateDrillsRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.generate_drills_endpoint("r1", GenerateDrillsRequest(round_id="r1"), "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_joined_debater_can_submit_drill_attempt(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SubmitRoundDrillAttemptRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_b", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SubmitRoundDrillAttemptRequest(round_id="r1", response_text="My attempt.")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_drills", return_value=[_drill()]), \
+             patch.object(mod, "score_drill_attempt", side_effect=DrillScoringError("no")), \
+             patch.object(mod, "load_round_drill_attempts", return_value=[]), \
+             patch.object(mod, "save_round_drill_attempt"), \
+             patch.object(mod, "award_xp", return_value=True), \
+             patch.object(mod, "track_product_event"):
+            result = mod.submit_round_drill_attempt("r1", "drill-1", req, "u2")
+        assert result.attempt.response_text == "My attempt."
+
+    def test_observer_cannot_submit_drill_attempt(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SubmitRoundDrillAttemptRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        req = SubmitRoundDrillAttemptRequest(round_id="r1", response_text="My attempt.")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.submit_round_drill_attempt("r1", "drill-1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+
+class TestCoachOrOwnerEndpoints:
+    """annotations-create / rate-finding: owner or coach role only."""
+
+    def test_coach_can_create_annotation(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        supabase = _configure_round_access(round_row)
+        fake_annotation = type("Annotation", (), dict(
+            id="a1", round_id="r1", coach_id="u2", annotation_type="note",
+            target_id="t1", target_type="argument", content="Good job.",
+            is_correction=False, finding_id=None, created_at="2026-01-01T00:00:00Z",
+        ))()
+        req = AddAnnotationRequest(
+            round_id="r1", annotation_type="note", content="Good job.",
+            target_id="t1", target_type="argument",
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "add_coach_annotation", return_value=fake_annotation), \
+             patch.object(mod, "track_product_event"):
+            result = mod.create_annotation("r1", req, "u2")
+        assert result["content"] == "Good job."
+
+    def test_debater_cannot_create_annotation(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = AddAnnotationRequest(
+            round_id="r1", annotation_type="note", content="Good job.",
+            target_id="t1", target_type="argument",
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_non_member_cannot_rate_finding(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import RateFindingRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        req = RateFindingRequest(finding_id="f1", rating="useful")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.rate_finding("r1", "f1", req, "stranger")
+        assert exc_info.value.status_code == 403
+
+
+class TestSoloRegressionForNewlyChangedEndpoints:
+    """Old solo rounds (no room row at all) must behave exactly as before
+    for every endpoint touched in this phase."""
+
+    def test_solo_owner_can_load_preparation(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import LoadPreparationRequest
+        round_row = _full_round_row(user_id="owner-1")
+        supabase = _configure_round_access(round_row)
+        req = LoadPreparationRequest(round_id="r1")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None), \
+             patch.object(mod, "build_opponent_round_plan") as mock_plan:
+            mock_plan.return_value.model_dump.return_value = {"id": "plan-1"}
+            mock_plan.return_value.id = "plan-1"
+            result = mod.load_preparation("r1", req, "owner-1")
+        assert result["opponent_plan_id"] == "plan-1"
+
+    def test_solo_non_owner_still_rejected_everywhere(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None):
+            for fn, args in [
+                (mod.get_round_report, ("r1", False, "stranger")),
+                (mod.get_round_replay, ("r1", "stranger")),
+                (mod.get_round_drills, ("r1", "stranger")),
+            ]:
+                with pytest.raises(HTTPException) as exc_info:
+                    fn(*args)
+                assert exc_info.value.status_code == 403

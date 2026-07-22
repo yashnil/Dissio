@@ -483,8 +483,11 @@ class TestSubmitRoundDrillAttempt:
         drills = drills if drills is not None else [_drill()]
         prior_attempts = prior_attempts if prior_attempts is not None else []
         round_id = round_id if round_id is not None else req.round_id
+        access = mod._RoundAccess(
+            round_row={"id": "r1", "user_id": user_id}, room=None, participant=None, is_owner=True,
+        )
         with patch.object(mod, "get_supabase", return_value=MagicMock()), \
-             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "_load_round_access", return_value=access) as mock_verify, \
              patch.object(mod, "load_round_drills", return_value=drills), \
              patch.object(mod, "load_round_drill_attempts", return_value=prior_attempts) as mock_prior, \
              patch.object(mod, "score_drill_attempt", side_effect=score_side_effect) as mock_score, \
@@ -637,8 +640,11 @@ class TestGetRoundDrillAttempts:
         from app.api import round_simulations as mod
         drills = drills if drills is not None else [_drill()]
         attempts = attempts if attempts is not None else []
+        access = mod._RoundAccess(
+            round_row={"id": "r1", "user_id": user_id}, room=None, participant=None, is_owner=True,
+        )
         with patch.object(mod, "get_supabase", return_value=MagicMock()), \
-             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "_load_round_access", return_value=access) as mock_verify, \
              patch.object(mod, "load_round_drills", return_value=drills), \
              patch.object(mod, "load_round_drill_attempts", return_value=attempts) as mock_load:
             result = mod.get_round_drill_attempts("r1", drill_id, user_id)

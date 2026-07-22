@@ -354,9 +354,23 @@ export interface RoundRoomParticipant {
   updated_at: string;
 }
 
+// ── Speaker-role / turn contract (Phase 9B) ─────────────────────────────────
+
+/** The backend's authoritative answer to "can the viewer act right now, and
+ * if not, why not" — consume this instead of re-deriving the same rule
+ * client-side. expected_role is always "debater" when expected_side is set:
+ * 9B does not add first/second-speaker-within-a-side granularity. */
+export interface TurnContext {
+  can_submit_current_turn: boolean;
+  disabled_reason?: string;
+  expected_side?: RoundSide;
+  expected_role?: string;
+}
+
 export interface RoundRoomStateResponse {
   room: RoundRoom;
   participants: RoundRoomParticipant[];
   viewer_participant: RoundRoomParticipant;
   round_state?: RoundStateResponse;
+  turn_context?: TurnContext;
 }

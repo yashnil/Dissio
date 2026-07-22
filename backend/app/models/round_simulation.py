@@ -634,11 +634,26 @@ class UpdateRoomParticipantRequest(BaseModel):
     side: Optional[RoundSide] = None
 
 
+class TurnContext(BaseModel):
+    """Phase 9B: the backend's authoritative answer to "can the viewer act
+    right now, and if not, why not" — the frontend consumes this instead of
+    re-deriving the same rule client-side.
+
+    expected_role is always "debater" when expected_side is set: any joined
+    participant assigned to that side (owner, debater_a, or debater_b) may
+    act. 9B does not add first/second-speaker-within-a-side granularity."""
+    can_submit_current_turn: bool
+    disabled_reason: Optional[str] = None
+    expected_side: Optional[RoundSide] = None
+    expected_role: Optional[str] = None
+
+
 class RoundRoomStateResponse(BaseModel):
     room: RoundRoom
     participants: List[RoundRoomParticipant] = Field(default_factory=list)
     viewer_participant: RoundRoomParticipant
     round_state: Optional[RoundStateResponse] = None
+    turn_context: Optional[TurnContext] = None
 
 
 class GenerateDecisionRequest(BaseModel):
