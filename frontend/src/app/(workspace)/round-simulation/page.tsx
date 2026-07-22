@@ -489,6 +489,7 @@ export default function RoundSimulationPage() {
 
         {view === "drills" && (
           <RoundDrillsView
+            roundId={simulation.id}
             drills={drills}
             onGenerateDrills={handleGenerateDrills}
             isLoading={loading}

@@ -17,6 +17,7 @@ from app.models.round_simulation import (
     RoundArgument,
     RoundDecision,
     RoundDrill,
+    RoundDrillAttempt,
     RoundDrillSource,
     RoundEvidenceUse,
     RoundPhaseType,
@@ -324,4 +325,30 @@ def load_round_drills(round_id: str) -> List[RoundDrill]:
         return [RoundDrill.model_validate(r) for r in (resp.data or [])]
     except Exception as exc:
         logger.warning("Failed to load round drills: %s", exc)
+        return []
+
+
+def save_round_drill_attempt(attempt: RoundDrillAttempt) -> None:
+    """Persist a single round drill attempt."""
+    supabase = get_supabase()
+    try:
+        supabase.table("round_drill_attempts").insert(attempt.model_dump()).execute()
+    except Exception as exc:
+        logger.error("Failed to save round drill attempt: %s", exc)
+
+
+def load_round_drill_attempts(round_drill_id: str) -> List[RoundDrillAttempt]:
+    """Load attempts for a single drill, newest first."""
+    supabase = get_supabase()
+    try:
+        resp = (
+            supabase.table("round_drill_attempts")
+            .select("*")
+            .eq("round_drill_id", round_drill_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return [RoundDrillAttempt.model_validate(r) for r in (resp.data or [])]
+    except Exception as exc:
+        logger.warning("Failed to load round drill attempts: %s", exc)
         return []
