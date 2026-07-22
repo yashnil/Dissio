@@ -22,6 +22,7 @@ import {
   describeCapabilities,
   disabledSubmitReason,
   expectedSpeakerLabel,
+  generalActionDisabledReason,
   myParticipant,
 } from "@/lib/roomModel";
 import type {
@@ -391,6 +392,10 @@ export default function RoundSimulationPage() {
     try {
       const d = await roundApi.rejudgeRound(simulation.id, judgeType);
       setDecision(d);
+      // Rejudging doesn't change phase/participant state, but keep
+      // turn_context/room permissions in sync with the rest of the app's
+      // post-action refresh convention (solo: round state, multiplayer: room state).
+      await refreshCurrent();
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Rejudge failed.";
       setError(msg);
@@ -558,6 +563,7 @@ export default function RoundSimulationPage() {
           }
       : undefined;
   const canManageRoundContent = mode === "multiplayer" ? canPerformRoundAction(viewerParticipant) : true;
+  const generalActionReason = mode === "multiplayer" ? generalActionDisabledReason(viewerParticipant) : null;
 
   return (
     <div className="flex flex-col">
@@ -744,8 +750,10 @@ export default function RoundSimulationPage() {
             <RoundBallotView
               decision={decision}
               allArguments={flowArgs}
-              onRejudge={canManageRoundContent ? handleRejudge : undefined}
+              onRejudge={handleRejudge}
               isLoading={loading}
+              canRejudge={canManageRoundContent}
+              rejudgeDisabledReason={generalActionReason}
             />
           ) : (
             <div className="space-y-4">

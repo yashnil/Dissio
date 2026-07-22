@@ -181,6 +181,26 @@ export function canPerformRoundAction(participant: RoundRoomParticipant | undefi
   return participant.role !== "coach" && participant.role !== "observer";
 }
 
+/** Human-readable reason a general round action (rejudge, generate
+ * decision/drills) is disabled, or null when it's allowed. The
+ * reason-returning counterpart to canPerformRoundAction, mirroring the
+ * canSubmitCurrentTurn/disabledSubmitReason pairing. Phase 9D: wired into
+ * the ballot's rejudge control first; reusable for other general-mutate
+ * actions later. */
+export function generalActionDisabledReason(participant: RoundRoomParticipant | undefined): string | null {
+  if (canPerformRoundAction(participant)) return null;
+  if (!participant || participant.status !== "joined") {
+    return "You're not an active participant in this room yet.";
+  }
+  if (participant.role === "coach") {
+    return "Coaches can watch the round but can't perform this action.";
+  }
+  if (participant.role === "observer") {
+    return "Observers can watch the round but can't perform this action.";
+  }
+  return null;
+}
+
 /** Short, human-facing sentence describing what this participant can do in
  * the room right now — for a "what can I do here" banner. */
 export function describeCapabilities(

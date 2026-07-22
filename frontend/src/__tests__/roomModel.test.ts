@@ -1,5 +1,5 @@
 /**
- * Pass 27/28/29 — Phase 9A/9B/9C. Tests for room/lobby pure helpers.
+ * Pass 27/28/29/30 — Phase 9A/9B/9C/9D. Tests for room/lobby pure helpers.
  *
  * Same convention as roundModel.test.ts: no React, no DOM, pure functions
  * called directly with fixture factories.
@@ -22,6 +22,7 @@ import {
   canSubmitCurrentTurn,
   disabledSubmitReason,
   canPerformRoundAction,
+  generalActionDisabledReason,
   describeCapabilities,
 } from "@/lib/roomModel";
 import type { RoundRoom, RoundRoomParticipant, RoundRoomStateResponse } from "@/types/round";
@@ -314,6 +315,44 @@ describe("canPerformRoundAction", () => {
 
   it("rejects when there is no participant record", () => {
     expect(canPerformRoundAction(undefined)).toBe(false);
+  });
+});
+
+// ── Phase 9D: general-action disabled reason (rejudge, etc.) ───────────────
+
+describe("generalActionDisabledReason", () => {
+  it("returns null for the owner", () => {
+    const p = makeParticipant({ role: "owner", status: "joined" });
+    expect(generalActionDisabledReason(p)).toBeNull();
+  });
+
+  it("returns null for a joined debater", () => {
+    const p = makeParticipant({ role: "debater_b", side: "con", status: "joined" });
+    expect(generalActionDisabledReason(p)).toBeNull();
+  });
+
+  it("explains coach restriction", () => {
+    const p = makeParticipant({ role: "coach", status: "joined" });
+    expect(generalActionDisabledReason(p)).toMatch(/coach/i);
+  });
+
+  it("explains observer restriction", () => {
+    const p = makeParticipant({ role: "observer", status: "joined" });
+    expect(generalActionDisabledReason(p)).toMatch(/observer/i);
+  });
+
+  it("explains a participant who hasn't joined", () => {
+    const p = makeParticipant({ role: "debater_a", status: "invited" });
+    expect(generalActionDisabledReason(p)).toMatch(/not an active participant/i);
+  });
+
+  it("explains a missing participant record without inventing a false certainty", () => {
+    expect(generalActionDisabledReason(undefined)).toMatch(/not an active participant/i);
+  });
+
+  it("never includes a raw id in the reason text", () => {
+    const p = makeParticipant({ id: "p-secret-123", role: "coach", status: "joined" });
+    expect(generalActionDisabledReason(p)).not.toMatch(/p-secret-123/);
   });
 });
 

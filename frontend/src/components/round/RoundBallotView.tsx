@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useId, useState } from "react";
 import {
   CROSSFIRE_EFFECT_LABELS,
   crossfireEffectTone,
@@ -17,14 +18,99 @@ const EFFECT_TONE_TEXT: Record<ReturnType<typeof crossfireEffectTone>, string> =
 
 const SEVERITY_TEXT: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
 
+const REJUDGE_JUDGE_TYPES = [
+  { value: "flow", label: "Flow Judge" },
+  { value: "lay", label: "Lay Judge" },
+  { value: "parent", label: "Parent Judge" },
+  { value: "technical", label: "Technical Judge" },
+  { value: "coach", label: "Coach Judge" },
+];
+
 interface Props {
   decision: RoundDecision;
   allArguments: RoundArgument[];
   onRejudge?: (judgeType: string) => Promise<void>;
   isLoading?: boolean;
+  /** Omitted (default true) => unrestricted, matching solo behavior before
+   * this control existed. Multiplayer passes the room's general-mutate
+   * capability (owner or joined non-observer/coach participant). */
+  canRejudge?: boolean;
+  /** Shown instead of the controls when canRejudge is false. */
+  rejudgeDisabledReason?: string | null;
 }
 
-export function RoundBallotView({ decision, allArguments, onRejudge, isLoading }: Props) {
+function RejudgeControl({
+  decision,
+  onRejudge,
+  isLoading,
+  canRejudge,
+  rejudgeDisabledReason,
+}: {
+  decision: RoundDecision;
+  onRejudge: (judgeType: string) => Promise<void>;
+  isLoading?: boolean;
+  canRejudge: boolean;
+  rejudgeDisabledReason?: string | null;
+}) {
+  const [judgeType, setJudgeType] = useState(decision.judge_type);
+  const selectId = useId();
+
+  // Reflect the round's current judge type after a successful rejudge,
+  // rather than lingering on whatever the viewer last picked.
+  useEffect(() => {
+    setJudgeType(decision.judge_type);
+  }, [decision.judge_type]);
+
+  return (
+    <div className="rounded-lg border p-4 space-y-2">
+      <h3 className="text-sm font-semibold">Rejudge</h3>
+      <p className="text-xs text-muted-foreground">
+        Rejudge reruns the decision using the saved round record.
+      </p>
+      {canRejudge ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <label htmlFor={selectId} className="sr-only">
+            Judge type
+          </label>
+          <select
+            id={selectId}
+            className="rounded-md border bg-background px-2 py-1.5 text-xs"
+            value={judgeType}
+            onChange={(e) => setJudgeType(e.target.value)}
+            disabled={isLoading}
+          >
+            {REJUDGE_JUDGE_TYPES.map((j) => (
+              <option key={j.value} value={j.value}>
+                {j.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onRejudge(judgeType)}
+            disabled={isLoading}
+            className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+          >
+            {isLoading ? "Rejudging..." : "Run Rejudge"}
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {rejudgeDisabledReason ?? "You don't have permission to rejudge this round."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function RoundBallotView({
+  decision,
+  allArguments,
+  onRejudge,
+  isLoading,
+  canRejudge = true,
+  rejudgeDisabledReason,
+}: Props) {
   const proSurviving = getSurvivingOffense(allArguments, "pro");
   const conSurviving = getSurvivingOffense(allArguments, "con");
   const dropped = getDroppedArguments(allArguments);
@@ -41,6 +127,16 @@ export function RoundBallotView({ decision, allArguments, onRejudge, isLoading }
           {decision.judge_type} judge · Engine v{decision.engine_version}
         </div>
       </div>
+
+      {onRejudge && (
+        <RejudgeControl
+          decision={decision}
+          onRejudge={onRejudge}
+          isLoading={isLoading}
+          canRejudge={canRejudge}
+          rejudgeDisabledReason={rejudgeDisabledReason}
+        />
+      )}
 
       {/* RFD */}
       <div className="rounded-lg border p-4">

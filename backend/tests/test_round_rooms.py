@@ -1431,6 +1431,94 @@ class TestCoachOrOwnerEndpoints:
         assert exc_info.value.status_code == 403
 
 
+class _FakeRejudgeDecision:
+    """Lightweight stand-in for RoundDecision -- avoids constructing the full
+    real model just to prove crossfire_effects/insert plumbing isn't dropped
+    (same convention as _FakeFeedback in test_round_api.py)."""
+    def __init__(self, crossfire_effects=None):
+        self.crossfire_effects = crossfire_effects or []
+
+    def model_dump(self):
+        return {"id": "decision-2", "round_id": "r1", "crossfire_effects": self.crossfire_effects}
+
+
+class TestRejudgeEndpoint:
+    """Phase 9D audit: rejudge already sits at the general-mutate tier
+    (owner or joined non-observer/coach participant) -- these tests close
+    the coverage gap (previously only a route-existence check existed)."""
+
+    def _call(self, user_id, round_row=None, room=None, participant=None, crossfire_effects=None):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import RejudgeRequest
+        round_row = round_row if round_row is not None else _full_round_row(user_id="owner-1", status="completed")
+        supabase = _configure_round_access(round_row)
+        decision = _FakeRejudgeDecision(crossfire_effects=crossfire_effects)
+        req = RejudgeRequest(judge_type="lay")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "load_evidence_uses", return_value=[]), \
+             patch.object(mod, "_get_prior_speeches_summary", return_value=""), \
+             patch.object(mod, "load_crossfire_exchanges", return_value=[]), \
+             patch.object(mod, "derive_crossfire_effects", return_value=crossfire_effects or []), \
+             patch.object(mod, "rejudge_round", return_value=decision), \
+             patch.object(mod, "track_product_event"):
+            result = mod.rejudge("r1", req, user_id)
+        return result, supabase
+
+    def test_solo_owner_can_rejudge(self):
+        result, _ = self._call(user_id="owner-1", room=None, participant=None)
+        assert result.crossfire_effects == []
+
+    def test_joined_debater_can_rejudge(self):
+        """Confirms today's actual policy: general-mutate tier, not
+        owner-only -- a joined debater on the round's side may rejudge."""
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        result, _ = self._call(user_id="u2", room=room, participant=participant)
+        assert result.crossfire_effects == []
+
+    def test_coach_cannot_rejudge(self):
+        from fastapi import HTTPException
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(user_id="u2", room=room, participant=participant)
+        assert exc_info.value.status_code == 403
+
+    def test_observer_cannot_rejudge(self):
+        from fastapi import HTTPException
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(user_id="u2", room=room, participant=participant)
+        assert exc_info.value.status_code == 403
+
+    def test_non_member_cannot_rejudge(self):
+        from fastapi import HTTPException
+        room = _room()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(user_id="stranger", room=room, participant=None)
+        assert exc_info.value.status_code == 403
+
+    def test_rejudge_response_includes_crossfire_effects_when_applicable(self):
+        effects = [{"exchange_id": "ex-1", "effect_type": "concession_weakened_argument", "severity": "high",
+                    "explanation": "Conceded the framework.", "ballot_relevance": True}]
+        result, _ = self._call(user_id="owner-1", room=None, participant=None, crossfire_effects=effects)
+        assert result.crossfire_effects == effects
+
+    def test_rejudge_inserts_a_new_decision_row_never_deletes_the_prior_one(self):
+        """rejudge_round mints a new decision.id and the route only ever
+        inserts -- old decisions stay in round_decisions untouched, so they
+        still load via the "latest by created_at" query elsewhere."""
+        _, supabase = self._call(user_id="owner-1", room=None, participant=None)
+        insert_calls = [c for c in supabase.table.return_value.method_calls if c[0] == "insert"]
+        assert len(insert_calls) >= 1
+        supabase.table.return_value.delete.assert_not_called()
+        supabase.table.return_value.update.assert_not_called()
+
+
 class TestSoloRegressionForNewlyChangedEndpoints:
     """Old solo rounds (no room row at all) must behave exactly as before
     for every endpoint touched in this phase."""
