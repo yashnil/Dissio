@@ -323,3 +323,40 @@ export interface PrepWarning {
   message: string;
   card_id?: string;
 }
+
+// ── Multiplayer rooms (Phase 9A) ────────────────────────────────────────────
+
+export type RoomStatus = "waiting" | "active" | "completed" | "closed";
+export type RoomRole = "owner" | "debater_a" | "debater_b" | "coach" | "observer";
+export type RoomParticipantStatus = "invited" | "joined" | "left";
+
+export interface RoundRoom {
+  id: string;
+  round_id: string;
+  owner_user_id: string;
+  title?: string;
+  status: RoomStatus;
+  invite_code: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoundRoomParticipant {
+  id: string;
+  room_id: string;
+  user_id: string;
+  display_name?: string;
+  role: RoomRole;
+  side?: RoundSide;
+  status: RoomParticipantStatus;
+  joined_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoundRoomStateResponse {
+  room: RoundRoom;
+  participants: RoundRoomParticipant[];
+  viewer_participant: RoundRoomParticipant;
+  round_state?: RoundStateResponse;
+}

@@ -38,6 +38,11 @@ interface Props {
   onExchangeSaved: (exchange: CrossfireExchange) => void;
   onAdvancePhase: () => void;
   isLoading: boolean;
+  /** Multiplayer only. Omitted (default) => solo behavior, unchanged. When
+   * present and allowed is false, this viewer can't submit an answer/question
+   * right now (wrong side, observer, coach, etc.) — the interactive panels
+   * are replaced with `reason`. */
+  turnGate?: { allowed: boolean; reason: string | null };
 }
 
 function ExchangeDiagnostics({ exchange }: { exchange: CrossfireExchange }) {
@@ -157,6 +162,7 @@ export function CrossfireCapture({
   onExchangeSaved,
   onAdvancePhase,
   isLoading,
+  turnGate,
 }: Props) {
   const askerSide = opponentSide(studentSide);
   const askerLabel = `AI Opponent (${sideLabel(askerSide)})`;
@@ -312,6 +318,19 @@ export function CrossfireCapture({
 
   const [announcement, setAnnouncement] = useState("");
   const busy = isLoading || submitState === "submitting" || askState === "asking" || followUpBusyId !== null;
+
+  if (turnGate && !turnGate.allowed) {
+    return (
+      <section aria-label={`${phaseLabel} crossfire`} className="space-y-3">
+        <div className="rounded-lg border bg-muted/20 p-4 space-y-1">
+          <p className="text-sm font-medium">Not your turn</p>
+          <p className="text-xs text-muted-foreground">
+            {turnGate.reason ?? "You can't submit right now."}
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label={`${phaseLabel} crossfire`} className="space-y-5">

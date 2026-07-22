@@ -564,6 +564,83 @@ class RoundStateResponse(BaseModel):
     coaching_hint: Optional[str] = None
 
 
+# ── Multiplayer rooms (Phase 9A) ────────────────────────────────────────────
+
+
+class RoomStatus(str, Enum):
+    WAITING = "waiting"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CLOSED = "closed"
+
+
+class RoomRole(str, Enum):
+    OWNER = "owner"
+    DEBATER_A = "debater_a"
+    DEBATER_B = "debater_b"
+    COACH = "coach"
+    OBSERVER = "observer"
+
+
+class RoomParticipantStatus(str, Enum):
+    INVITED = "invited"
+    JOINED = "joined"
+    LEFT = "left"
+
+
+class RoundRoom(BaseModel):
+    id: str
+    round_id: str
+    owner_user_id: str
+    title: Optional[str] = None
+    status: RoomStatus = RoomStatus.WAITING
+    invite_code: str
+    created_at: str
+    updated_at: str
+
+
+class RoundRoomParticipant(BaseModel):
+    id: str
+    room_id: str
+    user_id: str
+    display_name: Optional[str] = None
+    role: RoomRole = RoomRole.OBSERVER
+    side: Optional[RoundSide] = None
+    status: RoomParticipantStatus = RoomParticipantStatus.INVITED
+    joined_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class CreateRoomRequest(BaseModel):
+    """Exactly one of round_id/config must be provided.
+
+    round_id: wrap an existing round the caller already owns.
+    config: create a new round (same shape as CreateRoundRequest) and wrap it.
+    """
+    round_id: Optional[str] = None
+    config: Optional[RoundSimulationConfig] = None
+    team_id: Optional[str] = None
+    title: Optional[str] = None
+
+
+class JoinRoomRequest(BaseModel):
+    invite_code: str
+    display_name: Optional[str] = None
+
+
+class UpdateRoomParticipantRequest(BaseModel):
+    role: Optional[RoomRole] = None
+    side: Optional[RoundSide] = None
+
+
+class RoundRoomStateResponse(BaseModel):
+    room: RoundRoom
+    participants: List[RoundRoomParticipant] = Field(default_factory=list)
+    viewer_participant: RoundRoomParticipant
+    round_state: Optional[RoundStateResponse] = None
+
+
 class GenerateDecisionRequest(BaseModel):
     round_id: str
     judge_type: Optional[str] = None

@@ -17,6 +17,11 @@ interface Props {
   onOpponentSpeechRequested: () => void;
   onAdvancePhase: () => void;
   isLoading: boolean;
+  /** Multiplayer only. Omitted (default) => solo behavior, unchanged. When
+   * present and allowed is false, this viewer can't act right now (wrong
+   * side, observer, coach, etc.) and the whole capture UI is replaced with
+   * `reason`. */
+  turnGate?: { allowed: boolean; reason: string | null };
 }
 
 type CaptureMode = "record" | "type" | "paste";
@@ -49,6 +54,7 @@ export function RoundSpeechCapture({
   onOpponentSpeechRequested,
   onAdvancePhase,
   isLoading,
+  turnGate,
 }: Props) {
   const [mode, setMode] = useState<CaptureMode>("type");
   const [transcript, setTranscript] = useState("");
@@ -108,6 +114,19 @@ export function RoundSpeechCapture({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // ── Multiplayer turn gate ───────────────────────────────────────────────────
+
+  if (turnGate && !turnGate.allowed) {
+    return (
+      <div className="rounded-lg border bg-muted/20 p-4 space-y-1">
+        <p className="text-sm font-medium">Not your turn</p>
+        <p className="text-xs text-muted-foreground">
+          {turnGate.reason ?? "You can't submit right now."}
+        </p>
+      </div>
+    );
   }
 
   // ── Opponent turn ───────────────────────────────────────────────────────────

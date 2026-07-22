@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from app.models.round_simulation import (
     AutomatedFindingRating,
     CoachAnnotation,
     CreateAdaptationReviewRequest,
+    CreateRoomRequest,
     CreateRoundRequest,
     CrossfireEffect,
     CrossfireExchange,
@@ -29,10 +31,12 @@ from app.models.round_simulation import (
     GenerateDecisionRequest,
     GenerateDrillsRequest,
     GenerateOpponentSpeechRequest,
+    JoinRoomRequest,
     LoadPreparationRequest,
     RateFindingRequest,
     RejudgeRequest,
     ReplayPhase,
+    RoomRole,
     RoundAdaptationReview,
     RoundArgument,
     RoundDecision,
@@ -43,6 +47,9 @@ from app.models.round_simulation import (
     RoundHistoryItem,
     RoundPhaseType,
     RoundQualityReport,
+    RoundRoom,
+    RoundRoomParticipant,
+    RoundRoomStateResponse,
     RoundSimulation,
     RoundSimulationConfig,
     RoundSide,
@@ -53,7 +60,9 @@ from app.models.round_simulation import (
     SubmitRoundDrillAttemptRequest,
     SubmitStudentSpeechRequest,
     TurningPoint,
+    UpdateRoomParticipantRequest,
 )
+from app.services import round_room_service
 from app.services.auth import get_current_user_id
 from app.services.coach_round_review import (
     add_coach_annotation,
@@ -190,48 +199,30 @@ def _check_duplicate_speech(round_id: str, phase: RoundPhaseType, idempotency_ke
     return None
 
 
-# ── Round lifecycle ───────────────────────────────────────────────────────────
-
-
-@router.post("", response_model=RoundSimulation, status_code=201)
-def create_round(
-    req: CreateRoundRequest,
-    user_id: str = Depends(get_current_user_id),
-) -> RoundSimulation:
-    """Create a new round simulation in SETUP state."""
-    supabase = get_supabase()
-    row_id = str(uuid.uuid4())
+def _build_round_row(config: RoundSimulationConfig, team_id: Optional[str], user_id: str) -> Dict[str, Any]:
     now = _now()
-    row = {
-        "id": row_id,
+    return {
+        "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "team_id": req.team_id,
-        "config_json": req.config.model_dump(),
+        "team_id": team_id,
+        "config_json": config.model_dump(),
         "status": RoundStatus.SETUP.value,
         "current_phase": RoundPhaseType.FIRST_CONSTRUCTIVE.value,
         "phase_history": [],
-        "is_practice_mode": bool(req.config.practice_mode_overrides),
+        "is_practice_mode": bool(config.practice_mode_overrides),
         "created_at": now,
         "updated_at": now,
         "phase_started_at": now,
     }
-    try:
-        supabase.table("round_simulations").insert(row).execute()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to create round: {exc}") from exc
-    track_product_event(user_id, "simulations_created", {"format": req.config.format.value})
-    return _load_simulation(row)
 
 
-@router.get("/{round_id}", response_model=RoundStateResponse)
-def get_round_state(
-    round_id: str,
-    user_id: str = Depends(get_current_user_id),
-    include_coaching_hint: bool = Query(True),
+def _build_round_state_response(
+    row: Dict[str, Any], supabase: Any, include_coaching_hint: bool = True
 ) -> RoundStateResponse:
-    """Fetch current round state, live flow, and speeches."""
-    supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    """Build the full round-state payload for a caller already known to have
+    read access to `row`. Shared by GET /{round_id} and the multiplayer room
+    state endpoints so the two paths never drift."""
+    round_id = row["id"]
     sim = _load_simulation(row)
     phase = sim.current_phase
     time_limit = get_time_limit(phase, sim.config)
@@ -293,6 +284,302 @@ def get_round_state(
     )
 
 
+# ── Multiplayer access control (Phase 9A) ───────────────────────────────────
+#
+# A round with no room row is solo and behaves exactly as it always has:
+# _load_round_access's owner branch is a byte-for-byte copy of the legacy
+# _verify_owner check, and _require_general_mutate_access / _require_turn_access
+# are no-ops once ownership is established with no room present.
+
+
+@dataclass
+class _RoundAccess:
+    round_row: Dict[str, Any]
+    room: Optional[Dict[str, Any]]
+    participant: Optional[Dict[str, Any]]  # caller's own round_room_participants row
+    is_owner: bool
+
+
+def _load_round_access(round_id: str, user_id: str, supabase: Any) -> _RoundAccess:
+    """Fetch round + read-access context. Raises 404/403 exactly like the
+    legacy _verify_owner for solo rounds (no room row)."""
+    try:
+        resp = supabase.table("round_simulations").select("*").eq("id", round_id).single().execute()
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Round not found.") from exc
+    row = resp.data
+    if not row:
+        raise HTTPException(status_code=404, detail="Round not found.")
+
+    is_owner = row.get("user_id") == user_id
+    room = round_room_service.get_room_by_round_id(supabase, round_id)
+    participant = round_room_service.get_participant(supabase, room["id"], user_id) if room else None
+
+    if is_owner:
+        return _RoundAccess(round_row=row, room=room, participant=participant, is_owner=True)
+    if room and participant and participant.get("status") == "joined":
+        return _RoundAccess(round_row=row, room=room, participant=participant, is_owner=False)
+    raise HTTPException(status_code=403, detail="Access denied.")
+
+
+def _require_general_mutate_access(access: "_RoundAccess") -> None:
+    """Any joined non-observer/coach participant, or the owner, may perform
+    round-progression actions (advance phase, trigger AI speech, judge)."""
+    if access.is_owner:
+        return
+    if access.participant and access.participant.get("role") not in ("coach", "observer"):
+        return
+    raise HTTPException(status_code=403, detail="Observers and coaches cannot perform this action.")
+
+
+def _require_turn_access(access: "_RoundAccess", expected_side: RoundSide) -> None:
+    """Only the participant occupying expected_side may submit a speech or
+    crossfire action on its behalf. Solo rounds (access.room is None) are
+    unaffected -- _load_round_access already required ownership to reach this
+    point, matching legacy behavior exactly.
+
+    Deliberately does NOT let ownership alone satisfy this: the room owner
+    must also hold the assigned side to submit on its behalf, so an owner who
+    isn't a round's debater can't spoof a participant's speech."""
+    if access.room is None:
+        return
+    participant = access.participant
+    if (
+        participant is None
+        or participant.get("status") != "joined"
+        or participant.get("role") in ("coach", "observer")
+    ):
+        raise HTTPException(status_code=403, detail="Observers and coaches cannot submit for a side.")
+    if participant.get("side") != expected_side.value:
+        raise HTTPException(status_code=403, detail="You are not assigned to the side that acts now.")
+
+
+def _load_room_access(room_id: str, user_id: str, supabase: Any) -> Dict[str, Any]:
+    """Fetch a room and verify the caller is its owner or a joined participant."""
+    room = round_room_service.get_room(supabase, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    if room["owner_user_id"] == user_id:
+        return room
+    participant = round_room_service.get_participant(supabase, room_id, user_id)
+    if participant and participant.get("status") == "joined":
+        return room
+    raise HTTPException(status_code=403, detail="Access denied.")
+
+
+def _build_room_state_response(room: Dict[str, Any], user_id: str, supabase: Any) -> RoundRoomStateResponse:
+    participants_raw = round_room_service.list_participants(supabase, room["id"])
+    participants = [RoundRoomParticipant.model_validate(p) for p in participants_raw]
+    viewer_raw = next((p for p in participants_raw if p["user_id"] == user_id), None)
+    if viewer_raw is None:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    round_state: Optional[RoundStateResponse] = None
+    try:
+        round_resp = (
+            supabase.table("round_simulations").select("*").eq("id", room["round_id"]).single().execute()
+        )
+        if round_resp.data:
+            round_state = _build_round_state_response(round_resp.data, supabase, include_coaching_hint=True)
+    except Exception:
+        round_state = None
+
+    return RoundRoomStateResponse(
+        room=RoundRoom.model_validate(room),
+        participants=participants,
+        viewer_participant=RoundRoomParticipant.model_validate(viewer_raw),
+        round_state=round_state,
+    )
+
+
+# ── Round lifecycle ───────────────────────────────────────────────────────────
+
+
+@router.post("", response_model=RoundSimulation, status_code=201)
+def create_round(
+    req: CreateRoundRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundSimulation:
+    """Create a new round simulation in SETUP state."""
+    supabase = get_supabase()
+    row = _build_round_row(req.config, req.team_id, user_id)
+    try:
+        supabase.table("round_simulations").insert(row).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create round: {exc}") from exc
+    track_product_event(user_id, "simulations_created", {"format": req.config.format.value})
+    return _load_simulation(row)
+
+
+# ── Multiplayer rooms (Phase 9A) ────────────────────────────────────────────
+
+
+@router.post("/rooms", response_model=RoundRoomStateResponse, status_code=201)
+def create_room_endpoint(
+    req: CreateRoomRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomStateResponse:
+    """Create a multiplayer room wrapping either an existing owned round or a
+    newly created one. Auto-joins the caller as the room's owner participant,
+    assigned to the round's existing human-controlled side."""
+    supabase = get_supabase()
+    if req.round_id and req.config:
+        raise HTTPException(status_code=400, detail="Provide either round_id or config, not both.")
+    if not req.round_id and not req.config:
+        raise HTTPException(status_code=400, detail="Provide either round_id or config.")
+
+    if req.round_id:
+        row = _verify_owner(req.round_id, user_id, supabase)
+        if round_room_service.get_room_by_round_id(supabase, req.round_id):
+            raise HTTPException(status_code=400, detail="This round already has a room.")
+        round_id = req.round_id
+        student_side = row["config_json"]["student_side"]
+    else:
+        row = _build_round_row(req.config, req.team_id, user_id)
+        try:
+            supabase.table("round_simulations").insert(row).execute()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to create round: {exc}") from exc
+        track_product_event(user_id, "simulations_created", {"format": req.config.format.value})
+        round_id = row["id"]
+        student_side = req.config.student_side.value
+
+    room, _owner_participant = round_room_service.create_room(
+        supabase, round_id, user_id, student_side, title=req.title,
+    )
+    track_product_event(user_id, "round_rooms_created", {"round_id": round_id})
+    return _build_room_state_response(room, user_id, supabase)
+
+
+@router.get("/rooms/{room_id}", response_model=RoundRoomStateResponse)
+def get_room_endpoint(
+    room_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomStateResponse:
+    supabase = get_supabase()
+    room = _load_room_access(room_id, user_id, supabase)
+    return _build_room_state_response(room, user_id, supabase)
+
+
+@router.post("/rooms/join", response_model=RoundRoomStateResponse)
+def join_room_endpoint(
+    req: JoinRoomRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomStateResponse:
+    """Join a room by invite code. Idempotent: repeat calls for an
+    already-joined user return the current state without creating a
+    duplicate participant row."""
+    supabase = get_supabase()
+    code = (req.invite_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Invite code is required.")
+    room = round_room_service.get_room_by_invite_code(supabase, code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Invalid invite code.")
+    round_room_service.join_room(supabase, room, user_id, display_name=req.display_name)
+    track_product_event(user_id, "round_rooms_joined", {"room_id": room["id"]})
+    return _build_room_state_response(room, user_id, supabase)
+
+
+@router.get("/rooms/{room_id}/participants", response_model=List[RoundRoomParticipant])
+def list_room_participants_endpoint(
+    room_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> List[RoundRoomParticipant]:
+    supabase = get_supabase()
+    _load_room_access(room_id, user_id, supabase)
+    rows = round_room_service.list_participants(supabase, room_id)
+    return [RoundRoomParticipant.model_validate(r) for r in rows]
+
+
+@router.patch("/rooms/{room_id}/participants/{participant_id}", response_model=RoundRoomParticipant)
+def update_room_participant_endpoint(
+    room_id: str,
+    participant_id: str,
+    req: UpdateRoomParticipantRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomParticipant:
+    """Owner-only. Assigns a participant's role and/or side. Rejects
+    reassigning ownership, and rejects assigning any side other than the
+    round's existing human-controlled side (config.student_side) -- see
+    Phase 9A plan for why opposing-side human participants aren't supported
+    yet."""
+    supabase = get_supabase()
+    room = round_room_service.get_room(supabase, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    if room["owner_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can assign roles.")
+
+    target = next(
+        (p for p in round_room_service.list_participants(supabase, room_id) if p["id"] == participant_id),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Participant not found.")
+
+    role_value: Optional[str] = None
+    if req.role is not None:
+        if req.role == RoomRole.OWNER:
+            raise HTTPException(status_code=400, detail="Ownership cannot be reassigned here.")
+        role_value = req.role.value
+
+    side_value: Optional[str] = None
+    if req.side is not None:
+        try:
+            round_resp = (
+                supabase.table("round_simulations")
+                .select("config_json")
+                .eq("id", room["round_id"])
+                .single()
+                .execute()
+            )
+            student_side = round_resp.data["config_json"]["student_side"]
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Linked round not found.") from exc
+        if req.side.value != student_side:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This round's opposing side is AI-controlled in this version; "
+                    "only the round's existing student_side can be assigned to a "
+                    "human participant."
+                ),
+            )
+        side_value = req.side.value
+
+    updated = round_room_service.update_participant(supabase, target, role=role_value, side=side_value)
+    return RoundRoomParticipant.model_validate(updated)
+
+
+@router.post("/rooms/{room_id}/leave", response_model=RoundRoomParticipant)
+def leave_room_endpoint(
+    room_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomParticipant:
+    supabase = get_supabase()
+    room = round_room_service.get_room(supabase, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    participant = round_room_service.get_participant(supabase, room_id, user_id)
+    if not participant:
+        raise HTTPException(status_code=404, detail="You are not a participant in this room.")
+    updated = round_room_service.leave_room(supabase, participant)
+    return RoundRoomParticipant.model_validate(updated)
+
+
+@router.get("/{round_id}", response_model=RoundStateResponse)
+def get_round_state(
+    round_id: str,
+    user_id: str = Depends(get_current_user_id),
+    include_coaching_hint: bool = Query(True),
+) -> RoundStateResponse:
+    """Fetch current round state, live flow, and speeches."""
+    supabase = get_supabase()
+    access = _load_round_access(round_id, user_id, supabase)
+    return _build_round_state_response(access.round_row, supabase, include_coaching_hint)
+
+
 @router.post("/{round_id}/start", response_model=RoundSimulation)
 def start_round(
     round_id: str,
@@ -312,6 +599,14 @@ def start_round(
         "phase_started_at": now,
     }).eq("id", round_id).execute()
     row.update({"status": RoundStatus.ACTIVE.value, "started_at": now, "updated_at": now, "phase_started_at": now})
+
+    try:
+        room = round_room_service.get_room_by_round_id(supabase, round_id)
+        if room:
+            round_room_service.sync_room_status(supabase, room["id"], "active")
+    except Exception:
+        logger.warning("start_round: room status sync failed", exc_info=True)
+
     return _load_simulation(row)
 
 
@@ -382,14 +677,16 @@ def submit_student_speech(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    sim = _load_simulation(row)
+    _require_turn_access(access, sim.config.student_side)
 
     # Idempotency: return existing speech if already submitted
     existing = _check_duplicate_speech(round_id, req.phase, req.idempotency_key, supabase)
     if existing:
         return _load_speech(existing)
 
-    sim = _load_simulation(row)
     if sim.current_phase != req.phase:
         raise HTTPException(
             status_code=400,
@@ -472,7 +769,9 @@ def generate_opponent_speech_endpoint(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
 
     # Idempotency: return existing opponent speech if already generated
     existing = _check_duplicate_speech(round_id, req.phase, req.idempotency_key, supabase)
@@ -616,8 +915,8 @@ def get_crossfire_question(
     still unanswered.
     """
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    sim = _load_simulation(access.round_row)
 
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
@@ -651,8 +950,9 @@ def submit_crossfire_answer(
 ) -> Dict[str, Any]:
     """Submit a student answer to an AI crossfire question."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    sim = _load_simulation(access.round_row)
+    _require_turn_access(access, sim.config.student_side)
 
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
@@ -713,8 +1013,9 @@ def submit_student_crossfire_question(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    sim = _load_simulation(access.round_row)
+    _require_turn_access(access, sim.config.student_side)
 
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
@@ -782,8 +1083,9 @@ def request_crossfire_followup(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    sim = _load_simulation(access.round_row)
+    _require_turn_access(access, sim.config.student_side)
 
     if sim.current_phase not in CROSSFIRE_PHASES:
         raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
@@ -861,7 +1163,9 @@ def advance_phase(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
 
     if sim.status not in (RoundStatus.ACTIVE, RoundStatus.PAUSED):
@@ -902,6 +1206,10 @@ def advance_phase(
         "updated_at": now,
         "phase_started_at": now,
     })
+
+    if target == RoundPhaseType.COMPLETED and access.room:
+        round_room_service.sync_room_status(supabase, access.room["id"], "completed")
+
     return _load_simulation(row)
 
 
@@ -912,7 +1220,9 @@ def pause_round(
 ) -> RoundSimulation:
     """Pause an active round."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
     if sim.status != RoundStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Round is not active.")
@@ -932,7 +1242,9 @@ def resume_round(
 ) -> RoundSimulation:
     """Resume a paused round."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
     if sim.status != RoundStatus.PAUSED:
         raise HTTPException(status_code=400, detail="Round is not paused.")
@@ -958,7 +1270,9 @@ def generate_decision(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
 
     if sim.status != RoundStatus.COMPLETED and sim.current_phase != RoundPhaseType.JUDGE_DELIBERATION:
@@ -1042,7 +1356,9 @@ def rejudge(
 ) -> RoundDecision:
     """Re-judge the round under a different judge profile without altering history."""
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
+    access = _load_round_access(round_id, user_id, supabase)
+    row = access.round_row
+    _require_general_mutate_access(access)
     sim = _load_simulation(row)
 
     if sim.status != RoundStatus.COMPLETED:

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { ApiError } from "@/lib/api";
 import * as roundApi from "@/lib/roundApi";
+import * as roomApi from "@/lib/roomApi";
 import { RoundSetupForm } from "@/components/round/RoundSetupForm";
 import { RoundPhaseHeader } from "@/components/round/RoundPhaseHeader";
 import { RoundFlow } from "@/components/round/RoundFlow";
@@ -12,20 +13,40 @@ import { RoundSpeechCapture } from "@/components/round/RoundSpeechCapture";
 import { CrossfireCapture } from "@/components/round/CrossfireCapture";
 import { RoundBallotView } from "@/components/round/RoundBallotView";
 import { RoundDrillsView } from "@/components/round/RoundDrillsView";
+import { ModeSelect } from "@/components/round/ModeSelect";
+import { RoomLobby } from "@/components/round/RoomLobby";
 import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
+import { canSubmitCurrentTurn, disabledSubmitReason, myParticipant } from "@/lib/roomModel";
 import type {
   CrossfireExchange,
+  RoomRole,
   RoundArgument,
   RoundDecision,
   RoundDrill,
+  RoundRoom,
+  RoundRoomParticipant,
+  RoundSide,
   RoundSimulation,
   RoundSimulationConfig,
   RoundSpeech,
   RoundStateResponse,
 } from "@/types/round";
 
-type View = "setup" | "round" | "flow" | "evidence" | "ballot" | "drills";
+type View =
+  | "mode-select"
+  | "setup"
+  | "room-setup"
+  | "lobby"
+  | "round"
+  | "flow"
+  | "evidence"
+  | "ballot"
+  | "drills";
 type AuthState = "loading" | "signed-in" | "signed-out";
+type Mode = "solo" | "multiplayer" | null;
+
+const ACTIVE_ROUND_KEY = "dissio_active_round";
+const ACTIVE_ROOM_KEY = "dissio_active_multiplayer_room";
 
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
@@ -39,8 +60,10 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
 export default function RoundSimulationPage() {
   const router = useRouter();
   const [authState, setAuthState] = useState<AuthState>("loading");
+  const [userId, setUserId] = useState<string | null>(null);
 
-  const [view, setView] = useState<View>("setup");
+  const [view, setView] = useState<View>("mode-select");
+  const [mode, setMode] = useState<Mode>(null);
   const [simulation, setSimulation] = useState<RoundSimulation | null>(null);
   const [roundState, setRoundState] = useState<RoundStateResponse | null>(null);
   const [speeches, setSpeeches] = useState<RoundSpeech[]>([]);
@@ -50,29 +73,58 @@ export default function RoundSimulationPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Multiplayer-only state — unused, and never read, in solo mode.
+  const [room, setRoom] = useState<RoundRoom | null>(null);
+  const [participants, setParticipants] = useState<RoundRoomParticipant[]>([]);
+
   // ── Auth check ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const sb = createClient();
     sb.auth.getSession().then(({ data }) => {
       setAuthState(data.session ? "signed-in" : "signed-out");
+      setUserId(data.session?.user.id ?? null);
     });
     const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
       setAuthState(session ? "signed-in" : "signed-out");
+      setUserId(session?.user.id ?? null);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ── Recover round from localStorage ────────────────────────────────────────
+  // ── Recover round/room from localStorage ───────────────────────────────────
 
   useEffect(() => {
     if (authState !== "signed-in") return;
+
+    const savedRoomId = typeof window !== "undefined" ? localStorage.getItem(ACTIVE_ROOM_KEY) : null;
+    if (savedRoomId) {
+      setMode("multiplayer");
+      roomApi.getRoom(savedRoomId).then((state) => {
+        setRoom(state.room);
+        setParticipants(state.participants);
+        const rs = state.round_state;
+        if (rs && rs.simulation.status !== "completed" && rs.simulation.status !== "abandoned") {
+          setRoundState(rs);
+          setSimulation(rs.simulation);
+          setSpeeches(rs.speeches);
+          setFlowArgs(rs.flow_arguments);
+          if (rs.decision) setDecision(rs.decision);
+        }
+        setView(state.room.status === "waiting" ? "lobby" : "round");
+      }).catch(() => {
+        localStorage.removeItem(ACTIVE_ROOM_KEY);
+      });
+      return;
+    }
+
     // Read from new key, fall back to legacy key and migrate
     const saved = typeof window !== "undefined"
-      ? localStorage.getItem("dissio_active_round") ??
-        (() => { const v = localStorage.getItem("roundlab_active_round"); if (v) { localStorage.setItem("dissio_active_round", v); localStorage.removeItem("roundlab_active_round"); } return v; })()
+      ? localStorage.getItem(ACTIVE_ROUND_KEY) ??
+        (() => { const v = localStorage.getItem("roundlab_active_round"); if (v) { localStorage.setItem(ACTIVE_ROUND_KEY, v); localStorage.removeItem("roundlab_active_round"); } return v; })()
       : null;
     if (!saved) return;
+    setMode("solo");
     // Silently try to recover; clear if not found
     roundApi.getRoundState(saved).then((state) => {
       if (state.simulation.status !== "completed" && state.simulation.status !== "abandoned") {
@@ -83,10 +135,10 @@ export default function RoundSimulationPage() {
         if (state.decision) setDecision(state.decision);
         setView("round");
       } else {
-        localStorage.removeItem("dissio_active_round");
+        localStorage.removeItem(ACTIVE_ROUND_KEY);
       }
     }).catch(() => {
-      localStorage.removeItem("dissio_active_round");
+      localStorage.removeItem(ACTIVE_ROUND_KEY);
     });
   }, [authState]);
 
@@ -102,21 +154,40 @@ export default function RoundSimulationPage() {
       if (state.decision) setDecision(state.decision);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
-        localStorage.removeItem("dissio_active_round");
-        setView("setup");
+        localStorage.removeItem(ACTIVE_ROUND_KEY);
+        localStorage.removeItem(ACTIVE_ROOM_KEY);
+        setView("mode-select");
         setSimulation(null);
       }
     }
   }, []);
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
+  const refreshRoom = useCallback(async (roomId: string) => {
+    try {
+      const state = await roomApi.getRoom(roomId);
+      setRoom(state.room);
+      setParticipants(state.participants);
+      if (state.round_state) {
+        setRoundState(state.round_state);
+        setSimulation(state.round_state.simulation);
+        setSpeeches(state.round_state.speeches);
+        setFlowArgs(state.round_state.flow_arguments);
+        if (state.round_state.decision) setDecision(state.round_state.decision);
+      }
+    } catch (e) {
+      if (e instanceof ApiError) setError(e.message);
+    }
+  }, []);
+
+  // ── Solo handlers ────────────────────────────────────────────────────────────
 
   async function handleCreateRound(config: RoundSimulationConfig) {
     setLoading(true);
     setError(null);
     try {
       const sim = await roundApi.createRound(config);
-      localStorage.setItem("dissio_active_round", sim.id);
+      setMode("solo");
+      localStorage.setItem(ACTIVE_ROUND_KEY, sim.id);
       // Build the AI opponent's plan before the round becomes active — the
       // opponent speech endpoint requires this row to exist, even when no
       // prep material was selected (it falls back to resolutional analysis).
@@ -137,6 +208,95 @@ export default function RoundSimulationPage() {
       setLoading(false);
     }
   }
+
+  // ── Multiplayer handlers ─────────────────────────────────────────────────────
+
+  async function handleCreateRoom(config: RoundSimulationConfig) {
+    setLoading(true);
+    setError(null);
+    try {
+      const state = await roomApi.createRoom({ config });
+      setMode("multiplayer");
+      localStorage.setItem(ACTIVE_ROOM_KEY, state.room.id);
+      setRoom(state.room);
+      setParticipants(state.participants);
+      if (state.round_state) {
+        setRoundState(state.round_state);
+        setSimulation(state.round_state.simulation);
+      }
+      setView("lobby");
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to create room.";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleJoinRoom(inviteCode: string, displayName?: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const state = await roomApi.joinRoom(inviteCode, displayName);
+      setMode("multiplayer");
+      localStorage.setItem(ACTIVE_ROOM_KEY, state.room.id);
+      setRoom(state.room);
+      setParticipants(state.participants);
+      if (state.round_state) {
+        setRoundState(state.round_state);
+        setSimulation(state.round_state.simulation);
+        setSpeeches(state.round_state.speeches);
+        setFlowArgs(state.round_state.flow_arguments);
+        if (state.round_state.decision) setDecision(state.round_state.decision);
+      }
+      setView("lobby");
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Couldn't join that room — check the code and try again.";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAssignParticipant(
+    participantId: string,
+    opts: { role?: RoomRole; side?: RoundSide },
+  ) {
+    if (!room) return;
+    setError(null);
+    try {
+      await roomApi.updateRoomParticipant(room.id, participantId, opts);
+      await refreshRoom(room.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't update that participant.");
+    }
+  }
+
+  async function handleEnterRoom() {
+    if (!room) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const isOwner = room.owner_user_id === userId;
+      if (isOwner && room.status === "waiting" && simulation) {
+        await roundApi.loadPreparation(simulation.id, {
+          cardIds: simulation.config.approved_card_ids,
+          blockfileIds: simulation.config.approved_blockfile_ids,
+          frontlineIds: simulation.config.approved_frontline_ids,
+          prepWorkspaceId: simulation.config.prep_workspace_id,
+        });
+        await roundApi.startRound(simulation.id);
+      }
+      await refreshRoom(room.id);
+      setView("round");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't enter the round.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Shared round handlers (solo + multiplayer) ──────────────────────────────
 
   async function handleSpeechSubmitted(speech: RoundSpeech) {
     setSpeeches((s) => [...s, speech]);
@@ -238,15 +398,19 @@ export default function RoundSimulationPage() {
     }
   }
 
-  function handleAbandonRound() {
-    localStorage.removeItem("dissio_active_round");
+  function handleExit() {
+    localStorage.removeItem(ACTIVE_ROUND_KEY);
+    localStorage.removeItem(ACTIVE_ROOM_KEY);
     setSimulation(null);
     setRoundState(null);
     setSpeeches([]);
     setFlowArgs([]);
     setDecision(null);
     setDrills([]);
-    setView("setup");
+    setRoom(null);
+    setParticipants([]);
+    setMode(null);
+    setView("mode-select");
     setError(null);
   }
 
@@ -281,7 +445,19 @@ export default function RoundSimulationPage() {
     simulation?.status === "completed" ||
     simulation?.current_phase === "completed";
 
-  // ── Setup view ──────────────────────────────────────────────────────────────
+  // ── Mode select / setup / lobby views ───────────────────────────────────────
+
+  if (view === "mode-select") {
+    return (
+      <ModeSelect
+        onChooseSolo={() => setView("setup")}
+        onChooseCreateRoom={() => setView("room-setup")}
+        onJoinRoom={handleJoinRoom}
+        loading={loading}
+        error={error}
+      />
+    );
+  }
 
   if (view === "setup") {
     return (
@@ -296,6 +472,51 @@ export default function RoundSimulationPage() {
     );
   }
 
+  if (view === "room-setup") {
+    return (
+      <div className="flex flex-col">
+        <div className="py-8">
+          <RoundSetupForm onStart={handleCreateRoom} loading={loading} />
+          {error && (
+            <p className="text-xs text-red-600 text-center mt-4">{error}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "lobby") {
+    if (!room) {
+      return (
+        <div className="flex flex-1 items-center justify-center py-20">
+          <p className="text-sm text-muted-foreground">Loading room...</p>
+        </div>
+      );
+    }
+    const viewer = myParticipant(participants, userId) ?? participants.find((p) => p.user_id === room.owner_user_id);
+    if (!viewer) {
+      return (
+        <div className="flex flex-1 items-center justify-center py-20">
+          <p className="text-sm text-muted-foreground">Loading room...</p>
+        </div>
+      );
+    }
+    return (
+      <RoomLobby
+        room={room}
+        participants={participants}
+        viewerParticipant={viewer}
+        viewerUserId={userId ?? ""}
+        studentSide={simulation?.config.student_side ?? "pro"}
+        onAssignParticipant={handleAssignParticipant}
+        onEnterRound={handleEnterRoom}
+        onRefresh={() => refreshRoom(room.id)}
+        loading={loading}
+        error={error}
+      />
+    );
+  }
+
   if (!simulation || !roundState) {
     return (
       <div className="flex flex-1 items-center justify-center py-20">
@@ -304,7 +525,17 @@ export default function RoundSimulationPage() {
     );
   }
 
-  // ── Round view ──────────────────────────────────────────────────────────────
+  // ── Round view (shared by solo + multiplayer) ───────────────────────────────
+
+  const viewerParticipant = mode === "multiplayer" ? myParticipant(participants, userId) : undefined;
+  const studentSide = simulation.config.student_side;
+  const turnGate =
+    mode === "multiplayer"
+      ? {
+          allowed: canSubmitCurrentTurn(viewerParticipant, studentSide),
+          reason: disabledSubmitReason(viewerParticipant, studentSide),
+        }
+      : undefined;
 
   return (
     <div className="flex flex-col">
@@ -340,7 +571,7 @@ export default function RoundSimulationPage() {
             </button>
           ))}
           <button
-            onClick={handleAbandonRound}
+            onClick={handleExit}
             className="ml-auto px-3 py-2.5 text-xs text-muted-foreground hover:text-red-500 transition-colors"
           >
             Exit round
@@ -349,6 +580,12 @@ export default function RoundSimulationPage() {
       </div>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+      {turnGate && !turnGate.allowed && (
+        <div className="mx-4 mt-3 rounded-md border bg-muted/20 px-3 py-2">
+          <p className="text-xs text-muted-foreground">{turnGate.reason}</p>
+        </div>
+      )}
 
       <div className="flex-1 p-4">
         {view === "round" && (
@@ -389,6 +626,7 @@ export default function RoundSimulationPage() {
                   onExchangeSaved={handleCrossfireExchangeSaved}
                   onAdvancePhase={handleAdvancePhase}
                   isLoading={loading}
+                  turnGate={turnGate}
                 />
               ) : (
                 <RoundSpeechCapture
@@ -400,6 +638,7 @@ export default function RoundSimulationPage() {
                   onOpponentSpeechRequested={handleOpponentSpeechRequested}
                   onAdvancePhase={handleAdvancePhase}
                   isLoading={loading}
+                  turnGate={turnGate}
                 />
               )}
 

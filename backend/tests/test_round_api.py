@@ -223,8 +223,11 @@ class TestRequestCrossfireFollowup:
         from app.api import round_simulations as mod
         sim = sim or _sim()
         existing = existing if existing is not None else []
+        access = mod._RoundAccess(
+            round_row={"id": "r1", "user_id": user_id}, room=None, participant=None, is_owner=True,
+        )
         with patch.object(mod, "get_supabase", return_value=MagicMock()), \
-             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "_load_round_access", return_value=access) as mock_verify, \
              patch.object(mod, "_load_simulation", return_value=sim), \
              patch.object(mod, "load_crossfire_exchanges", return_value=existing), \
              patch.object(mod, "load_round_arguments", return_value=[]), \
