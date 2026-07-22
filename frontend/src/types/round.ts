@@ -330,6 +330,11 @@ export type RoomStatus = "waiting" | "active" | "completed" | "closed";
 export type RoomRole = "owner" | "debater_a" | "debater_b" | "coach" | "observer";
 export type RoomParticipantStatus = "invited" | "joined" | "left";
 
+/** Phase 9C: which of a side's two speeches a participant covers.
+ * Constructive + Summary = "first"; Rebuttal + Final Focus = "second".
+ * Undefined/null is flex — matches either slot requirement. */
+export type SpeakerSlot = "first" | "second";
+
 export interface RoundRoom {
   id: string;
   round_id: string;
@@ -348,23 +353,28 @@ export interface RoundRoomParticipant {
   display_name?: string;
   role: RoomRole;
   side?: RoundSide;
+  speaker_slot?: SpeakerSlot;
   status: RoomParticipantStatus;
   joined_at?: string;
   created_at: string;
   updated_at: string;
 }
 
-// ── Speaker-role / turn contract (Phase 9B) ─────────────────────────────────
+// ── Speaker-role / turn contract (Phase 9B/9C) ──────────────────────────────
 
 /** The backend's authoritative answer to "can the viewer act right now, and
  * if not, why not" — consume this instead of re-deriving the same rule
- * client-side. expected_role is always "debater" when expected_side is set:
- * 9B does not add first/second-speaker-within-a-side granularity. */
+ * client-side. expected_role is always "debater" when expected_side is set.
+ * expected_speaker_slot/viewer_speaker_slot are undefined for
+ * crossfire/deliberation/completed phases (no slot requirement) or when the
+ * viewer hasn't been assigned a slot (flex). */
 export interface TurnContext {
   can_submit_current_turn: boolean;
   disabled_reason?: string;
   expected_side?: RoundSide;
   expected_role?: string;
+  expected_speaker_slot?: SpeakerSlot;
+  viewer_speaker_slot?: SpeakerSlot;
 }
 
 export interface RoundRoomStateResponse {

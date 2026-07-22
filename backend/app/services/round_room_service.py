@@ -163,15 +163,18 @@ def update_participant(
     participant: Dict[str, Any],
     role: Optional[str] = None,
     side: Optional[str] = None,
+    speaker_slot: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Apply role and/or side to a participant. A None argument here means
-    "leave unchanged" (this endpoint assigns roles/sides — it does not
-    support clearing a side back to null in Phase 9A)."""
+    """Apply role/side/speaker_slot to a participant. A None argument here
+    means "leave unchanged" (this endpoint assigns roles/sides/slots — it
+    does not support clearing any of them back to null, Phase 9A/9C)."""
     update: Dict[str, Any] = {"updated_at": _now()}
     if role is not None:
         update["role"] = role
     if side is not None:
         update["side"] = side
+    if speaker_slot is not None:
+        update["speaker_slot"] = speaker_slot
     supabase.table("round_room_participants").update(update).eq(
         "id", participant["id"]
     ).execute()

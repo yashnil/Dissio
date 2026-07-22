@@ -588,6 +588,15 @@ class RoomParticipantStatus(str, Enum):
     LEFT = "left"
 
 
+class SpeakerSlot(str, Enum):
+    """Phase 9C: which of a side's two speeches a participant covers.
+    Constructive + Summary = FIRST; Rebuttal + Final Focus = SECOND. Null
+    (not a member of this enum -- see RoundRoomParticipant.speaker_slot) is
+    flex: matches either slot. Crossfire has no slot requirement at all."""
+    FIRST = "first"
+    SECOND = "second"
+
+
 class RoundRoom(BaseModel):
     id: str
     round_id: str
@@ -606,6 +615,7 @@ class RoundRoomParticipant(BaseModel):
     display_name: Optional[str] = None
     role: RoomRole = RoomRole.OBSERVER
     side: Optional[RoundSide] = None
+    speaker_slot: Optional[SpeakerSlot] = None
     status: RoomParticipantStatus = RoomParticipantStatus.INVITED
     joined_at: Optional[str] = None
     created_at: str
@@ -632,20 +642,25 @@ class JoinRoomRequest(BaseModel):
 class UpdateRoomParticipantRequest(BaseModel):
     role: Optional[RoomRole] = None
     side: Optional[RoundSide] = None
+    speaker_slot: Optional[SpeakerSlot] = None
 
 
 class TurnContext(BaseModel):
-    """Phase 9B: the backend's authoritative answer to "can the viewer act
+    """Phase 9B/9C: the backend's authoritative answer to "can the viewer act
     right now, and if not, why not" — the frontend consumes this instead of
     re-deriving the same rule client-side.
 
     expected_role is always "debater" when expected_side is set: any joined
-    participant assigned to that side (owner, debater_a, or debater_b) may
-    act. 9B does not add first/second-speaker-within-a-side granularity."""
+    participant assigned to that side may act (subject to expected_speaker_slot
+    when the phase requires one). expected_speaker_slot/viewer_speaker_slot are
+    None for crossfire/deliberation/completed phases (no slot requirement) or
+    when the viewer hasn't been assigned a slot (flex)."""
     can_submit_current_turn: bool
     disabled_reason: Optional[str] = None
     expected_side: Optional[RoundSide] = None
     expected_role: Optional[str] = None
+    expected_speaker_slot: Optional[SpeakerSlot] = None
+    viewer_speaker_slot: Optional[SpeakerSlot] = None
 
 
 class RoundRoomStateResponse(BaseModel):

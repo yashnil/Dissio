@@ -1,5 +1,5 @@
 /**
- * Pass 27/28 — Phase 9A/9B. Tests for room/lobby pure helpers.
+ * Pass 27/28/29 — Phase 9A/9B/9C. Tests for room/lobby pure helpers.
  *
  * Same convention as roundModel.test.ts: no React, no DOM, pure functions
  * called directly with fixture factories.
@@ -9,8 +9,11 @@ import {
   ROOM_STATUS_LABELS,
   ROOM_ROLE_LABELS,
   PARTICIPANT_STATUS_LABELS,
+  SPEAKER_SLOT_LABELS,
   isDebaterRole,
   sideLabel,
+  speakerSlotLabel,
+  expectedSpeakerLabel,
   formatInviteCode,
   isValidInviteCodeInput,
   myParticipant,
@@ -203,6 +206,34 @@ describe("canSubmitCurrentTurn", () => {
     const p = makeParticipant({ role: "debater_a", side: undefined, status: "joined" });
     expect(canSubmitCurrentTurn(p, "pro")).toBe(false);
   });
+
+  // ── Phase 9C: speaker slot ─────────────────────────────────────────────────
+
+  it("allows a participant whose assigned slot matches the expected slot", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: "first" });
+    expect(canSubmitCurrentTurn(p, "pro", "first")).toBe(true);
+  });
+
+  it("rejects a participant whose assigned slot does not match the expected slot", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: "second" });
+    expect(canSubmitCurrentTurn(p, "pro", "first")).toBe(false);
+  });
+
+  it("a flex (unassigned slot) participant matches any expected slot", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: undefined });
+    expect(canSubmitCurrentTurn(p, "pro", "first")).toBe(true);
+    expect(canSubmitCurrentTurn(p, "pro", "second")).toBe(true);
+  });
+
+  it("an assigned slot still matches when the phase has no slot requirement", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: "second" });
+    expect(canSubmitCurrentTurn(p, "pro", undefined)).toBe(true);
+  });
+
+  it("wrong side is still rejected regardless of slot", () => {
+    const p = makeParticipant({ role: "debater_a", side: "con", status: "joined", speaker_slot: "first" });
+    expect(canSubmitCurrentTurn(p, "pro", "first")).toBe(false);
+  });
 });
 
 describe("disabledSubmitReason", () => {
@@ -235,6 +266,21 @@ describe("disabledSubmitReason", () => {
 
   it("explains a missing participant record without inventing a false certainty", () => {
     expect(disabledSubmitReason(undefined, "pro")).toMatch(/not an active participant/i);
+  });
+
+  // ── Phase 9C: speaker slot ─────────────────────────────────────────────────
+
+  it("explains a wrong-slot mismatch by naming both slots", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: "second" });
+    const reason = disabledSubmitReason(p, "pro", "first");
+    expect(reason).toMatch(/second/i);
+    expect(reason).toMatch(/first/i);
+  });
+
+  it("returns null for a flex participant regardless of the expected slot", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: undefined });
+    expect(disabledSubmitReason(p, "pro", "first")).toBeNull();
+    expect(disabledSubmitReason(p, "pro", "second")).toBeNull();
   });
 });
 
@@ -296,6 +342,42 @@ describe("describeCapabilities", () => {
 
   it("describes a missing/unjoined participant plainly", () => {
     expect(describeCapabilities(undefined, "pro")).toMatch(/not an active participant/i);
+  });
+
+  it("mentions the assigned speaker slot when set", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined", speaker_slot: "first" });
+    expect(describeCapabilities(p, "pro")).toMatch(/first speaker/i);
+  });
+});
+
+// ── Phase 9C: speaker slots ──────────────────────────────────────────────────
+
+describe("SPEAKER_SLOT_LABELS / speakerSlotLabel", () => {
+  it("has a label for both slot values", () => {
+    expect(SPEAKER_SLOT_LABELS.first).toBe("First Speaker");
+    expect(SPEAKER_SLOT_LABELS.second).toBe("Second Speaker");
+  });
+
+  it("labels null/undefined as flex, not a missing value", () => {
+    expect(speakerSlotLabel(null)).toBe("Either Speaker");
+    expect(speakerSlotLabel(undefined)).toBe("Either Speaker");
+  });
+
+  it("labels first/second directly", () => {
+    expect(speakerSlotLabel("first")).toBe("First Speaker");
+    expect(speakerSlotLabel("second")).toBe("Second Speaker");
+  });
+});
+
+describe("expectedSpeakerLabel", () => {
+  it("names side and slot together", () => {
+    expect(expectedSpeakerLabel("pro", "first")).toBe("Pro First Speaker");
+    expect(expectedSpeakerLabel("con", "second")).toBe("Con Second Speaker");
+  });
+
+  it("falls back to 'Either debater' when there is no slot requirement", () => {
+    expect(expectedSpeakerLabel("pro", undefined)).toBe("Either debater on Pro");
+    expect(expectedSpeakerLabel("pro", null)).toBe("Either debater on Pro");
   });
 });
 

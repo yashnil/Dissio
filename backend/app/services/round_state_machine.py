@@ -96,6 +96,26 @@ PHASE_SPEECH_TYPES: Dict[RoundPhaseType, str] = {
     RoundPhaseType.SECOND_FINAL_FOCUS: "final_focus",
 }
 
+# Phase 9C: which within-team speaker slot ("first"/"second") a speech type
+# belongs to. Standard PF convention: the same debater gives the
+# Constructive and Summary; the other gives the Rebuttal and Final Focus.
+# Crossfire/deliberation/completed have no PHASE_SPEECH_TYPES entry, so
+# speaker_slot_for_phase returns None for them -- no slot requirement,
+# either partner on the assigned side may act.
+_SPEECH_TYPE_TO_SPEAKER_SLOT: Dict[str, str] = {
+    "constructive": "first",
+    "summary": "first",
+    "rebuttal": "second",
+    "final_focus": "second",
+}
+
+
+def speaker_slot_for_phase(phase: RoundPhaseType) -> Optional[str]:
+    """Which speaker_slot ("first"/"second") this phase's speech belongs to,
+    or None when the phase has no slot requirement (crossfire, deliberation,
+    completed)."""
+    return _SPEECH_TYPE_TO_SPEAKER_SLOT.get(PHASE_SPEECH_TYPES.get(phase))
+
 # Human-readable phase labels
 PHASE_LABELS: Dict[RoundPhaseType, str] = {
     RoundPhaseType.FIRST_CONSTRUCTIVE: "First Constructive",

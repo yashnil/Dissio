@@ -5,11 +5,13 @@ import {
   ROOM_ROLE_LABELS,
   ROOM_STATUS_LABELS,
   PARTICIPANT_STATUS_LABELS,
+  SPEAKER_SLOT_LABELS,
   formatInviteCode,
   isRoomOwner,
   sideLabel,
+  speakerSlotLabel,
 } from "@/lib/roomModel";
-import type { RoomRole, RoundRoom, RoundRoomParticipant, RoundSide } from "@/types/round";
+import type { RoomRole, RoundRoom, RoundRoomParticipant, RoundSide, SpeakerSlot } from "@/types/round";
 
 interface Props {
   room: RoundRoom;
@@ -19,7 +21,7 @@ interface Props {
   studentSide: RoundSide;
   onAssignParticipant: (
     participantId: string,
-    opts: { role?: RoomRole; side?: RoundSide },
+    opts: { role?: RoomRole; side?: RoundSide; speaker_slot?: SpeakerSlot },
   ) => void | Promise<void>;
   onEnterRound: () => void;
   onRefresh: () => void;
@@ -28,6 +30,7 @@ interface Props {
 }
 
 const ASSIGNABLE_ROLES: RoomRole[] = ["debater_a", "debater_b", "coach", "observer"];
+const ASSIGNABLE_SLOTS: SpeakerSlot[] = ["first", "second"];
 
 function ParticipantRow({
   participant,
@@ -38,10 +41,11 @@ function ParticipantRow({
   participant: RoundRoomParticipant;
   isOwnerView: boolean;
   studentSide: RoundSide;
-  onAssign: (opts: { role?: RoomRole; side?: RoundSide }) => void;
+  onAssign: (opts: { role?: RoomRole; side?: RoundSide; speaker_slot?: SpeakerSlot }) => void;
 }) {
   const label = participant.display_name?.trim() || ROOM_ROLE_LABELS[participant.role];
   const canEdit = isOwnerView && participant.role !== "owner";
+  const canAssignSlot = participant.side === studentSide && participant.role !== "coach" && participant.role !== "observer";
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5">
@@ -49,7 +53,7 @@ function ParticipantRow({
         <p className="text-sm font-medium truncate">{label}</p>
         <p className="text-xs text-muted-foreground">
           {ROOM_ROLE_LABELS[participant.role]} · {sideLabel(participant.side)} ·{" "}
-          {PARTICIPANT_STATUS_LABELS[participant.status]}
+          {speakerSlotLabel(participant.speaker_slot)} · {PARTICIPANT_STATUS_LABELS[participant.status]}
         </p>
       </div>
 
@@ -74,6 +78,25 @@ function ParticipantRow({
             />
             {sideLabel(studentSide)}
           </label>
+          {canAssignSlot && (
+            <select
+              className="rounded-md border bg-background px-2 py-1 text-xs"
+              value={participant.speaker_slot ?? ""}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === "first" || value === "second") onAssign({ speaker_slot: value });
+              }}
+            >
+              <option value="" disabled>
+                Assign slot…
+              </option>
+              {ASSIGNABLE_SLOTS.map((slot) => (
+                <option key={slot} value={slot}>
+                  {SPEAKER_SLOT_LABELS[slot]}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
     </div>

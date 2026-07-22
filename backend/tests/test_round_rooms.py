@@ -125,6 +125,18 @@ class TestUpdateParticipantService:
         assert updated["role"] == "debater_a"
         assert updated["side"] == "pro"
 
+    def test_applies_speaker_slot(self):
+        supabase = MagicMock()
+        participant = {"id": "p1", "role": "debater_a", "side": "pro", "speaker_slot": None}
+        updated = round_room_service.update_participant(supabase, participant, speaker_slot="first")
+        assert updated["speaker_slot"] == "first"
+
+    def test_none_speaker_slot_leaves_it_unchanged(self):
+        supabase = MagicMock()
+        participant = {"id": "p1", "role": "debater_a", "side": "pro", "speaker_slot": "second"}
+        updated = round_room_service.update_participant(supabase, participant)
+        assert updated["speaker_slot"] == "second"
+
 
 # ── round_simulations permission layer ──────────────────────────────────────
 
@@ -391,6 +403,66 @@ class TestParticipantTurnState:
         allowed, _ = mod._participant_turn_state({"id": "room-1"}, participant, False, RoundSide.PRO)
         assert allowed is False
 
+    # ── Phase 9C: speaker slot ──────────────────────────────────────────────
+
+    def test_matching_slot_allowed(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": "first"}
+        allowed, reason = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, "first",
+        )
+        assert allowed is True
+        assert reason is None
+
+    def test_wrong_slot_rejected(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": "second"}
+        allowed, reason = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, "first",
+        )
+        assert allowed is False
+        assert "second" in reason and "first" in reason
+
+    def test_flex_participant_slot_matches_any_required_slot(self):
+        """Backward compatibility: speaker_slot=None (every pre-9C
+        participant, and any participant the owner never assigned a slot
+        to) must not be locked out once phases start requiring a slot."""
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": None}
+        allowed_first, _ = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, "first",
+        )
+        allowed_second, _ = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, "second",
+        )
+        assert allowed_first is True
+        assert allowed_second is True
+
+    def test_assigned_slot_matches_when_phase_has_no_slot_requirement(self):
+        """Crossfire etc. (expected_speaker_slot=None) has no requirement at
+        all, regardless of the participant's own assigned slot."""
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": "second"}
+        allowed, reason = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, None,
+        )
+        assert allowed is True
+        assert reason is None
+
+    def test_wrong_side_rejected_regardless_of_slot(self):
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "con", "speaker_slot": "first"}
+        allowed, reason = mod._participant_turn_state(
+            {"id": "room-1"}, participant, False, RoundSide.PRO, "first",
+        )
+        assert allowed is False
+        assert "con" in reason and "pro" in reason
+
 
 class TestBuildTurnContext:
     """The API-exposed turn contract surfaced on RoundRoomStateResponse."""
@@ -476,6 +548,77 @@ class TestBuildTurnContext:
         assert ctx.can_submit_current_turn is False
         assert "observer" in (ctx.disabled_reason or "").lower()
 
+    # ── Phase 9C: speaker slot ──────────────────────────────────────────────
+
+    def test_constructive_phase_expects_first_speaker_slot(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": "first"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CONSTRUCTIVE, self._config(student_side="pro"),
+        )
+        assert ctx.expected_speaker_slot.value == "first"
+        assert ctx.viewer_speaker_slot.value == "first"
+        assert ctx.can_submit_current_turn is True
+
+    def test_rebuttal_phase_expects_second_speaker_slot(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_b", "status": "joined", "side": "pro", "speaker_slot": "second"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_REBUTTAL, self._config(student_side="pro"),
+        )
+        assert ctx.expected_speaker_slot.value == "second"
+        assert ctx.can_submit_current_turn is True
+
+    def test_first_speaker_cannot_submit_rebuttal(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro", "speaker_slot": "first"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_REBUTTAL, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is False
+        assert "second" in (ctx.disabled_reason or "")
+
+    def test_flex_participant_can_submit_any_speech_slot(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "owner", "status": "joined", "side": "pro", "speaker_slot": None}
+        ctx_constructive = mod._build_turn_context(
+            self._access(is_owner=True, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CONSTRUCTIVE, self._config(student_side="pro"),
+        )
+        ctx_rebuttal = mod._build_turn_context(
+            self._access(is_owner=True, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_REBUTTAL, self._config(student_side="pro"),
+        )
+        assert ctx_constructive.can_submit_current_turn is True
+        assert ctx_rebuttal.can_submit_current_turn is True
+
+    def test_crossfire_has_no_slot_requirement_even_for_assigned_participant(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_b", "status": "joined", "side": "pro", "speaker_slot": "second"}
+        ctx = mod._build_turn_context(
+            self._access(is_owner=False, room={"id": "room-1"}, participant=participant),
+            RoundPhaseType.FIRST_CROSSFIRE, self._config(student_side="pro"),
+        )
+        assert ctx.expected_speaker_slot is None
+        assert ctx.can_submit_current_turn is True
+
+    def test_solo_round_unaffected_by_slot_logic(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.api import round_simulations as mod
+        ctx = mod._build_turn_context(
+            self._access(is_owner=True, room=None), RoundPhaseType.FIRST_REBUTTAL, self._config(student_side="pro"),
+        )
+        assert ctx.can_submit_current_turn is True
+        assert ctx.viewer_speaker_slot is None
+
 
 # ── /rooms endpoints ─────────────────────────────────────────────────────────
 
@@ -488,10 +631,14 @@ def _room(room_id="room-1", round_id="r1", owner="owner-1", status="waiting", co
     }
 
 
-def _participant(pid="p1", room_id="room-1", user_id="owner-1", role="owner", side="pro", status="joined"):
+def _participant(
+    pid="p1", room_id="room-1", user_id="owner-1", role="owner", side="pro", status="joined",
+    speaker_slot=None,
+):
     return {
         "id": pid, "room_id": room_id, "user_id": user_id, "display_name": None,
-        "role": role, "side": side, "status": status, "joined_at": "2026-01-01T00:00:00Z",
+        "role": role, "side": side, "speaker_slot": speaker_slot, "status": status,
+        "joined_at": "2026-01-01T00:00:00Z",
         "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
     }
 
@@ -665,7 +812,7 @@ class TestUpdateRoomParticipantEndpoint:
             result = mod.update_room_participant_endpoint(
                 "room-1", "p2", UpdateRoomParticipantRequest(role="debater_b", side="pro"), "owner-1",
             )
-        mock_update.assert_called_once_with(ANY, target, role="debater_b", side="pro")
+        mock_update.assert_called_once_with(ANY, target, role="debater_b", side="pro", speaker_slot=None)
         assert result.role == "debater_b"
         assert result.side == "pro"
 
@@ -729,6 +876,184 @@ class TestUpdateRoomParticipantEndpoint:
                     "room-1", "does-not-exist", UpdateRoomParticipantRequest(role="debater_a"), "owner-1",
                 )
         assert exc_info.value.status_code == 404
+
+    # ── Phase 9C: speaker_slot assignment ────────────────────────────────────
+
+    def test_owner_assigns_speaker_slot(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot=None)
+        updated = dict(target, speaker_slot="first")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]), \
+             patch.object(round_room_service, "update_participant", return_value=updated) as mock_update:
+            result = mod.update_room_participant_endpoint(
+                "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+            )
+        mock_update.assert_called_once_with(ANY, target, role=None, side=None, speaker_slot="first")
+        assert result.speaker_slot.value == "first"
+
+    def test_non_owner_cannot_assign_speaker_slot(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "u2",
+                )
+        assert exc_info.value.status_code == 403
+
+    def test_invalid_slot_value_rejected_by_model(self):
+        from pydantic import ValidationError
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        with pytest.raises(ValidationError):
+            UpdateRoomParticipantRequest(speaker_slot="third")
+
+    def test_coach_cannot_be_assigned_a_speaker_slot(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="coach", side=None, speaker_slot=None)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+                )
+        assert exc_info.value.status_code == 400
+        assert "coach" in exc_info.value.detail.lower() or "observer" in exc_info.value.detail.lower()
+
+    def test_observer_cannot_be_assigned_a_speaker_slot_even_with_role_in_same_request(self):
+        """A role change to 'observer' in the SAME request as a slot
+        assignment must still be rejected -- validated against the
+        *resulting* role, not the target's stale stored role."""
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot=None)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2",
+                    UpdateRoomParticipantRequest(role="observer", speaker_slot="first"), "owner-1",
+                )
+        assert exc_info.value.status_code == 400
+
+    def test_rejects_slot_without_a_side(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side=None, speaker_slot=None)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+                )
+        assert exc_info.value.status_code == 400
+        assert "side" in exc_info.value.detail.lower()
+
+    def test_slot_allowed_when_side_assigned_in_the_same_request(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side=None, speaker_slot=None)
+        round_row = MagicMock(data={"config_json": {"student_side": "pro"}})
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = round_row
+        updated = dict(target, side="pro", speaker_slot="first")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]), \
+             patch.object(round_room_service, "update_participant", return_value=updated) as mock_update:
+            result = mod.update_room_participant_endpoint(
+                "room-1", "p2", UpdateRoomParticipantRequest(side="pro", speaker_slot="first"), "owner-1",
+            )
+        mock_update.assert_called_once_with(ANY, target, role=None, side="pro", speaker_slot="first")
+        assert result.speaker_slot.value == "first"
+
+    def test_duplicate_same_side_same_slot_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        existing_first_speaker = _participant(pid="p1", user_id="owner-1", role="owner", side="pro", speaker_slot="first")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot=None)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[existing_first_speaker, target]):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+                )
+        assert exc_info.value.status_code == 400
+        assert "already" in exc_info.value.detail.lower()
+
+    def test_different_slots_on_same_side_allowed(self):
+        """Two partners on the same side with DIFFERENT slots is exactly
+        the feature -- must not be rejected as a conflict."""
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        first_speaker = _participant(pid="p1", user_id="owner-1", role="owner", side="pro", speaker_slot="first")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot=None)
+        updated = dict(target, speaker_slot="second")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[first_speaker, target]), \
+             patch.object(round_room_service, "update_participant", return_value=updated) as mock_update:
+            result = mod.update_room_participant_endpoint(
+                "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="second"), "owner-1",
+            )
+        mock_update.assert_called_once()
+        assert result.speaker_slot.value == "second"
+
+    def test_reassigning_same_slot_to_same_participant_is_idempotent(self):
+        """The conflict check excludes the target's own row, so re-PATCHing
+        the same slot the participant already holds must not 400."""
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot="first")
+        updated = dict(target)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[target]), \
+             patch.object(round_room_service, "update_participant", return_value=updated) as mock_update:
+            result = mod.update_room_participant_endpoint(
+                "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+            )
+        mock_update.assert_called_once()
+        assert result.speaker_slot.value == "first"
+
+    def test_duplicate_slot_on_a_different_side_is_not_a_conflict(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1")
+        con_first_speaker = _participant(pid="p1", user_id="u1", role="debater_a", side="con", speaker_slot="first")
+        target = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", speaker_slot=None)
+        updated = dict(target, speaker_slot="first")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "list_participants", return_value=[con_first_speaker, target]), \
+             patch.object(round_room_service, "update_participant", return_value=updated) as mock_update:
+            result = mod.update_room_participant_endpoint(
+                "room-1", "p2", UpdateRoomParticipantRequest(speaker_slot="first"), "owner-1",
+            )
+        mock_update.assert_called_once()
+        assert result.speaker_slot.value == "first"
 
 
 class TestLeaveRoomEndpoint:
@@ -1139,3 +1464,72 @@ class TestSoloRegressionForNewlyChangedEndpoints:
                 with pytest.raises(HTTPException) as exc_info:
                     fn(*args)
                 assert exc_info.value.status_code == 403
+
+    def test_solo_owner_unaffected_by_speaker_slot_requirement(self):
+        """Phase 9C: _require_turn_access now accepts an expected_speaker_slot
+        argument for every speech phase, but solo rounds (room=None) must
+        remain completely unrestricted, exactly like before 9C."""
+        from app.api import round_simulations as mod
+        access = mod._RoundAccess(
+            round_row={"id": "r1", "user_id": "owner-1"}, room=None, participant=None, is_owner=True,
+        )
+        from app.models.round_simulation import RoundSide
+        mod._require_turn_access(access, RoundSide.PRO, "first")   # must not raise
+        mod._require_turn_access(access, RoundSide.PRO, "second")  # must not raise
+
+
+class TestSpeakerSlotForPhase:
+    """Phase 9C phase-to-speaker-slot audit, as actual assertions."""
+
+    def test_constructive_and_summary_map_to_first(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.services.round_state_machine import speaker_slot_for_phase
+        assert speaker_slot_for_phase(RoundPhaseType.FIRST_CONSTRUCTIVE) == "first"
+        assert speaker_slot_for_phase(RoundPhaseType.SECOND_CONSTRUCTIVE) == "first"
+        assert speaker_slot_for_phase(RoundPhaseType.FIRST_SUMMARY) == "first"
+        assert speaker_slot_for_phase(RoundPhaseType.SECOND_SUMMARY) == "first"
+
+    def test_rebuttal_and_final_focus_map_to_second(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.services.round_state_machine import speaker_slot_for_phase
+        assert speaker_slot_for_phase(RoundPhaseType.FIRST_REBUTTAL) == "second"
+        assert speaker_slot_for_phase(RoundPhaseType.SECOND_REBUTTAL) == "second"
+        assert speaker_slot_for_phase(RoundPhaseType.FIRST_FINAL_FOCUS) == "second"
+        assert speaker_slot_for_phase(RoundPhaseType.SECOND_FINAL_FOCUS) == "second"
+
+    def test_crossfire_and_non_speech_phases_have_no_slot_requirement(self):
+        from app.models.round_simulation import RoundPhaseType
+        from app.services.round_state_machine import speaker_slot_for_phase
+        for phase in (
+            RoundPhaseType.FIRST_CROSSFIRE, RoundPhaseType.GRAND_CROSSFIRE, RoundPhaseType.FINAL_CROSSFIRE,
+            RoundPhaseType.JUDGE_DELIBERATION, RoundPhaseType.COMPLETED,
+        ):
+            assert speaker_slot_for_phase(phase) is None
+
+
+class TestRoundRoomParticipantModelBackwardCompat:
+    """Old participant rows persisted before the speaker_slot migration have
+    no such key at all in the dict -- model_validate must still succeed and
+    default speaker_slot to None (flex), not raise."""
+
+    def test_row_without_speaker_slot_key_validates_with_none_default(self):
+        from app.models.round_simulation import RoundRoomParticipant
+        old_row = {
+            "id": "p1", "room_id": "room-1", "user_id": "u1", "display_name": None,
+            "role": "debater_a", "side": "pro", "status": "joined",
+            "joined_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+        }
+        participant = RoundRoomParticipant.model_validate(old_row)
+        assert participant.speaker_slot is None
+
+    def test_row_with_explicit_speaker_slot_validates(self):
+        from app.models.round_simulation import RoundRoomParticipant
+        row = {
+            "id": "p1", "room_id": "room-1", "user_id": "u1", "display_name": None,
+            "role": "debater_a", "side": "pro", "speaker_slot": "second", "status": "joined",
+            "joined_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+        }
+        participant = RoundRoomParticipant.model_validate(row)
+        assert participant.speaker_slot.value == "second"

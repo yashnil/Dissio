@@ -56,6 +56,7 @@ from app.models.round_simulation import (
     RoundSpeech,
     RoundStateResponse,
     RoundStatus,
+    SpeakerSlot,
     StudentCrossfireQuestionRequest,
     SubmitRoundDrillAttemptRequest,
     TurnContext,
@@ -116,6 +117,7 @@ from app.services.round_state_machine import (
     PHASE_LABELS,
     get_time_limit,
     next_phase,
+    speaker_slot_for_phase,
     student_speaks_in_phase,
     validate_phase_transition,
 )
@@ -348,10 +350,20 @@ def _participant_turn_state(
     participant: Optional[Dict[str, Any]],
     is_owner: bool,
     expected_side: Optional[RoundSide],
+    expected_speaker_slot: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Pure: can this caller act on expected_side right now? Returns
-    (allowed, reason) -- reason is None iff allowed. Shared by
-    _require_turn_access (raises) and _build_turn_context (reports)."""
+    """Pure: can this caller act on expected_side (and, if given,
+    expected_speaker_slot) right now? Returns (allowed, reason) -- reason is
+    None iff allowed. Shared by _require_turn_access (raises) and
+    _build_turn_context (reports).
+
+    Phase 9C slot rule: a participant's speaker_slot of None is flex --
+    it matches ANY expected_speaker_slot (including None). This is required
+    for backward compatibility: every participant that existed before 9C's
+    migration has speaker_slot=None, and must not be locked out of
+    constructive/rebuttal/summary/final-focus phases just because the
+    column now exists. Only an *explicitly assigned* slot that disagrees
+    with the phase's requirement is rejected."""
     if expected_side is None:
         return False, "No one submits during this phase."
     if room is None:
@@ -367,21 +379,32 @@ def _participant_turn_state(
     if participant.get("side") != expected_side.value:
         assigned = participant.get("side") or "no side yet"
         return False, f"You're assigned to {assigned} — this action belongs to {expected_side.value}."
+    participant_slot = participant.get("speaker_slot")
+    if expected_speaker_slot is not None and participant_slot is not None and participant_slot != expected_speaker_slot:
+        return False, (
+            f"You're the {participant_slot} speaker — this phase belongs to the "
+            f"{expected_speaker_slot} speaker on your side."
+        )
     return True, None
 
 
-def _require_turn_access(access: "_RoundAccess", expected_side: RoundSide) -> None:
-    """Only the participant occupying expected_side may submit a speech or
-    crossfire action on its behalf. Solo rounds (access.room is None) are
-    unaffected -- _load_round_access already required ownership to reach this
-    point, matching legacy behavior exactly.
+def _require_turn_access(
+    access: "_RoundAccess", expected_side: RoundSide, expected_speaker_slot: Optional[str] = None,
+) -> None:
+    """Only the participant occupying expected_side (and, when given, the
+    matching expected_speaker_slot) may submit a speech or crossfire action
+    on its behalf. Solo rounds (access.room is None) are unaffected --
+    _load_round_access already required ownership to reach this point,
+    matching legacy behavior exactly.
 
     Deliberately does NOT let ownership alone satisfy this: the room owner
-    must also hold the assigned side to submit on its behalf, so an owner who
-    isn't a round's debater can't spoof a participant's speech."""
+    must also hold the assigned side (and slot) to submit on its behalf, so
+    an owner who isn't a round's debater can't spoof a participant's speech."""
     if access.room is None:
         return
-    allowed, reason = _participant_turn_state(access.room, access.participant, access.is_owner, expected_side)
+    allowed, reason = _participant_turn_state(
+        access.room, access.participant, access.is_owner, expected_side, expected_speaker_slot,
+    )
     if not allowed:
         raise HTTPException(status_code=403, detail=reason or "You can't act right now.")
 
@@ -389,17 +412,21 @@ def _require_turn_access(access: "_RoundAccess", expected_side: RoundSide) -> No
 def _build_turn_context(
     access: "_RoundAccess", phase: RoundPhaseType, config: RoundSimulationConfig,
 ) -> TurnContext:
-    """Phase 9B: the authoritative, API-exposed answer to "can the viewer
+    """Phase 9B/9C: the authoritative, API-exposed answer to "can the viewer
     submit a speech/crossfire action right now, and if not, why not" --
     surfaced on RoundRoomStateResponse so the frontend consumes one source
     of truth instead of re-deriving this rule client-side."""
     student_side = config.student_side
+    viewer_slot = access.participant.get("speaker_slot") if access.participant else None
 
     if phase in (RoundPhaseType.JUDGE_DELIBERATION, RoundPhaseType.COMPLETED):
         return TurnContext(
             can_submit_current_turn=False,
             disabled_reason="The round isn't accepting live submissions in this phase.",
+            viewer_speaker_slot=viewer_slot,
         )
+
+    slot = speaker_slot_for_phase(phase) if phase not in CROSSFIRE_PHASES else None
 
     if phase not in CROSSFIRE_PHASES and not student_speaks_in_phase(phase, config):
         return TurnContext(
@@ -407,14 +434,18 @@ def _build_turn_context(
             disabled_reason="The AI opponent speaks in this phase.",
             expected_side=student_side,
             expected_role="debater",
+            expected_speaker_slot=slot,
+            viewer_speaker_slot=viewer_slot,
         )
 
-    allowed, reason = _participant_turn_state(access.room, access.participant, access.is_owner, student_side)
+    allowed, reason = _participant_turn_state(access.room, access.participant, access.is_owner, student_side, slot)
     return TurnContext(
         can_submit_current_turn=allowed,
         disabled_reason=reason,
         expected_side=student_side,
         expected_role="debater",
+        expected_speaker_slot=slot,
+        viewer_speaker_slot=viewer_slot,
     )
 
 
@@ -573,11 +604,14 @@ def update_room_participant_endpoint(
     req: UpdateRoomParticipantRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> RoundRoomParticipant:
-    """Owner-only. Assigns a participant's role and/or side. Rejects
-    reassigning ownership, and rejects assigning any side other than the
-    round's existing human-controlled side (config.student_side) -- see
+    """Owner-only. Assigns a participant's role, side, and/or speaker_slot.
+    Rejects reassigning ownership, and rejects assigning any side other than
+    the round's existing human-controlled side (config.student_side) -- see
     Phase 9A plan for why opposing-side human participants aren't supported
-    yet."""
+    yet. Phase 9C: rejects an active speaker_slot for a coach/observer, a
+    slot without a side, and a slot that duplicates another joined
+    participant's slot on the same side (strict uniqueness -- determinism is
+    the point of adding slots at all)."""
     supabase = get_supabase()
     room = round_room_service.get_room(supabase, room_id)
     if not room:
@@ -585,10 +619,8 @@ def update_room_participant_endpoint(
     if room["owner_user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Only the room owner can assign roles.")
 
-    target = next(
-        (p for p in round_room_service.list_participants(supabase, room_id) if p["id"] == participant_id),
-        None,
-    )
+    all_participants = round_room_service.list_participants(supabase, room_id)
+    target = next((p for p in all_participants if p["id"] == participant_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="Participant not found.")
 
@@ -622,7 +654,38 @@ def update_room_participant_endpoint(
             )
         side_value = req.side.value
 
-    updated = round_room_service.update_participant(supabase, target, role=role_value, side=side_value)
+    speaker_slot_value: Optional[str] = None
+    if req.speaker_slot is not None:
+        resulting_role = role_value or target.get("role")
+        if resulting_role in ("coach", "observer"):
+            raise HTTPException(
+                status_code=400, detail="Coaches and observers can't be assigned a speaker slot.",
+            )
+        resulting_side = side_value or target.get("side")
+        if not resulting_side:
+            raise HTTPException(
+                status_code=400, detail="Assign a side before assigning a speaker slot.",
+            )
+        conflict = next(
+            (
+                p for p in all_participants
+                if p["id"] != participant_id
+                and p.get("status") == "joined"
+                and p.get("side") == resulting_side
+                and p.get("speaker_slot") == req.speaker_slot.value
+            ),
+            None,
+        )
+        if conflict is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Another participant on {resulting_side} is already the {req.speaker_slot.value} speaker.",
+            )
+        speaker_slot_value = req.speaker_slot.value
+
+    updated = round_room_service.update_participant(
+        supabase, target, role=role_value, side=side_value, speaker_slot=speaker_slot_value,
+    )
     return RoundRoomParticipant.model_validate(updated)
 
 
@@ -757,7 +820,7 @@ def submit_student_speech(
     access = _load_round_access(round_id, user_id, supabase)
     row = access.round_row
     sim = _load_simulation(row)
-    _require_turn_access(access, sim.config.student_side)
+    _require_turn_access(access, sim.config.student_side, speaker_slot_for_phase(req.phase))
 
     # Idempotency: return existing speech if already submitted
     existing = _check_duplicate_speech(round_id, req.phase, req.idempotency_key, supabase)

@@ -1,5 +1,5 @@
 /**
- * Pass 27/28 — Phase 9A/9B. Pure helpers for multiplayer round rooms.
+ * Pass 27/28/29 — Phase 9A/9B/9C. Pure helpers for multiplayer round rooms.
  *
  * No API calls, no React, no side effects — same convention as
  * roundModel.ts. Turn-gating helpers here (canSubmitCurrentTurn,
@@ -18,6 +18,7 @@ import type {
   RoundRoom,
   RoundRoomParticipant,
   RoundSide,
+  SpeakerSlot,
 } from "@/types/round";
 
 // ── Labels ───────────────────────────────────────────────────────────────────
@@ -55,6 +56,33 @@ export function sideLabel(side: RoundSide | null | undefined): string {
   return "Unassigned";
 }
 
+// ── Speaker slots (Phase 9C) ─────────────────────────────────────────────────
+
+export const SPEAKER_SLOT_LABELS: Record<SpeakerSlot, string> = {
+  first: "First Speaker",
+  second: "Second Speaker",
+};
+
+/** Null/undefined is flex — matches either slot requirement, not "no slot". */
+export function speakerSlotLabel(slot: SpeakerSlot | null | undefined): string {
+  if (slot === "first" || slot === "second") return SPEAKER_SLOT_LABELS[slot];
+  return "Either Speaker";
+}
+
+/** Human-facing "whose turn is it" sentence, e.g. "Pro First Speaker",
+ * "Con Second Speaker", or "Either debater on Pro" when the phase has no
+ * slot requirement (crossfire, or a phase-less/unknown context). */
+export function expectedSpeakerLabel(
+  expectedSide: RoundSide | null | undefined,
+  expectedSlot: SpeakerSlot | null | undefined,
+): string {
+  const side = sideLabel(expectedSide);
+  if (expectedSlot === "first" || expectedSlot === "second") {
+    return `${side} ${SPEAKER_SLOT_LABELS[expectedSlot]}`;
+  }
+  return `Either debater on ${side}`;
+}
+
 // ── Invite codes ─────────────────────────────────────────────────────────────
 
 /** Display formatting only — never changes the underlying code value used
@@ -89,17 +117,29 @@ export function joinedParticipants(participants: RoundRoomParticipant[]): RoundR
 
 // ── Turn gating ──────────────────────────────────────────────────────────────
 
-/** Mirrors _require_turn_access: only a joined, non-observer/coach
- * participant assigned to the round's human-controlled side may submit a
- * speech or crossfire action right now. */
+/** Mirrors _require_turn_access/_participant_turn_state: only a joined,
+ * non-observer/coach participant assigned to the round's human-controlled
+ * side (and, when the phase requires one, the matching speaker_slot) may
+ * submit a speech or crossfire action right now.
+ *
+ * expectedSlot rule (Phase 9C): a participant's speaker_slot of undefined is
+ * flex — it matches ANY expectedSlot (including undefined). Only an
+ * explicitly assigned slot that disagrees with a real expectedSlot is
+ * rejected. This is required for backward compatibility with every
+ * participant that existed before speaker slots did. */
 export function canSubmitCurrentTurn(
   participant: RoundRoomParticipant | undefined,
   studentSide: RoundSide,
+  expectedSlot?: SpeakerSlot | null,
 ): boolean {
   if (!participant) return false;
   if (participant.status !== "joined") return false;
   if (participant.role === "coach" || participant.role === "observer") return false;
-  return participant.side === studentSide;
+  if (participant.side !== studentSide) return false;
+  if (expectedSlot != null && participant.speaker_slot != null && participant.speaker_slot !== expectedSlot) {
+    return false;
+  }
+  return true;
 }
 
 /** Human-readable reason submission is disabled, or null when it's allowed.
@@ -108,8 +148,9 @@ export function canSubmitCurrentTurn(
 export function disabledSubmitReason(
   participant: RoundRoomParticipant | undefined,
   studentSide: RoundSide,
+  expectedSlot?: SpeakerSlot | null,
 ): string | null {
-  if (canSubmitCurrentTurn(participant, studentSide)) return null;
+  if (canSubmitCurrentTurn(participant, studentSide, expectedSlot)) return null;
   if (!participant || participant.status !== "joined") {
     return "You're not an active participant in this room yet.";
   }
@@ -122,7 +163,10 @@ export function disabledSubmitReason(
   if (participant.side == null) {
     return "Ask the room owner to assign you a side before you can participate.";
   }
-  return `You're assigned to ${sideLabel(participant.side)} — this action belongs to ${sideLabel(studentSide)}.`;
+  if (participant.side !== studentSide) {
+    return `You're assigned to ${sideLabel(participant.side)} — this action belongs to ${sideLabel(studentSide)}.`;
+  }
+  return `You're the ${speakerSlotLabel(participant.speaker_slot).toLowerCase()} — this phase belongs to the ${speakerSlotLabel(expectedSlot).toLowerCase()} on your side.`;
 }
 
 // ── Round-content actions (Phase 9B) ─────────────────────────────────────────
@@ -152,6 +196,9 @@ export function describeCapabilities(
   }
   if (participant.side == null) {
     return `You're ${roleLabel} — ask the room owner to assign you a side before you can act.`;
+  }
+  if (participant.speaker_slot != null) {
+    return `You're ${roleLabel} (${sideLabel(participant.side)}, ${speakerSlotLabel(participant.speaker_slot)}) — you can submit your assigned speeches and any crossfire for ${sideLabel(studentSide)}.`;
   }
   return `You're ${roleLabel} (${sideLabel(participant.side)}) — you can submit speeches and crossfire for ${sideLabel(studentSide)}.`;
 }

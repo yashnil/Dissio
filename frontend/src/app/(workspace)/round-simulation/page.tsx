@@ -21,6 +21,7 @@ import {
   canSubmitCurrentTurn,
   describeCapabilities,
   disabledSubmitReason,
+  expectedSpeakerLabel,
   myParticipant,
 } from "@/lib/roomModel";
 import type {
@@ -37,6 +38,7 @@ import type {
   RoundSimulationConfig,
   RoundSpeech,
   RoundStateResponse,
+  SpeakerSlot,
   TurnContext,
 } from "@/types/round";
 
@@ -274,7 +276,7 @@ export default function RoundSimulationPage() {
 
   async function handleAssignParticipant(
     participantId: string,
-    opts: { role?: RoomRole; side?: RoundSide },
+    opts: { role?: RoomRole; side?: RoundSide; speaker_slot?: SpeakerSlot },
   ) {
     if (!room) return;
     setError(null);
@@ -606,6 +608,11 @@ export default function RoundSimulationPage() {
           <p className="text-xs text-muted-foreground">
             {describeCapabilities(viewerParticipant, studentSide)}
           </p>
+          {turnContext?.expected_side && (
+            <p className="text-xs text-muted-foreground">
+              Speaking now: {expectedSpeakerLabel(turnContext.expected_side, turnContext.expected_speaker_slot)}
+            </p>
+          )}
           {turnGate && !turnGate.allowed && turnGate.reason && (
             <p className="text-xs text-muted-foreground">{turnGate.reason}</p>
           )}

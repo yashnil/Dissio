@@ -100,6 +100,13 @@ describe("roomApi client", () => {
     expect(body).not.toHaveProperty("user_id");
   });
 
+  it("updateRoomParticipant forwards speaker_slot", async () => {
+    await roomApi.updateRoomParticipant("room-1", "p2", { speaker_slot: "first" });
+    const [, opts] = mockApiFetch.mock.calls[0];
+    const body = JSON.parse(opts.body as string);
+    expect(body.speaker_slot).toBe("first");
+  });
+
   it("leaveRoom posts to the exact leave route", async () => {
     await roomApi.leaveRoom("room-1");
     const [path, opts] = mockApiFetch.mock.calls[0];

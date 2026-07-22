@@ -18,6 +18,7 @@ import type {
   RoundRoomStateResponse,
   RoundSide,
   RoundSimulationConfig,
+  SpeakerSlot,
 } from "@/types/round";
 
 const BASE = "/round-simulations/rooms";
@@ -62,7 +63,7 @@ export function listRoomParticipants(roomId: string): Promise<RoundRoomParticipa
 export function updateRoomParticipant(
   roomId: string,
   participantId: string,
-  opts: { role?: RoomRole; side?: RoundSide },
+  opts: { role?: RoomRole; side?: RoundSide; speaker_slot?: SpeakerSlot },
 ): Promise<RoundRoomParticipant> {
   return apiFetch<RoundRoomParticipant>(`${BASE}/${roomId}/participants/${participantId}`, {
     method: "PATCH",
@@ -70,6 +71,7 @@ export function updateRoomParticipant(
     body: JSON.stringify({
       role: opts.role ?? null,
       side: opts.side ?? null,
+      speaker_slot: opts.speaker_slot ?? null,
     }),
   });
 }
