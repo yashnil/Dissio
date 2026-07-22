@@ -8,6 +8,7 @@ import type {
   RoundArgument,
   RoundDecision,
   RoundDrillAttempt,
+  RoundDrillAttemptResult,
   RoundPhaseType,
   RoundSide,
   RoundSimulation,
@@ -431,4 +432,10 @@ export function isValidDrillAttempt(text: string): boolean {
  * never inferred or defaulted. */
 export function hasDrillAttemptScore(attempt: RoundDrillAttempt): boolean {
   return typeof attempt.score === "number";
+}
+
+/** True only when the backend actually awarded XP and/or emitted mastery
+ * evidence for this attempt — never inferred, never shown speculatively. */
+export function hasDrillAttemptCredit(result: RoundDrillAttemptResult): boolean {
+  return result.xp_awarded > 0 || result.mastery_emitted;
 }

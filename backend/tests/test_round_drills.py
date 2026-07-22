@@ -246,3 +246,24 @@ class TestLoadRoundDrillAttempts:
         attempt = _attempt()
         assert attempt.score is None
         assert attempt.feedback is None
+
+    def test_old_attempt_row_with_no_xp_or_mastery_concept_still_loads(self):
+        """Phase 8H added XP/mastery emission, but never persisted xp/mastery
+        fields onto RoundDrillAttempt itself (they're response-only, on
+        RoundDrillAttemptResult). A pre-Phase-8H row, or any row loaded via
+        the plain attempts-list endpoint, must validate exactly as before."""
+        mock_supabase = MagicMock()
+        old_row = {
+            "id": "a-old", "round_drill_id": "drill-1", "round_id": "r1",
+            "response_text": "An attempt from before XP integration existed.",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+            MagicMock(data=[old_row])
+        )
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            result = load_round_drill_attempts("drill-1")
+        assert len(result) == 1
+        assert result[0].id == "a-old"
+        assert not hasattr(result[0], "xp_awarded")
+        assert not hasattr(result[0], "mastery_emitted")

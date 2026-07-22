@@ -265,6 +265,14 @@ export interface RoundDrillAttempt {
   created_at: string;
 }
 
+/** Response wrapper for a just-submitted attempt — xp/mastery fields are
+ * never persisted on RoundDrillAttempt itself, only returned here. */
+export interface RoundDrillAttemptResult {
+  attempt: RoundDrillAttempt;
+  xp_awarded: number;
+  mastery_emitted: boolean;
+}
+
 export interface RoundAdaptationReview {
   id: string;
   round_id: string;

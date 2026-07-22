@@ -14,6 +14,7 @@ import type {
   RoundDecision,
   RoundDrill,
   RoundDrillAttempt,
+  RoundDrillAttemptResult,
   RoundSimulation,
   RoundSimulationConfig,
   RoundSpeech,
@@ -220,8 +221,8 @@ export function submitRoundDrillAttempt(
   roundId: string,
   drillId: string,
   responseText: string,
-): Promise<RoundDrillAttempt> {
-  return apiFetch<RoundDrillAttempt>(`${BASE}/${roundId}/drills/${drillId}/attempts`, {
+): Promise<RoundDrillAttemptResult> {
+  return apiFetch<RoundDrillAttemptResult>(`${BASE}/${roundId}/drills/${drillId}/attempts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ round_id: roundId, response_text: responseText }),

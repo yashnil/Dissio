@@ -38,6 +38,7 @@ from app.models.round_simulation import (
     RoundDecision,
     RoundDrill,
     RoundDrillAttempt,
+    RoundDrillAttemptResult,
     RoundEvidenceUse,
     RoundHistoryItem,
     RoundPhaseType,
@@ -98,6 +99,8 @@ from app.services.round_prep_connector import (
     get_pre_round_readiness_warnings,
     record_post_round_gaps,
 )
+from app.services.mastery_integration import emit_from_drill_attempt
+from app.services.xp_ledger import XP_RULES, award_xp
 from app.services.round_state_machine import (
     CROSSFIRE_PHASES,
     PHASE_LABELS,
@@ -1202,19 +1205,25 @@ def get_round_drills(
     return load_round_drills(round_id)
 
 
-@router.post("/{round_id}/drills/{drill_id}/attempts", response_model=RoundDrillAttempt)
+@router.post("/{round_id}/drills/{drill_id}/attempts", response_model=RoundDrillAttemptResult)
 def submit_round_drill_attempt(
     round_id: str,
     drill_id: str,
     req: SubmitRoundDrillAttemptRequest,
     user_id: str = Depends(get_current_user_id),
-) -> RoundDrillAttempt:
+) -> RoundDrillAttemptResult:
     """Submit a practice attempt for one post-round drill.
 
     Scoring reuses the existing, tested drill_attempt_scoring service and is
     best-effort: a scoring failure never blocks saving the attempt the
     student already wrote. Feedback/score are only present on the returned
     row when scoring actually succeeded — never fabricated.
+
+    XP and mastery evidence (Phase 8H) reuse the existing, tested
+    xp_ledger/mastery_integration services — both best-effort and non-fatal.
+    XP rewards the act of attempting (mirrors the generic drill system's
+    drill_attempt_first/repeat rule) regardless of scoring outcome. Mastery
+    evidence requires a real score and is never emitted when scoring failed.
     """
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
@@ -1253,6 +1262,11 @@ def submit_round_drill_attempt(
             type(exc).__name__, drill_id,
         )
 
+    # Determine first-vs-repeat before saving, so the new attempt never
+    # counts toward its own "prior attempts" total.
+    prior_attempts = load_round_drill_attempts(drill_id)
+    is_first_attempt = len(prior_attempts) == 0
+
     attempt = RoundDrillAttempt(
         id=str(uuid.uuid4()),
         round_drill_id=drill_id,
@@ -1264,10 +1278,37 @@ def submit_round_drill_attempt(
     )
     save_round_drill_attempt(attempt)
 
+    xp_awarded = 0
+    try:
+        event_type = "drill_attempt_first" if is_first_attempt else "drill_attempt_repeat"
+        # event_key is derived from the freshly-persisted attempt.id, so a
+        # network retry that lands a second real attempt row earns its own
+        # (repeat-rate) XP — matching the generic drill system's behavior —
+        # while re-processing the exact same row is structurally impossible.
+        if award_xp(user_id, event_type, f"round_drill_attempt:{attempt.id}"):
+            xp_awarded = XP_RULES.get(event_type, 0)
+    except Exception:
+        logger.warning("submit_round_drill_attempt: XP award failed", exc_info=True)
+
+    mastery_emitted = False
+    if score is not None:
+        try:
+            mastery_emitted = emit_from_drill_attempt(
+                supabase=supabase,
+                user_id=user_id,
+                drill_id=attempt.id,
+                skill_target=drill.skill_target,
+                score_pct=float(score),
+                source_label=f"Full Round drill: {drill.title}",
+            )
+        except Exception:
+            logger.warning("submit_round_drill_attempt: mastery emission failed", exc_info=True)
+
     track_product_event(
-        user_id, "round_drill_attempts_saved", {"has_score": score is not None},
+        user_id, "round_drill_attempts_saved",
+        {"has_score": score is not None, "xp_awarded": xp_awarded, "mastery_emitted": mastery_emitted},
     )
-    return attempt
+    return RoundDrillAttemptResult(attempt=attempt, xp_awarded=xp_awarded, mastery_emitted=mastery_emitted)
 
 
 @router.get("/{round_id}/drills/{drill_id}/attempts", response_model=List[RoundDrillAttempt])

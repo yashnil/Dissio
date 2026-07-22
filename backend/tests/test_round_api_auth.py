@@ -520,6 +520,12 @@ def test_router_has_crossfire_followup_endpoint():
     assert any(p.endswith("/crossfire/follow-up") for p in paths), f"Missing follow-up route. Paths: {paths}"
 
 
+def test_router_has_round_drill_attempt_endpoints():
+    from app.api.round_simulations import router
+    paths = {r.path for r in router.routes}  # type: ignore[attr-defined]
+    assert any(p.endswith("/drills/{drill_id}/attempts") for p in paths), f"Missing drill attempts route. Paths: {paths}"
+
+
 def test_router_has_adaptation_reviews_endpoint():
     from app.api.round_simulations import router
     paths = {r.path for r in router.routes}  # type: ignore[attr-defined]

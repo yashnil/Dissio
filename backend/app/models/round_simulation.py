@@ -480,6 +480,18 @@ class SubmitRoundDrillAttemptRequest(BaseModel):
     response_text: str
 
 
+# ── Round drill attempt result (Pass 27 / Phase 8H) ────────────────────────────
+# Response-only wrapper — never persisted, so additive fields here never risk
+# the insert-dict/DB-column mismatch bug class fixed in Phase 8C. XP/mastery
+# fields are 0/None whenever nothing was actually awarded — never fabricated.
+
+
+class RoundDrillAttemptResult(BaseModel):
+    attempt: RoundDrillAttempt
+    xp_awarded: int = 0
+    mastery_emitted: bool = False
+
+
 # ── Adaptation review ─────────────────────────────────────────────────────────
 
 

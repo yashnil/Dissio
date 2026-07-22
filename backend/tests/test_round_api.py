@@ -449,6 +449,16 @@ def _attempt_request(round_id="r1", response_text="My attempt at the drill."):
     return SubmitRoundDrillAttemptRequest(round_id=round_id, response_text=response_text)
 
 
+def _attempt(**overrides):
+    from app.models.round_simulation import RoundDrillAttempt
+    defaults = dict(
+        id="attempt-1", round_drill_id="drill-1", round_id="r1",
+        response_text="A prior attempt.", created_at="2026-01-01T00:00:00Z",
+    )
+    defaults.update(overrides)
+    return RoundDrillAttempt(**defaults)
+
+
 class _FakeFeedback:
     """Stand-in for DrillAttemptFeedback — avoids importing the real model
     just to build a mock return value."""
@@ -460,20 +470,35 @@ class _FakeFeedback:
 
 
 class TestSubmitRoundDrillAttempt:
-    def _call(self, req, round_id=None, drill_id="drill-1", user_id="u1", drills=None, score_side_effect=None):
+    def _call(
+        self, req, round_id=None, drill_id="drill-1", user_id="u1", drills=None,
+        score_side_effect=None, prior_attempts=None,
+        award_xp_return=True, award_xp_side_effect=None,
+        emit_mastery_return=True, emit_mastery_side_effect=None,
+    ):
         from app.api import round_simulations as mod
         drills = drills if drills is not None else [_drill()]
+        prior_attempts = prior_attempts if prior_attempts is not None else []
         round_id = round_id if round_id is not None else req.round_id
         with patch.object(mod, "get_supabase", return_value=MagicMock()), \
              patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
              patch.object(mod, "load_round_drills", return_value=drills), \
+             patch.object(mod, "load_round_drill_attempts", return_value=prior_attempts) as mock_prior, \
              patch.object(mod, "score_drill_attempt", side_effect=score_side_effect) as mock_score, \
              patch.object(mod, "save_round_drill_attempt") as mock_save, \
+             patch.object(
+                 mod, "award_xp",
+                 return_value=award_xp_return, side_effect=award_xp_side_effect,
+             ) as mock_xp, \
+             patch.object(
+                 mod, "emit_from_drill_attempt",
+                 return_value=emit_mastery_return, side_effect=emit_mastery_side_effect,
+             ) as mock_mastery, \
              patch.object(mod, "track_product_event"):
             if score_side_effect is None:
                 mock_score.return_value = _FakeFeedback()
             result = mod.submit_round_drill_attempt(round_id, drill_id, req, user_id)
-        return result, mock_verify, mock_score, mock_save
+        return result, mock_verify, mock_score, mock_save, mock_xp, mock_mastery, mock_prior
 
     def test_round_id_mismatch_rejected(self):
         from fastapi import HTTPException
@@ -499,52 +524,109 @@ class TestSubmitRoundDrillAttempt:
 
     def test_ownership_check_is_invoked(self):
         req = _attempt_request()
-        _, mock_verify, _, _ = self._call(req, user_id="u-real")
+        _, mock_verify, *_ = self._call(req, user_id="u-real")
         mock_verify.assert_called_once_with("r1", "u-real", ANY)
 
     def test_saves_attempt_with_score_on_scoring_success(self):
         req = _attempt_request(response_text="I addressed C1 directly.")
-        result, _, mock_score, mock_save = self._call(req)
+        result, _, mock_score, mock_save, *_ = self._call(req)
         mock_score.assert_called_once()
         mock_save.assert_called_once()
-        assert result.round_drill_id == "drill-1"
-        assert result.round_id == "r1"
-        assert result.response_text == "I addressed C1 directly."
-        assert result.score == 85
-        assert result.feedback is not None
+        assert result.attempt.round_drill_id == "drill-1"
+        assert result.attempt.round_id == "r1"
+        assert result.attempt.response_text == "I addressed C1 directly."
+        assert result.attempt.score == 85
+        assert result.attempt.feedback is not None
 
     def test_saves_attempt_without_score_when_scoring_fails(self):
         """Scoring is best-effort — a scoring failure must never block saving
         the attempt itself, and must never fabricate a score."""
         req = _attempt_request()
-        result, _, mock_score, mock_save = self._call(req, score_side_effect=DrillScoringError("LLM down"))
+        result, _, mock_score, mock_save, *_ = self._call(req, score_side_effect=DrillScoringError("LLM down"))
         mock_save.assert_called_once()
-        assert result.score is None
-        assert result.feedback is None
+        assert result.attempt.score is None
+        assert result.attempt.feedback is None
 
     def test_saves_attempt_without_score_on_unexpected_scoring_exception(self):
         req = _attempt_request()
-        result, _, _, mock_save = self._call(req, score_side_effect=RuntimeError("boom"))
+        result, _, _, mock_save, *_ = self._call(req, score_side_effect=RuntimeError("boom"))
         mock_save.assert_called_once()
-        assert result.score is None
+        assert result.attempt.score is None
 
     def test_saved_row_has_no_score_when_scoring_never_ran(self):
         """Guards against ever defaulting to a fabricated non-null score."""
         req = _attempt_request()
-        result, *_ = self._call(req, score_side_effect=DrillScoringError("down"))
-        saved = None
-        from app.api import round_simulations as mod
-        # Re-derive what was actually persisted by inspecting the mock call.
-        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
-             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": "u1"}), \
-             patch.object(mod, "load_round_drills", return_value=[_drill()]), \
-             patch.object(mod, "score_drill_attempt", side_effect=DrillScoringError("down")), \
-             patch.object(mod, "save_round_drill_attempt") as mock_save, \
-             patch.object(mod, "track_product_event"):
-            mod.submit_round_drill_attempt("r1", "drill-1", req, "u1")
-            saved = mock_save.call_args[0][0]
+        result, _, _, mock_save, *_ = self._call(req, score_side_effect=DrillScoringError("down"))
+        saved = mock_save.call_args[0][0]
         assert saved.score is None
         assert saved.feedback is None
+
+    # ── XP / mastery integration (Phase 8H) ─────────────────────────────────
+
+    def test_first_attempt_awards_first_tier_xp(self):
+        from app.services.xp_ledger import XP_RULES
+        req = _attempt_request()
+        result, *_, mock_xp, _, mock_prior = self._call(req, prior_attempts=[])
+        mock_xp.assert_called_once()
+        event_type = mock_xp.call_args[0][1]
+        assert event_type == "drill_attempt_first"
+        assert result.xp_awarded == XP_RULES["drill_attempt_first"]
+
+    def test_repeat_attempt_awards_repeat_tier_xp(self):
+        from app.services.xp_ledger import XP_RULES
+        req = _attempt_request()
+        result, *_, mock_xp, _, _ = self._call(req, prior_attempts=[_attempt(id="prior-1")])
+        event_type = mock_xp.call_args[0][1]
+        assert event_type == "drill_attempt_repeat"
+        assert result.xp_awarded == XP_RULES["drill_attempt_repeat"]
+
+    def test_xp_event_key_is_derived_from_the_persisted_attempt_id(self):
+        req = _attempt_request()
+        result, *_, mock_xp, _, _ = self._call(req)
+        event_key = mock_xp.call_args[0][2]
+        assert event_key == f"round_drill_attempt:{result.attempt.id}"
+
+    def test_no_xp_when_award_xp_reports_duplicate(self):
+        """award_xp returning False (its own idempotency guard) must not be
+        overridden — xp_awarded stays 0, never a fabricated non-zero value."""
+        req = _attempt_request()
+        result, *_ = self._call(req, award_xp_return=False)
+        assert result.xp_awarded == 0
+
+    def test_xp_failure_does_not_block_the_response(self):
+        req = _attempt_request()
+        result, *_ = self._call(req, award_xp_side_effect=RuntimeError("ledger down"))
+        assert result.xp_awarded == 0
+        assert result.attempt.response_text  # response still returned
+
+    def test_mastery_emitted_when_scored_successfully(self):
+        req = _attempt_request()
+        result, *_, mock_mastery, _ = self._call(req)
+        mock_mastery.assert_called_once()
+        call_kwargs = mock_mastery.call_args.kwargs
+        assert call_kwargs["skill_target"] == "drops"
+        assert call_kwargs["score_pct"] == 85.0
+        assert call_kwargs["drill_id"] == result.attempt.id
+        assert result.mastery_emitted is True
+
+    def test_no_mastery_emission_when_scoring_failed(self):
+        """A null score must never reach emit_from_drill_attempt — no
+        lower-confidence completion credit is fabricated."""
+        req = _attempt_request()
+        result, _, _, _, _, mock_mastery, _ = self._call(req, score_side_effect=DrillScoringError("down"))
+        mock_mastery.assert_not_called()
+        assert result.mastery_emitted is False
+
+    def test_mastery_not_emitted_when_backend_reports_duplicate(self):
+        req = _attempt_request()
+        result, *_ = self._call(req, emit_mastery_return=False)
+        assert result.mastery_emitted is False
+
+    def test_mastery_failure_does_not_block_the_response(self):
+        req = _attempt_request()
+        result, *_ = self._call(req, emit_mastery_side_effect=RuntimeError("mastery down"))
+        assert result.mastery_emitted is False
+        assert result.attempt.response_text  # response still returned
 
 
 class TestGetRoundDrillAttempts:

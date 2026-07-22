@@ -3,8 +3,8 @@
 import { useId, useState } from "react";
 import * as roundApi from "@/lib/roundApi";
 import { ApiError } from "@/lib/api";
-import { hasDrillAttemptScore, isValidDrillAttempt } from "@/lib/roundModel";
-import type { RoundDrill, RoundDrillAttempt } from "@/types/round";
+import { hasDrillAttemptScore, hasDrillAttemptCredit, isValidDrillAttempt } from "@/lib/roundModel";
+import type { RoundDrill, RoundDrillAttempt, RoundDrillAttemptResult } from "@/types/round";
 
 interface Props {
   roundId: string;
@@ -97,7 +97,7 @@ function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
   const [attemptText, setAttemptText] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "error">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [lastSaved, setLastSaved] = useState<RoundDrillAttempt | null>(null);
+  const [lastResult, setLastResult] = useState<RoundDrillAttemptResult | null>(null);
 
   const [attempts, setAttempts] = useState<RoundDrillAttempt[] | null>(null);
   const [attemptsLoadState, setAttemptsLoadState] = useState<"idle" | "loading" | "error">("idle");
@@ -129,9 +129,9 @@ function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
     setSubmitState("submitting");
     setSubmitError(null);
     try {
-      const saved = await roundApi.submitRoundDrillAttempt(roundId, drill.id, attemptText.trim());
-      setLastSaved(saved);
-      setAttempts((prev) => (prev ? [saved, ...prev] : [saved]));
+      const result = await roundApi.submitRoundDrillAttempt(roundId, drill.id, attemptText.trim());
+      setLastResult(result);
+      setAttempts((prev) => (prev ? [result.attempt, ...prev] : [result.attempt]));
       setAttemptText("");
       setSubmitState("idle");
     } catch (e) {
@@ -218,12 +218,22 @@ function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
             {submitState === "submitting" ? "Saving..." : "Submit Attempt"}
           </button>
 
-          {lastSaved && (
+          {lastResult && (
             <div className="space-y-1">
               <p role="status" className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                 Attempt saved.
               </p>
-              <AttemptFeedback attempt={lastSaved} />
+              {hasDrillAttemptCredit(lastResult) && (
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    lastResult.xp_awarded > 0 ? `+${lastResult.xp_awarded} XP` : null,
+                    lastResult.mastery_emitted ? "Counted toward skill mastery." : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              )}
+              <AttemptFeedback attempt={lastResult.attempt} />
             </div>
           )}
 

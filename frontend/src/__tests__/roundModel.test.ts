@@ -54,6 +54,7 @@ import {
   groupCrossfireExchangesWithFollowUps,
   isValidDrillAttempt,
   hasDrillAttemptScore,
+  hasDrillAttemptCredit,
 } from "@/lib/roundModel";
 import type {
   CrossfireEffect,
@@ -61,7 +62,19 @@ import type {
   RoundArgument,
   RoundDecision,
   RoundDrillAttempt,
+  RoundDrillAttemptResult,
 } from "@/types/round";
+
+function makeDrillAttemptResult(
+  overrides: Partial<RoundDrillAttemptResult> = {},
+): RoundDrillAttemptResult {
+  return {
+    attempt: makeDrillAttempt(),
+    xp_awarded: 0,
+    mastery_emitted: false,
+    ...overrides,
+  };
+}
 
 function makeDrillAttempt(overrides: Partial<RoundDrillAttempt> = {}): RoundDrillAttempt {
   return {
@@ -906,5 +919,29 @@ describe("hasDrillAttemptScore", () => {
   it("is true even for a score of 0 — a real score must not be treated as absent", () => {
     const attempt = makeDrillAttempt({ score: 0 });
     expect(hasDrillAttemptScore(attempt)).toBe(true);
+  });
+});
+
+// ── Drill attempt XP/mastery credit (Phase 8H) ──────────────────────────────────
+
+describe("hasDrillAttemptCredit", () => {
+  it("is false when neither XP nor mastery was awarded — nothing invented client-side", () => {
+    const result = makeDrillAttemptResult({ xp_awarded: 0, mastery_emitted: false });
+    expect(hasDrillAttemptCredit(result)).toBe(false);
+  });
+
+  it("is true when XP alone was awarded", () => {
+    const result = makeDrillAttemptResult({ xp_awarded: 50, mastery_emitted: false });
+    expect(hasDrillAttemptCredit(result)).toBe(true);
+  });
+
+  it("is true when mastery alone was emitted", () => {
+    const result = makeDrillAttemptResult({ xp_awarded: 0, mastery_emitted: true });
+    expect(hasDrillAttemptCredit(result)).toBe(true);
+  });
+
+  it("is true when both XP and mastery were awarded", () => {
+    const result = makeDrillAttemptResult({ xp_awarded: 20, mastery_emitted: true });
+    expect(hasDrillAttemptCredit(result)).toBe(true);
   });
 });
