@@ -385,6 +385,7 @@ export default function RoundSimulationPage() {
                   phase={roundState.current_phase}
                   studentSide={simulation.config.student_side}
                   exchanges={roundState.active_crossfire ?? []}
+                  crossfireEffects={roundState.crossfire_effects ?? []}
                   onExchangeSaved={handleCrossfireExchangeSaved}
                   onAdvancePhase={handleAdvancePhase}
                   isLoading={loading}
