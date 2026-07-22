@@ -37,6 +37,7 @@ from app.models.round_simulation import (
     RoundArgument,
     RoundDecision,
     RoundDrill,
+    RoundDrillAttempt,
     RoundEvidenceUse,
     RoundHistoryItem,
     RoundPhaseType,
@@ -48,6 +49,7 @@ from app.models.round_simulation import (
     RoundStateResponse,
     RoundStatus,
     StudentCrossfireQuestionRequest,
+    SubmitRoundDrillAttemptRequest,
     SubmitStudentSpeechRequest,
     TurningPoint,
 )
@@ -81,9 +83,12 @@ from app.services.product_events import track_product_event
 from app.services.round_decision_engine import rejudge_round, run_decision_engine
 from app.services.round_drill_generator import (
     generate_post_round_drills,
+    load_round_drill_attempts,
     load_round_drills,
+    save_round_drill_attempt,
     save_round_drills,
 )
+from app.services.drill_attempt_scoring import DrillScoringError, score_drill_attempt
 from app.services.round_flow_tracker import (
     apply_crossfire_concession,
     load_round_arguments,
@@ -1195,6 +1200,91 @@ def get_round_drills(
     supabase = get_supabase()
     _verify_owner(round_id, user_id, supabase)
     return load_round_drills(round_id)
+
+
+@router.post("/{round_id}/drills/{drill_id}/attempts", response_model=RoundDrillAttempt)
+def submit_round_drill_attempt(
+    round_id: str,
+    drill_id: str,
+    req: SubmitRoundDrillAttemptRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundDrillAttempt:
+    """Submit a practice attempt for one post-round drill.
+
+    Scoring reuses the existing, tested drill_attempt_scoring service and is
+    best-effort: a scoring failure never blocks saving the attempt the
+    student already wrote. Feedback/score are only present on the returned
+    row when scoring actually succeeded — never fabricated.
+    """
+    if req.round_id != round_id:
+        raise HTTPException(status_code=400, detail="round_id mismatch.")
+    supabase = get_supabase()
+    _verify_owner(round_id, user_id, supabase)
+
+    drills = load_round_drills(round_id)
+    drill = next((d for d in drills if d.id == drill_id), None)
+    if drill is None:
+        raise HTTPException(status_code=404, detail="Drill not found in this round.")
+
+    response_text = req.response_text.strip()
+    if not response_text:
+        raise HTTPException(status_code=400, detail="Attempt cannot be empty.")
+
+    score: Optional[int] = None
+    feedback: Optional[Dict[str, Any]] = None
+    try:
+        result = score_drill_attempt(
+            drill_title=drill.title,
+            skill_target=drill.skill_target,
+            instructions=None,
+            success_criteria=drill.success_criteria,
+            source_weakness=drill.source.weakness_description,
+            time_limit_seconds=drill.time_limit_seconds,
+            difficulty="beginner",
+            transcript=response_text,
+        )
+        score = result.score
+        feedback = result.model_dump(exclude={"score"})
+    except DrillScoringError as exc:
+        logger.warning("submit_round_drill_attempt: scoring failed | %s | drill_id=%s", exc, drill_id)
+    except Exception as exc:
+        logger.warning(
+            "submit_round_drill_attempt: scoring unexpected | %s | drill_id=%s",
+            type(exc).__name__, drill_id,
+        )
+
+    attempt = RoundDrillAttempt(
+        id=str(uuid.uuid4()),
+        round_drill_id=drill_id,
+        round_id=round_id,
+        response_text=response_text,
+        score=score,
+        feedback=feedback,
+        created_at=_now(),
+    )
+    save_round_drill_attempt(attempt)
+
+    track_product_event(
+        user_id, "round_drill_attempts_saved", {"has_score": score is not None},
+    )
+    return attempt
+
+
+@router.get("/{round_id}/drills/{drill_id}/attempts", response_model=List[RoundDrillAttempt])
+def get_round_drill_attempts(
+    round_id: str,
+    drill_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> List[RoundDrillAttempt]:
+    """List prior attempts for one drill, newest first."""
+    supabase = get_supabase()
+    _verify_owner(round_id, user_id, supabase)
+
+    drills = load_round_drills(round_id)
+    if not any(d.id == drill_id for d in drills):
+        raise HTTPException(status_code=404, detail="Drill not found in this round.")
+
+    return load_round_drill_attempts(drill_id)
 
 
 # ── Coach review ──────────────────────────────────────────────────────────────

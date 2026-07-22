@@ -7,6 +7,7 @@ import type {
   CrossfireExchange,
   RoundArgument,
   RoundDecision,
+  RoundDrillAttempt,
   RoundPhaseType,
   RoundSide,
   RoundSimulation,
@@ -418,4 +419,16 @@ export function speechTypeLabel(phase: RoundPhaseType): string {
     second_final_focus: "Final Focus",
   };
   return map[phase] ?? "Speech";
+}
+
+// ── Round drill attempts (Phase 8G) ─────────────────────────────────────────────
+
+export function isValidDrillAttempt(text: string): boolean {
+  return text.trim().length > 0;
+}
+
+/** True only when the backend actually returned a score for this attempt —
+ * never inferred or defaulted. */
+export function hasDrillAttemptScore(attempt: RoundDrillAttempt): boolean {
+  return typeof attempt.score === "number";
 }

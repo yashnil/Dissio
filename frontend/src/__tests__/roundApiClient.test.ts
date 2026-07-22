@@ -126,6 +126,31 @@ describe("roundApi client", () => {
     expect(typeof roundApi.getRoundDrills).toBe("function");
   });
 
+  it("exports submitRoundDrillAttempt as a function", () => {
+    expect(typeof roundApi.submitRoundDrillAttempt).toBe("function");
+  });
+
+  it("exports getRoundDrillAttempts as a function", () => {
+    expect(typeof roundApi.getRoundDrillAttempts).toBe("function");
+  });
+
+  it("submitRoundDrillAttempt calls correct route with no user_id in body", async () => {
+    await roundApi.submitRoundDrillAttempt("r-1", "drill-1", "My attempt text.");
+    const [path, opts] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/r-1/drills/drill-1/attempts");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body);
+    expect(body.response_text).toBe("My attempt text.");
+    expect(body.round_id).toBe("r-1");
+    expect(body).not.toHaveProperty("user_id");
+  });
+
+  it("getRoundDrillAttempts calls GET correct route", async () => {
+    await roundApi.getRoundDrillAttempts("r-1", "drill-1");
+    const [path] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/r-1/drills/drill-1/attempts");
+  });
+
   it("exports getRoundFlow as a function", () => {
     expect(typeof roundApi.getRoundFlow).toBe("function");
   });

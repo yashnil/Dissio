@@ -246,6 +246,25 @@ export interface RoundDrill {
   created_at: string;
 }
 
+export interface RoundDrillAttemptFeedback {
+  met_success_criteria: boolean;
+  feedback_summary: string;
+  strengths: string[];
+  improvements: string[];
+  next_instruction: string;
+  should_retry: boolean;
+}
+
+export interface RoundDrillAttempt {
+  id: string;
+  round_drill_id: string;
+  round_id: string;
+  response_text: string;
+  score?: number;
+  feedback?: RoundDrillAttemptFeedback;
+  created_at: string;
+}
+
 export interface RoundAdaptationReview {
   id: string;
   round_id: string;

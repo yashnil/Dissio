@@ -460,6 +460,26 @@ class RoundDrill(BaseModel):
     created_at: str
 
 
+# ── Round drill attempts (Pass 26 / Phase 8G) ──────────────────────────────────
+# Scoring reuses the existing, tested drill_attempt_scoring service — best
+# effort: a scoring failure never blocks saving the attempt itself.
+
+
+class RoundDrillAttempt(BaseModel):
+    id: str
+    round_drill_id: str
+    round_id: str
+    response_text: str
+    score: Optional[int] = None
+    feedback: Optional[Dict[str, Any]] = None
+    created_at: str
+
+
+class SubmitRoundDrillAttemptRequest(BaseModel):
+    round_id: str
+    response_text: str
+
+
 # ── Adaptation review ─────────────────────────────────────────────────────────
 
 

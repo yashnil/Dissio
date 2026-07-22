@@ -52,8 +52,27 @@ import {
   canRequestCrossfireFollowUp,
   crossfireFollowUpReason,
   groupCrossfireExchangesWithFollowUps,
+  isValidDrillAttempt,
+  hasDrillAttemptScore,
 } from "@/lib/roundModel";
-import type { CrossfireEffect, CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
+import type {
+  CrossfireEffect,
+  CrossfireExchange,
+  RoundArgument,
+  RoundDecision,
+  RoundDrillAttempt,
+} from "@/types/round";
+
+function makeDrillAttempt(overrides: Partial<RoundDrillAttempt> = {}): RoundDrillAttempt {
+  return {
+    id: "attempt-1",
+    round_drill_id: "drill-1",
+    round_id: "r-1",
+    response_text: "My response to the drill.",
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function makeExchange(overrides: Partial<CrossfireExchange> = {}): CrossfireExchange {
   return {
@@ -854,5 +873,38 @@ describe("groupCrossfireExchangesWithFollowUps", () => {
     const original = makeExchange({ id: "ex-1", answer: "Evasive.", evasion_detected: true });
     const groups = groupCrossfireExchangesWithFollowUps([original]);
     expect(groups[0].followUp).toBeUndefined();
+  });
+});
+
+// ── Round drill attempts (Phase 8G) ─────────────────────────────────────────────
+
+describe("isValidDrillAttempt", () => {
+  it("rejects empty text", () => {
+    expect(isValidDrillAttempt("")).toBe(false);
+  });
+
+  it("rejects whitespace-only text", () => {
+    expect(isValidDrillAttempt("   ")).toBe(false);
+  });
+
+  it("accepts real text", () => {
+    expect(isValidDrillAttempt("I addressed every opponent argument.")).toBe(true);
+  });
+});
+
+describe("hasDrillAttemptScore", () => {
+  it("is false when the backend never scored the attempt", () => {
+    const attempt = makeDrillAttempt({ score: undefined });
+    expect(hasDrillAttemptScore(attempt)).toBe(false);
+  });
+
+  it("is true when the backend returned a numeric score", () => {
+    const attempt = makeDrillAttempt({ score: 85 });
+    expect(hasDrillAttemptScore(attempt)).toBe(true);
+  });
+
+  it("is true even for a score of 0 — a real score must not be treated as absent", () => {
+    const attempt = makeDrillAttempt({ score: 0 });
+    expect(hasDrillAttemptScore(attempt)).toBe(true);
   });
 });

@@ -7,6 +7,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import patch, MagicMock, ANY
 
+from app.services.drill_attempt_scoring import DrillScoringError
+
 
 def test_round_simulations_api_importable():
     from app.api import round_simulations
@@ -423,6 +425,154 @@ class TestRequestCrossfireFollowup:
         with pytest.raises(HTTPException) as exc_info:
             mod.request_crossfire_followup("r1", req, "u1")
         assert exc_info.value.status_code == 400
+
+
+# ── Round drill attempts (Phase 8G) ─────────────────────────────────────────────
+
+
+def _drill(**overrides):
+    from app.models.round_simulation import RoundDrill, RoundDrillSource
+    defaults = dict(
+        id="drill-1", round_id="r1", drill_id="logical-1",
+        source=RoundDrillSource(round_id="r1", speech_phase="first_rebuttal", weakness_description="Dropped C1."),
+        skill_target="drops", title="Dropped-Response Recovery Drill",
+        prompt="Practice covering all opponent arguments.",
+        success_criteria=["Every opponent argument is named and addressed."],
+        time_limit_seconds=90, created_at="2026-01-01T00:00:00Z",
+    )
+    defaults.update(overrides)
+    return RoundDrill(**defaults)
+
+
+def _attempt_request(round_id="r1", response_text="My attempt at the drill."):
+    from app.models.round_simulation import SubmitRoundDrillAttemptRequest
+    return SubmitRoundDrillAttemptRequest(round_id=round_id, response_text=response_text)
+
+
+class _FakeFeedback:
+    """Stand-in for DrillAttemptFeedback — avoids importing the real model
+    just to build a mock return value."""
+    def __init__(self, score=85):
+        self.score = score
+
+    def model_dump(self, exclude=None):
+        return {"feedback_summary": "Solid attempt.", "strengths": ["Named C1."], "improvements": []}
+
+
+class TestSubmitRoundDrillAttempt:
+    def _call(self, req, round_id=None, drill_id="drill-1", user_id="u1", drills=None, score_side_effect=None):
+        from app.api import round_simulations as mod
+        drills = drills if drills is not None else [_drill()]
+        round_id = round_id if round_id is not None else req.round_id
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "load_round_drills", return_value=drills), \
+             patch.object(mod, "score_drill_attempt", side_effect=score_side_effect) as mock_score, \
+             patch.object(mod, "save_round_drill_attempt") as mock_save, \
+             patch.object(mod, "track_product_event"):
+            if score_side_effect is None:
+                mock_score.return_value = _FakeFeedback()
+            result = mod.submit_round_drill_attempt(round_id, drill_id, req, user_id)
+        return result, mock_verify, mock_score, mock_save
+
+    def test_round_id_mismatch_rejected(self):
+        from fastapi import HTTPException
+        req = _attempt_request(round_id="other-round")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, round_id="r1")
+        assert exc_info.value.status_code == 400
+
+    def test_rejects_drill_not_in_round(self):
+        from fastapi import HTTPException
+        req = _attempt_request()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, drill_id="does-not-exist", drills=[_drill(id="drill-other")])
+        assert exc_info.value.status_code == 404
+
+    def test_rejects_empty_attempt(self):
+        from fastapi import HTTPException
+        req = _attempt_request(response_text="   ")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req)
+        assert exc_info.value.status_code == 400
+        assert "empty" in exc_info.value.detail.lower()
+
+    def test_ownership_check_is_invoked(self):
+        req = _attempt_request()
+        _, mock_verify, _, _ = self._call(req, user_id="u-real")
+        mock_verify.assert_called_once_with("r1", "u-real", ANY)
+
+    def test_saves_attempt_with_score_on_scoring_success(self):
+        req = _attempt_request(response_text="I addressed C1 directly.")
+        result, _, mock_score, mock_save = self._call(req)
+        mock_score.assert_called_once()
+        mock_save.assert_called_once()
+        assert result.round_drill_id == "drill-1"
+        assert result.round_id == "r1"
+        assert result.response_text == "I addressed C1 directly."
+        assert result.score == 85
+        assert result.feedback is not None
+
+    def test_saves_attempt_without_score_when_scoring_fails(self):
+        """Scoring is best-effort — a scoring failure must never block saving
+        the attempt itself, and must never fabricate a score."""
+        req = _attempt_request()
+        result, _, mock_score, mock_save = self._call(req, score_side_effect=DrillScoringError("LLM down"))
+        mock_save.assert_called_once()
+        assert result.score is None
+        assert result.feedback is None
+
+    def test_saves_attempt_without_score_on_unexpected_scoring_exception(self):
+        req = _attempt_request()
+        result, _, _, mock_save = self._call(req, score_side_effect=RuntimeError("boom"))
+        mock_save.assert_called_once()
+        assert result.score is None
+
+    def test_saved_row_has_no_score_when_scoring_never_ran(self):
+        """Guards against ever defaulting to a fabricated non-null score."""
+        req = _attempt_request()
+        result, *_ = self._call(req, score_side_effect=DrillScoringError("down"))
+        saved = None
+        from app.api import round_simulations as mod
+        # Re-derive what was actually persisted by inspecting the mock call.
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": "u1"}), \
+             patch.object(mod, "load_round_drills", return_value=[_drill()]), \
+             patch.object(mod, "score_drill_attempt", side_effect=DrillScoringError("down")), \
+             patch.object(mod, "save_round_drill_attempt") as mock_save, \
+             patch.object(mod, "track_product_event"):
+            mod.submit_round_drill_attempt("r1", "drill-1", req, "u1")
+            saved = mock_save.call_args[0][0]
+        assert saved.score is None
+        assert saved.feedback is None
+
+
+class TestGetRoundDrillAttempts:
+    def _call(self, drill_id="drill-1", user_id="u1", drills=None, attempts=None):
+        from app.api import round_simulations as mod
+        drills = drills if drills is not None else [_drill()]
+        attempts = attempts if attempts is not None else []
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "load_round_drills", return_value=drills), \
+             patch.object(mod, "load_round_drill_attempts", return_value=attempts) as mock_load:
+            result = mod.get_round_drill_attempts("r1", drill_id, user_id)
+        return result, mock_verify, mock_load
+
+    def test_rejects_drill_not_in_round(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(drill_id="does-not-exist", drills=[_drill(id="drill-other")])
+        assert exc_info.value.status_code == 404
+
+    def test_old_drill_with_no_attempts_returns_empty_list(self):
+        result, _, mock_load = self._call(attempts=[])
+        assert result == []
+        mock_load.assert_called_once_with("drill-1")
+
+    def test_ownership_check_is_invoked(self):
+        _, mock_verify, _ = self._call(user_id="u-real")
+        mock_verify.assert_called_once_with("r1", "u-real", ANY)
 
 
 def test_round_services_importable():

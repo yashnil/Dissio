@@ -13,6 +13,7 @@ import type {
   RoundArgument,
   RoundDecision,
   RoundDrill,
+  RoundDrillAttempt,
   RoundSimulation,
   RoundSimulationConfig,
   RoundSpeech,
@@ -213,6 +214,25 @@ export function generateDrills(roundId: string): Promise<RoundDrill[]> {
 
 export function getRoundDrills(roundId: string): Promise<RoundDrill[]> {
   return apiFetch<RoundDrill[]>(`${BASE}/${roundId}/drills`);
+}
+
+export function submitRoundDrillAttempt(
+  roundId: string,
+  drillId: string,
+  responseText: string,
+): Promise<RoundDrillAttempt> {
+  return apiFetch<RoundDrillAttempt>(`${BASE}/${roundId}/drills/${drillId}/attempts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ round_id: roundId, response_text: responseText }),
+  });
+}
+
+export function getRoundDrillAttempts(
+  roundId: string,
+  drillId: string,
+): Promise<RoundDrillAttempt[]> {
+  return apiFetch<RoundDrillAttempt[]>(`${BASE}/${roundId}/drills/${drillId}/attempts`);
 }
 
 export function getRoundFlow(roundId: string): Promise<RoundArgument[]> {

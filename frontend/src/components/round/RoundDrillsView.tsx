@@ -1,8 +1,13 @@
 "use client";
 
-import type { RoundDrill } from "@/types/round";
+import { useId, useState } from "react";
+import * as roundApi from "@/lib/roundApi";
+import { ApiError } from "@/lib/api";
+import { hasDrillAttemptScore, isValidDrillAttempt } from "@/lib/roundModel";
+import type { RoundDrill, RoundDrillAttempt } from "@/types/round";
 
 interface Props {
+  roundId: string;
   drills: RoundDrill[];
   onGenerateDrills: () => void;
   isLoading: boolean;
@@ -18,11 +23,126 @@ const SKILL_COLORS: Record<string, string> = {
   pacing_control: "bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400",
 };
 
-function DrillCard({ drill }: { drill: RoundDrill }) {
+function AttemptFeedback({ attempt }: { attempt: RoundDrillAttempt }) {
+  if (!hasDrillAttemptScore(attempt) || !attempt.feedback) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Saved. Automatic feedback wasn&#39;t available for this attempt — your response is still recorded.
+      </p>
+    );
+  }
+  const fb = attempt.feedback;
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/30 px-3 py-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold">Score: {attempt.score}/100</span>
+        <span className="text-xs text-muted-foreground">
+          {fb.met_success_criteria ? "Criteria met" : "Criteria not fully met"}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground leading-relaxed">{fb.feedback_summary}</p>
+      {fb.strengths.length > 0 && (
+        <ul className="space-y-0.5">
+          {fb.strengths.map((s, i) => (
+            <li key={i} className="text-xs text-emerald-700 dark:text-emerald-400 flex items-start gap-1.5">
+              <span className="mt-0.5 shrink-0">+</span>
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+      {fb.improvements.length > 0 && (
+        <ul className="space-y-0.5">
+          {fb.improvements.map((s, i) => (
+            <li key={i} className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+              <span className="mt-0.5 shrink-0">→</span>
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+      {fb.next_instruction && (
+        <p className="text-xs font-medium">{fb.next_instruction}</p>
+      )}
+    </div>
+  );
+}
+
+function AttemptHistoryEntry({ attempt }: { attempt: RoundDrillAttempt }) {
+  return (
+    <div className="rounded-md border px-3 py-2 space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          {new Date(attempt.created_at).toLocaleString(undefined, {
+            month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+          })}
+        </span>
+        {hasDrillAttemptScore(attempt) && (
+          <span className="text-xs font-medium">{attempt.score}/100</span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground line-clamp-2">{attempt.response_text}</p>
+    </div>
+  );
+}
+
+function DrillCard({ roundId, drill }: { roundId: string; drill: RoundDrill }) {
   const colorClass = SKILL_COLORS[drill.skill_target] ?? "bg-muted text-muted-foreground";
   const minutes = Math.floor(drill.time_limit_seconds / 60);
   const secs = drill.time_limit_seconds % 60;
   const timeLabel = minutes > 0 ? `${minutes}:${String(secs).padStart(2, "0")}` : `${secs}s`;
+  const textareaId = useId();
+
+  const [expanded, setExpanded] = useState(false);
+  const [attemptText, setAttemptText] = useState("");
+  const [submitState, setSubmitState] = useState<"idle" | "submitting" | "error">("idle");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState<RoundDrillAttempt | null>(null);
+
+  const [attempts, setAttempts] = useState<RoundDrillAttempt[] | null>(null);
+  const [attemptsLoadState, setAttemptsLoadState] = useState<"idle" | "loading" | "error">("idle");
+
+  async function loadAttempts() {
+    setAttemptsLoadState("loading");
+    try {
+      const result = await roundApi.getRoundDrillAttempts(roundId, drill.id);
+      setAttempts(result);
+      setAttemptsLoadState("idle");
+    } catch {
+      setAttemptsLoadState("error");
+    }
+  }
+
+  function handleTogglePractice() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && attempts === null) {
+      loadAttempts();
+    }
+  }
+
+  async function handleSubmitAttempt() {
+    if (!isValidDrillAttempt(attemptText)) {
+      setSubmitError("Please write or paste a response before submitting.");
+      return;
+    }
+    setSubmitState("submitting");
+    setSubmitError(null);
+    try {
+      const saved = await roundApi.submitRoundDrillAttempt(roundId, drill.id, attemptText.trim());
+      setLastSaved(saved);
+      setAttempts((prev) => (prev ? [saved, ...prev] : [saved]));
+      setAttemptText("");
+      setSubmitState("idle");
+    } catch (e) {
+      setSubmitState("error");
+      setSubmitError(
+        e instanceof ApiError
+          ? e.message
+          : "Couldn't save your attempt. Your draft is still here — try again.",
+      );
+    }
+  }
 
   return (
     <div className="rounded-lg border p-4 space-y-3">
@@ -41,6 +161,12 @@ function DrillCard({ drill }: { drill: RoundDrill }) {
         </div>
       )}
 
+      {drill.source.argument_label && (
+        <p className="text-xs text-muted-foreground">
+          Related argument: {drill.source.argument_label}
+        </p>
+      )}
+
       <div className="space-y-1">
         <p className="text-xs font-medium">Success criteria:</p>
         <ul className="space-y-0.5">
@@ -56,18 +182,79 @@ function DrillCard({ drill }: { drill: RoundDrill }) {
       <div className="flex items-center justify-between pt-1">
         <span className="text-xs text-muted-foreground">Time limit: {timeLabel}</span>
         <button
-          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-          disabled
-          title="Connect to drill attempt recorder in a future pass"
+          type="button"
+          onClick={handleTogglePractice}
+          aria-expanded={expanded}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-opacity"
         >
-          Practice
+          {expanded ? "Close" : "Practice"}
         </button>
       </div>
+
+      {expanded && (
+        <div className="space-y-3 pt-2 border-t">
+          <label htmlFor={textareaId} className="text-xs font-medium block pt-2">
+            Write or paste your response
+          </label>
+          <textarea
+            id={textareaId}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm min-h-[100px] resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="Type your redo, speech snippet, or answer..."
+            value={attemptText}
+            onChange={(e) => setAttemptText(e.target.value)}
+            disabled={submitState === "submitting"}
+          />
+          {submitError && (
+            <p role="alert" className="text-xs text-red-600">
+              {submitError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={handleSubmitAttempt}
+            disabled={submitState === "submitting" || !attemptText.trim()}
+            className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {submitState === "submitting" ? "Saving..." : "Submit Attempt"}
+          </button>
+
+          {lastSaved && (
+            <div className="space-y-1">
+              <p role="status" className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                Attempt saved.
+              </p>
+              <AttemptFeedback attempt={lastSaved} />
+            </div>
+          )}
+
+          <div className="space-y-2 pt-1">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Attempt history
+            </p>
+            {attemptsLoadState === "loading" && (
+              <p className="text-xs text-muted-foreground">Loading past attempts…</p>
+            )}
+            {attemptsLoadState === "error" && (
+              <p className="text-xs text-red-600">Couldn&#39;t load past attempts.</p>
+            )}
+            {attemptsLoadState === "idle" && attempts !== null && attempts.length === 0 && (
+              <p className="text-xs text-muted-foreground">No attempts yet.</p>
+            )}
+            {attemptsLoadState === "idle" && attempts !== null && attempts.length > 0 && (
+              <div className="space-y-1.5">
+                {attempts.map((a) => (
+                  <AttemptHistoryEntry key={a.id} attempt={a} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-export function RoundDrillsView({ drills, onGenerateDrills, isLoading }: Props) {
+export function RoundDrillsView({ roundId, drills, onGenerateDrills, isLoading }: Props) {
   if (drills.length === 0) {
     return (
       <div className="space-y-4">
@@ -98,7 +285,7 @@ export function RoundDrillsView({ drills, onGenerateDrills, isLoading }: Props) 
         </button>
       </div>
       <div className="grid gap-4">
-        {drills.map((d) => <DrillCard key={d.id} drill={d} />)}
+        {drills.map((d) => <DrillCard key={d.id} roundId={roundId} drill={d} />)}
       </div>
     </div>
   );

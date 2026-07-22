@@ -12,10 +12,12 @@ Covers:
 from __future__ import annotations
 import uuid
 import pytest
+from unittest.mock import patch, MagicMock
 
 from app.models.round_simulation import (
     ArgumentFlowStatus,
     RoundArgument,
+    RoundDrillAttempt,
     RoundEvidenceUse,
     RoundPhaseType,
     RoundSide,
@@ -24,6 +26,8 @@ from app.services.round_drill_generator import (
     _DRILL_TEMPLATES,
     _choose_drill_types,
     generate_post_round_drills,
+    load_round_drill_attempts,
+    save_round_drill_attempt,
 )
 
 
@@ -178,3 +182,67 @@ class TestDrillTemplates:
         for name, tmpl in _DRILL_TEMPLATES.items():
             assert tmpl["skill_target"] in known_targets, \
                 f"{name} has unknown skill_target {tmpl['skill_target']}"
+
+
+# ── Round drill attempt persistence (Phase 8G) ──────────────────────────────────
+
+
+def _attempt(**overrides) -> RoundDrillAttempt:
+    defaults = dict(
+        id=str(uuid.uuid4()), round_drill_id="drill-1", round_id="r1",
+        response_text="My attempt at the drill.", created_at="2026-01-01T00:00:00Z",
+    )
+    defaults.update(overrides)
+    return RoundDrillAttempt(**defaults)
+
+
+class TestSaveRoundDrillAttempt:
+    def test_inserts_into_round_drill_attempts_table(self):
+        mock_supabase = MagicMock()
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            save_round_drill_attempt(_attempt(id="a1"))
+        mock_supabase.table.assert_called_with("round_drill_attempts")
+        inserted = mock_supabase.table.return_value.insert.call_args[0][0]
+        assert inserted["id"] == "a1"
+        assert inserted["response_text"] == "My attempt at the drill."
+
+    def test_insert_failure_does_not_raise(self):
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.side_effect = Exception("db down")
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            save_round_drill_attempt(_attempt())  # must not raise
+
+
+class TestLoadRoundDrillAttempts:
+    def test_returns_parsed_attempts(self):
+        mock_supabase = MagicMock()
+        row = _attempt(id="a1").model_dump()
+        mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+            MagicMock(data=[row])
+        )
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            result = load_round_drill_attempts("drill-1")
+        assert len(result) == 1
+        assert result[0].id == "a1"
+
+    def test_old_drill_with_no_attempts_returns_empty_list(self):
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+            MagicMock(data=[])
+        )
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            result = load_round_drill_attempts("drill-with-no-attempts")
+        assert result == []
+
+    def test_load_failure_returns_empty_list_not_raise(self):
+        mock_supabase = MagicMock()
+        mock_supabase.table.side_effect = Exception("db down")
+        with patch("app.services.round_drill_generator.get_supabase", return_value=mock_supabase):
+            result = load_round_drill_attempts("drill-1")
+        assert result == []
+
+    def test_score_and_feedback_default_to_none(self):
+        """A fresh attempt with no scoring info must not fabricate a score."""
+        attempt = _attempt()
+        assert attempt.score is None
+        assert attempt.feedback is None
