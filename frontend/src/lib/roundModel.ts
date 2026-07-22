@@ -376,6 +376,34 @@ export function crossfireFollowUpReason(exchange: CrossfireExchange): string | n
   return null;
 }
 
+export interface CrossfireExchangeGroup {
+  original: CrossfireExchange;
+  followUp?: CrossfireExchange;
+}
+
+/**
+ * Groups a lane's exchanges into original questions with their follow-up (if
+ * any) nested under them, in the order the originals occurred. An exchange
+ * with follow_up_to set is never its own top-level group — it only ever
+ * appears nested under the exchange it pressed on, so the transcript reads
+ * as "original, then its follow-up" instead of a flat list where the two
+ * look like unrelated questions.
+ */
+export function groupCrossfireExchangesWithFollowUps(
+  exchanges: CrossfireExchange[],
+): CrossfireExchangeGroup[] {
+  const followUpByParent = new Map<string, CrossfireExchange>();
+  for (const ex of exchanges) {
+    if (ex.follow_up_to) followUpByParent.set(ex.follow_up_to, ex);
+  }
+  return exchanges
+    .filter((ex) => !ex.follow_up_to)
+    .map((original) => ({
+      original,
+      followUp: followUpByParent.get(original.id),
+    }));
+}
+
 // ── Speech type labels ────────────────────────────────────────────────────────
 
 export function speechTypeLabel(phase: RoundPhaseType): string {

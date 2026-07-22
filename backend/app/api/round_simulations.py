@@ -761,6 +761,15 @@ def request_crossfire_followup(
     than fabricating pressure. Idempotent per target exchange via
     follow_up_to: a second request for the same exchange returns the
     already-generated follow-up instead of creating a duplicate.
+
+    Phase 8F hardening:
+    - Never stacks a second pending question. If one is already unanswered
+      in this phase (a normal question or an earlier follow-up), that
+      exchange is returned instead of generating another — the client
+      already hides the follow-up action in this state, but this is the
+      authoritative, race-safe guard.
+    - Follow-up chains are capped at one level: a follow-up's own answer
+      cannot itself be followed up again.
     """
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
@@ -779,6 +788,13 @@ def request_crossfire_followup(
             detail="That crossfire exchange wasn't found in the current phase.",
         )
 
+    # A pending question always takes priority — resolve what's already on
+    # the table before anything new can be generated, regardless of which
+    # target this request named.
+    pending = _find_pending_crossfire_exchange(existing)
+    if pending:
+        return pending
+
     # Follow-ups only apply to the AI-asks-student direction — that's the only
     # lane with real diagnostics, since process_crossfire_response never
     # analyzes the AI's own answers (see submit_student_crossfire_question).
@@ -795,6 +811,12 @@ def request_crossfire_followup(
         raise HTTPException(
             status_code=400,
             detail="This answer doesn't have a diagnostic that justifies a follow-up.",
+        )
+
+    if target.follow_up_to:
+        raise HTTPException(
+            status_code=400,
+            detail="Follow-up questions can only be requested once per original question.",
         )
 
     existing_followup = next((e for e in existing if e.follow_up_to == target.id), None)

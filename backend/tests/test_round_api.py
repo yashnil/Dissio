@@ -259,14 +259,37 @@ class TestRequestCrossfireFollowup:
         assert exc_info.value.status_code == 400
         assert "ai opponent asked you" in exc_info.value.detail.lower()
 
-    def test_rejects_unanswered_exchange(self):
-        from fastapi import HTTPException
+    def test_target_itself_unanswered_returns_it_as_pending(self):
+        """An unanswered target is, by construction, the pending exchange —
+        the Phase 8F pending-guard returns it rather than raising, since
+        there's nothing more useful to generate until it's answered."""
         target = _cx_exchange(id="ex-target", questioner_side="con", answer=None)
         req = _followup_request()
-        with pytest.raises(HTTPException) as exc_info:
-            self._call(req, sim=_sim(student_side="pro"), existing=[target])
-        assert exc_info.value.status_code == 400
-        assert "hasn't been answered" in exc_info.value.detail
+        result, _, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"), existing=[target],
+        )
+        assert result.id == "ex-target"
+        mock_gen.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_pending_guard_returns_unrelated_pending_question_without_generating(self):
+        """Phase 8F: a pending question anywhere in the phase blocks a new
+        follow-up even when it targets a *different*, otherwise-eligible
+        exchange — never stack a second unanswered question."""
+        eligible_target = _cx_exchange(
+            id="ex-eligible", questioner_side="con", sequence=1,
+            answer="Let's move on.", evasion_detected=True,
+        )
+        unrelated_pending = _cx_exchange(
+            id="ex-pending", questioner_side="con", sequence=2, answer=None,
+        )
+        req = _followup_request(exchange_id="ex-eligible")
+        result, _, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"), existing=[eligible_target, unrelated_pending],
+        )
+        assert result.id == "ex-pending"
+        mock_gen.assert_not_called()
+        mock_save.assert_not_called()
 
     def test_rejects_exchange_without_diagnostic(self):
         from fastapi import HTTPException
@@ -311,6 +334,9 @@ class TestRequestCrossfireFollowup:
         assert result.follow_up_to == "ex-target"
 
     def test_duplicate_request_returns_existing_followup_without_regenerating(self):
+        """Prior follow-up still unanswered: the pending-guard alone already
+        makes this idempotent (see test_target_itself_unanswered_returns_it_as_pending
+        for the equivalent single-exchange case)."""
         target = _cx_exchange(id="ex-target", questioner_side="con", answer="Evasive.", evasion_detected=True)
         prior_followup = _cx_exchange(id="ex-followup", questioner_side="con", follow_up_to="ex-target")
         req = _followup_request()
@@ -320,6 +346,65 @@ class TestRequestCrossfireFollowup:
         assert result.id == "ex-followup"
         mock_gen.assert_not_called()
         mock_save.assert_not_called()
+
+    def test_duplicate_request_after_followup_answered_is_still_idempotent(self):
+        """Once the follow-up itself has been answered (no longer pending),
+        a repeat request for the same original target must still return the
+        existing follow-up via the explicit follow_up_to dedup check, not
+        generate a second one."""
+        target = _cx_exchange(id="ex-target", questioner_side="con", answer="Evasive.", evasion_detected=True)
+        answered_followup = _cx_exchange(
+            id="ex-followup", questioner_side="con", follow_up_to="ex-target", answer="Fine, I'll clarify.",
+        )
+        req = _followup_request(exchange_id="ex-target")
+        result, _, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"), existing=[target, answered_followup],
+        )
+        assert result.id == "ex-followup"
+        mock_gen.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_rejects_followup_of_followup(self):
+        """One-level depth cap: a follow-up's own (diagnosed) answer cannot
+        itself be followed up again."""
+        from fastapi import HTTPException
+        original = _cx_exchange(id="ex-original", questioner_side="con", answer="Evasive.", evasion_detected=True)
+        followup = _cx_exchange(
+            id="ex-followup", questioner_side="con", follow_up_to="ex-original",
+            answer="Still evasive.", evasion_detected=True,
+        )
+        req = _followup_request(exchange_id="ex-followup")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, sim=_sim(student_side="pro"), existing=[original, followup])
+        assert exc_info.value.status_code == 400
+        assert "once per original question" in exc_info.value.detail.lower()
+
+    def test_first_level_followup_still_works_when_a_prior_followup_exists(self):
+        """The depth cap only blocks following up on a follow-up itself — a
+        fresh, separate original exchange with its own diagnostic must still
+        be eligible even after some other follow-up chain has completed."""
+        unrelated_original = _cx_exchange(
+            id="ex-unrelated", questioner_side="con", sequence=1,
+            answer="Evasive.", evasion_detected=True,
+        )
+        unrelated_followup = _cx_exchange(
+            id="ex-unrelated-fu", questioner_side="con", sequence=2,
+            follow_up_to="ex-unrelated", answer="Answered now.",
+        )
+        new_target = _cx_exchange(
+            id="ex-new-target", questioner_side="con", sequence=3,
+            answer="Actually the opposite.", contradiction="Conflicts with an earlier claim.",
+        )
+        generated = _cx_exchange(id="ex-generated", questioner_side="con", question="Follow-up?")
+        req = _followup_request(exchange_id="ex-new-target")
+        result, _, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"),
+            existing=[unrelated_original, unrelated_followup, new_target],
+            followup_result=generated,
+        )
+        mock_gen.assert_called_once()
+        mock_save.assert_called_once()
+        assert result.follow_up_to == "ex-new-target"
 
     def test_ownership_check_is_invoked(self):
         target = _cx_exchange(id="ex-target", questioner_side="con", answer="Evasive.", evasion_detected=True)

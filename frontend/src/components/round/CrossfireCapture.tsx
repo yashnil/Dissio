@@ -14,7 +14,9 @@ import {
   crossfireFollowUpReason,
   findAnsweredCrossfireExchanges,
   findPendingCrossfireExchange,
+  groupCrossfireExchangesWithFollowUps,
   hasCrossfireDiagnostics,
+  isCrossfireFollowUp,
   isValidCrossfireAnswer,
   isValidCrossfireQuestion,
   opponentSide,
@@ -332,22 +334,36 @@ export function CrossfireCapture({
         </h3>
 
         {aiAnswered.length > 0 && (
-          <div className="space-y-2">
-            {aiAnswered.map((ex) => (
-              <ExchangeTranscriptEntry
-                key={ex.id}
-                exchange={ex}
-                studentSide={studentSide}
-                effect={crossfireEffectForExchange(crossfireEffects, ex.id)}
-                followUp={{
-                  // Only offer a follow-up when nothing is already pending —
-                  // resolve what's in front of you before asking for more.
-                  eligible: !pending && canRequestCrossfireFollowUp(ex, studentSide, aiLane),
-                  busy: followUpBusyId === ex.id,
-                  error: followUpErrors[ex.id] ?? null,
-                  onRequest: handleRequestFollowUp,
-                }}
-              />
+          <div className="space-y-3">
+            {groupCrossfireExchangesWithFollowUps(aiAnswered).map((group) => (
+              <div key={group.original.id} className="space-y-2">
+                <ExchangeTranscriptEntry
+                  exchange={group.original}
+                  studentSide={studentSide}
+                  effect={crossfireEffectForExchange(crossfireEffects, group.original.id)}
+                  followUp={{
+                    // Only offer a follow-up when nothing is already pending —
+                    // resolve what's in front of you before asking for more.
+                    eligible:
+                      !pending && canRequestCrossfireFollowUp(group.original, studentSide, aiLane),
+                    busy: followUpBusyId === group.original.id,
+                    error: followUpErrors[group.original.id] ?? null,
+                    onRequest: handleRequestFollowUp,
+                  }}
+                />
+                {group.followUp && (
+                  <div className="ml-3 sm:ml-5 border-l-2 border-hairline pl-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                      Follow-up
+                    </p>
+                    <ExchangeTranscriptEntry
+                      exchange={group.followUp}
+                      studentSide={studentSide}
+                      effect={crossfireEffectForExchange(crossfireEffects, group.followUp.id)}
+                    />
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -378,6 +394,7 @@ export function CrossfireCapture({
             <div className="rounded-md border px-3 py-2.5">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {ARTIFACT_LABELS.ai_question}
+                {isCrossfireFollowUp(pending) && " · Follow-up"}
               </p>
               <p className="text-sm mt-1">{pending.question}</p>
               {pending.target_argument && pending.target_argument !== "general" && (

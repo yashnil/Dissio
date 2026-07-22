@@ -51,6 +51,7 @@ import {
   isCrossfireFollowUp,
   canRequestCrossfireFollowUp,
   crossfireFollowUpReason,
+  groupCrossfireExchangesWithFollowUps,
 } from "@/lib/roundModel";
 import type { CrossfireEffect, CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
 
@@ -797,5 +798,61 @@ describe("a follow-up exchange is classified as an AI question artifact", () => 
     });
     const artifacts = crossfireExchangeArtifacts(followUp, "pro");
     expect(artifacts.map((a) => a.kind)).toEqual(["ai_question"]);
+  });
+
+  it("classifies an answered follow-up the same as any other answered AI-asked exchange", () => {
+    const followUp = makeExchange({
+      id: "ex-followup", questioner_side: "con", follow_up_to: "ex-parent", answer: "Fine.",
+    });
+    const artifacts = crossfireExchangeArtifacts(followUp, "pro");
+    expect(artifacts.map((a) => a.kind)).toEqual(["ai_question", "student_answer"]);
+  });
+});
+
+// ── Transcript grouping (Phase 8F) ──────────────────────────────────────────────
+
+describe("groupCrossfireExchangesWithFollowUps", () => {
+  it("returns an empty list for no exchanges", () => {
+    expect(groupCrossfireExchangesWithFollowUps([])).toEqual([]);
+  });
+
+  it("groups a plain original with no follow-up", () => {
+    const original = makeExchange({ id: "ex-1", answer: "An answer." });
+    const groups = groupCrossfireExchangesWithFollowUps([original]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].original.id).toBe("ex-1");
+    expect(groups[0].followUp).toBeUndefined();
+  });
+
+  it("nests a follow-up under its original instead of listing it separately", () => {
+    const original = makeExchange({ id: "ex-1", sequence: 1, answer: "Let's move on.", evasion_detected: true });
+    const followUp = makeExchange({ id: "ex-2", sequence: 2, follow_up_to: "ex-1", answer: "Fine, I'll clarify." });
+    const groups = groupCrossfireExchangesWithFollowUps([original, followUp]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].original.id).toBe("ex-1");
+    expect(groups[0].followUp?.id).toBe("ex-2");
+  });
+
+  it("never promotes a follow-up to its own top-level group", () => {
+    const original = makeExchange({ id: "ex-1", answer: "Evasive.", evasion_detected: true });
+    const followUp = makeExchange({ id: "ex-2", follow_up_to: "ex-1", answer: "Clarified." });
+    const groups = groupCrossfireExchangesWithFollowUps([original, followUp]);
+    expect(groups.map((g) => g.original.id)).toEqual(["ex-1"]);
+  });
+
+  it("keeps unrelated originals in separate groups, preserving order", () => {
+    const first = makeExchange({ id: "ex-1", sequence: 1, answer: "A." });
+    const second = makeExchange({ id: "ex-3", sequence: 3, answer: "B." });
+    const followUpOfFirst = makeExchange({ id: "ex-2", sequence: 2, follow_up_to: "ex-1", answer: "A2." });
+    const groups = groupCrossfireExchangesWithFollowUps([first, followUpOfFirst, second]);
+    expect(groups.map((g) => g.original.id)).toEqual(["ex-1", "ex-3"]);
+    expect(groups[0].followUp?.id).toBe("ex-2");
+    expect(groups[1].followUp).toBeUndefined();
+  });
+
+  it("leaves an original's followUp undefined if the follow-up hasn't been generated yet", () => {
+    const original = makeExchange({ id: "ex-1", answer: "Evasive.", evasion_detected: true });
+    const groups = groupCrossfireExchangesWithFollowUps([original]);
+    expect(groups[0].followUp).toBeUndefined();
   });
 });
