@@ -584,7 +584,7 @@ SKILL_REGISTRY: dict[str, dict] = {
 
 
 # ── Legacy Skill Map ───────────────────────────────────────────────────────────
-# Maps old (mission_recommender.py) skill names → canonical IDs.
+# Maps old (mission_recommender.py, round_drill_generator.py) skill names → canonical IDs.
 
 LEGACY_SKILL_MAP: dict[str, str] = {
     "warranting":       "warranting",
@@ -593,10 +593,12 @@ LEGACY_SKILL_MAP: dict[str, str] = {
     "drops":            "responses",
     "drop_prevention":  "responses",
     "evidence_use":     "evidence_use",
+    "evidence":         "evidence_use",  # legacy Full Round drill skill_target
     "clash":            "clash",
     "judge_adaptation": "judge_adaptation",
     "delivery":         "clarity",   # primary mapping for legacy delivery skill
     "organization":     "organization",
+    "pacing_control":   "pacing",    # legacy Full Round drill skill_target
 }
 
 # ── Canonical → Legacy (reverse map for the 9 legacy skills) ──────────────────

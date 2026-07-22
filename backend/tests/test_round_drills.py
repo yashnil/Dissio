@@ -267,3 +267,61 @@ class TestLoadRoundDrillAttempts:
         assert result[0].id == "a-old"
         assert not hasattr(result[0], "xp_awarded")
         assert not hasattr(result[0], "mastery_emitted")
+
+
+# ── Skill target → mastery skill resolution (Phase 8I) ──────────────────────────
+
+class TestSkillTargetMasteryResolution:
+    """Phase 8I: RoundDrill.skill_target values 'evidence' and 'pacing_control'
+    must resolve to canonical mastery skill IDs so drill attempts against them
+    emit mastery evidence instead of silently no-op'ing. Covers both the
+    legacy strings (still on already-persisted round_drills rows) and the
+    canonical strings (used going forward), so neither regresses."""
+
+    def test_legacy_evidence_resolves_to_evidence_use(self):
+        from app.services.mastery_integration import _to_canonical_skill
+        assert _to_canonical_skill("evidence") == "evidence_use"
+
+    def test_legacy_pacing_control_resolves_to_pacing(self):
+        from app.services.mastery_integration import _to_canonical_skill
+        assert _to_canonical_skill("pacing_control") == "pacing"
+
+    def test_canonical_evidence_use_resolves_to_itself(self):
+        from app.services.mastery_integration import _to_canonical_skill
+        assert _to_canonical_skill("evidence_use") == "evidence_use"
+
+    def test_canonical_pacing_resolves_to_itself(self):
+        from app.services.mastery_integration import _to_canonical_skill
+        assert _to_canonical_skill("pacing") == "pacing"
+
+    def test_all_drill_template_skill_targets_resolve(self):
+        """Every Full Round drill template's skill_target — including the
+        legacy 'evidence'/'pacing_control' values — must resolve to a real
+        mastery skill so no drill can silently drop mastery evidence."""
+        from app.services.mastery_integration import _to_canonical_skill
+        for name, tmpl in _DRILL_TEMPLATES.items():
+            resolved = _to_canonical_skill(tmpl["skill_target"])
+            assert resolved is not None, (
+                f"{name} skill_target {tmpl['skill_target']!r} does not resolve "
+                "to a canonical mastery skill"
+            )
+
+    def test_emit_from_drill_attempt_routes_legacy_evidence_to_canonical_skill(self):
+        from unittest.mock import patch
+        from app.services.mastery_integration import emit_from_drill_attempt
+        with patch("app.services.mastery_integration._emit_evidence", return_value=True) as mock_emit:
+            ok = emit_from_drill_attempt(
+                MagicMock(), "user-1", "drill-1", skill_target="evidence", score_pct=80.0,
+            )
+        assert ok is True
+        assert mock_emit.call_args.args[2] == "evidence_use"
+
+    def test_emit_from_drill_attempt_routes_legacy_pacing_control_to_canonical_skill(self):
+        from unittest.mock import patch
+        from app.services.mastery_integration import emit_from_drill_attempt
+        with patch("app.services.mastery_integration._emit_evidence", return_value=True) as mock_emit:
+            ok = emit_from_drill_attempt(
+                MagicMock(), "user-1", "drill-2", skill_target="pacing_control", score_pct=70.0,
+            )
+        assert ok is True
+        assert mock_emit.call_args.args[2] == "pacing"

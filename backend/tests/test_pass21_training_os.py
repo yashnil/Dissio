@@ -106,6 +106,14 @@ class TestEventPackIntegrity(unittest.TestCase):
     def test_legacy_drops_maps_to_responses(self):
         self.assertEqual(self.LEGACY_SKILL_MAP.get("drops"), "responses")
 
+    def test_legacy_evidence_maps_to_evidence_use(self):
+        # Phase 8I: Full Round drill templates persist skill_target="evidence"
+        self.assertEqual(self.LEGACY_SKILL_MAP.get("evidence"), "evidence_use")
+
+    def test_legacy_pacing_control_maps_to_pacing(self):
+        # Phase 8I: Full Round drill templates persist skill_target="pacing_control"
+        self.assertEqual(self.LEGACY_SKILL_MAP.get("pacing_control"), "pacing")
+
     def test_resolve_legacy_skill_returns_canonical(self):
         self.assertEqual(self.resolve_legacy_skill("delivery"), "clarity")
         self.assertEqual(self.resolve_legacy_skill("drops"), "responses")
