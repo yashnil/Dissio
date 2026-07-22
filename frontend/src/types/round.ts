@@ -146,6 +146,8 @@ export interface CrossfireExchange {
   evasion_detected: boolean;
   evidence_challenge?: string;
   strategic_significance: string;
+  /** Set only on a generated follow-up — the exchange it pressed on. */
+  follow_up_to?: string;
   created_at: string;
 }
 

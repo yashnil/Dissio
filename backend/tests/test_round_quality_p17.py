@@ -682,7 +682,13 @@ class TestPrepConnectorFixes:
 
 # ── Crossfire simulator (diversity + follow-up) ───────────────────────────────
 
-from app.services.crossfire_simulator import generate_followup_question, generate_ai_answer
+from app.services.crossfire_simulator import (
+    generate_followup_question,
+    generate_ai_answer,
+    generate_crossfire_question,
+    derive_crossfire_effect,
+    derive_crossfire_effects,
+)
 
 
 class TestCrossfireSimulatorP17:
@@ -746,6 +752,130 @@ class TestCrossfireSimulatorP17:
         # Should be 2 sentences or fewer (rough check)
         sentences = [s.strip() for s in answer.split(".") if s.strip()]
         assert len(sentences) <= 5  # generous limit given model variability
+
+    def test_generate_crossfire_question_rotates_away_from_targeted_argument(self):
+        """Rotation only happens when prior_exchanges is actually passed in — this
+        guards against the earlier API-layer bug where the endpoint never
+        forwarded exchange history, so every question re-targeted the same
+        top-priority argument instead of rotating."""
+        from app.models.round_simulation import CrossfireExchange
+        live_args = [
+            self._make_arg("P1", "pro", "live"),
+            self._make_arg("P2", "pro", "live"),
+        ]
+        first = generate_crossfire_question(
+            round_id="r1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+            questioner_side=RoundSide.CON, live_args=live_args, sequence=1,
+        )
+        assert first.target_argument == "P1"
+
+        prior = [CrossfireExchange(
+            id=str(uuid.uuid4()), round_id="r1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+            sequence=1, questioner_side=RoundSide.CON, question=first.question,
+            target_argument="P1", created_at=datetime.utcnow().isoformat(),
+        )]
+        second = generate_crossfire_question(
+            round_id="r1", phase=RoundPhaseType.FIRST_CROSSFIRE,
+            questioner_side=RoundSide.CON, live_args=live_args, sequence=2,
+            prior_exchanges=prior,
+        )
+        assert second.target_argument == "P2"
+
+
+# ── Crossfire effects (Phase 8D) ────────────────────────────────────────────────
+
+
+def _cx_exchange(**overrides):
+    from app.models.round_simulation import CrossfireExchange
+    defaults = dict(
+        id="ex-1", round_id="r1", phase=RoundPhaseType.FIRST_CROSSFIRE, sequence=1,
+        questioner_side=RoundSide.CON, question="Why?", target_argument="P1",
+        created_at=datetime.utcnow().isoformat(),
+    )
+    defaults.update(overrides)
+    return CrossfireExchange(**defaults)
+
+
+class TestDeriveCrossfireEffect:
+    def test_concession_produces_a_bounded_high_severity_effect(self):
+        ex = _cx_exchange(answer="I guess that's fair.", concession_extracted="I guess that's fair.")
+        effect = derive_crossfire_effect(ex)
+        assert effect is not None
+        assert effect.effect_type == "concession_weakened_argument"
+        assert effect.severity == "high"
+        assert effect.ballot_relevance is True
+        assert effect.affected_argument_label == "P1"
+        assert effect.exchange_id == "ex-1"
+
+    def test_contradiction_produces_a_consistency_warning(self):
+        ex = _cx_exchange(answer="Actually the opposite is true.", contradiction="Conflicts with prior claim.")
+        effect = derive_crossfire_effect(ex)
+        assert effect is not None
+        assert effect.effect_type == "contradiction_warning"
+        assert effect.severity == "medium"
+        assert effect.ballot_relevance is True
+
+    def test_evasion_produces_a_responsiveness_warning_not_ballot_relevant(self):
+        ex = _cx_exchange(answer="Let's move on.", evasion_detected=True)
+        effect = derive_crossfire_effect(ex)
+        assert effect is not None
+        assert effect.effect_type == "evasion_warning"
+        assert effect.severity == "low"
+        assert effect.ballot_relevance is False
+
+    def test_missing_diagnostics_produce_no_effect(self):
+        ex = _cx_exchange(answer="A clean, direct, unremarkable answer.")
+        assert derive_crossfire_effect(ex) is None
+
+    def test_unanswered_exchange_produces_no_effect(self):
+        ex = _cx_exchange(answer=None, concession_extracted=None)
+        assert derive_crossfire_effect(ex) is None
+
+    def test_effect_is_not_fabricated_from_target_alone(self):
+        """A target_argument with no diagnostic fields must never produce an effect."""
+        ex = _cx_exchange(answer="Sure, that's our position.", target_argument="P1")
+        assert derive_crossfire_effect(ex) is None
+
+    def test_general_target_is_not_treated_as_a_real_argument_label(self):
+        ex = _cx_exchange(
+            answer="Fine.", concession_extracted="Fine, you're right.", target_argument="general",
+        )
+        effect = derive_crossfire_effect(ex)
+        assert effect is not None
+        assert effect.affected_argument_label is None
+
+    def test_concession_takes_precedence_over_contradiction_and_evasion(self):
+        ex = _cx_exchange(
+            answer="...", concession_extracted="Conceded.", contradiction="Also contradicted.",
+            evasion_detected=True,
+        )
+        effect = derive_crossfire_effect(ex)
+        assert effect.effect_type == "concession_weakened_argument"
+
+    def test_no_raw_ids_in_explanation_text(self):
+        ex = _cx_exchange(id="ex-secret-uuid", answer="Fine.", concession_extracted="Fine, agreed.")
+        effect = derive_crossfire_effect(ex)
+        assert "ex-secret-uuid" not in effect.explanation
+
+
+class TestDeriveCrossfireEffects:
+    def test_derives_one_effect_per_exchange_with_a_diagnostic(self):
+        exchanges = [
+            _cx_exchange(id="e1", sequence=1, answer="Fine.", concession_extracted="Fine, agreed."),
+            _cx_exchange(id="e2", sequence=2, answer="No comment on that."),
+            _cx_exchange(id="e3", sequence=3, answer="That's evasive.", evasion_detected=True),
+        ]
+        effects = derive_crossfire_effects(exchanges)
+        assert len(effects) == 2
+        assert [e.exchange_id for e in effects] == ["e1", "e3"]
+
+    def test_empty_list_produces_no_effects(self):
+        assert derive_crossfire_effects([]) == []
+
+    def test_no_crossfire_produces_no_effects_stably(self):
+        """Decision engine must remain stable (no crash, no fabricated effects)
+        when a round had zero crossfire exchanges."""
+        assert derive_crossfire_effects([]) == []
 
 
 # ── Coach round review ────────────────────────────────────────────────────────

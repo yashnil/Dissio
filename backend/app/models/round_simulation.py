@@ -228,6 +228,10 @@ class CrossfireExchange(BaseModel):
     evasion_detected: bool = False
     evidence_challenge: Optional[str] = None
     strategic_significance: str = "low"
+    # Pass 25 / Phase 8E: set only on a generated follow-up, pointing back at
+    # the exchange it pressed on. Exact idempotency key for the follow-up
+    # endpoint — never inferred from sequence/target/side heuristics.
+    follow_up_to: Optional[str] = None
     created_at: str
 
 
@@ -236,6 +240,12 @@ class CrossfireSubmitRequest(BaseModel):
     phase: RoundPhaseType
     typed_response: Optional[str] = None
     audio_url: Optional[str] = None
+
+
+class FollowUpCrossfireRequest(BaseModel):
+    """Student-initiated request to press a diagnosed answer with a follow-up."""
+    round_id: str
+    exchange_id: str
 
 
 # ── Crossfire effects (Pass 24 / Phase 8D) ─────────────────────────────────────

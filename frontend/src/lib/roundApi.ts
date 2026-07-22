@@ -151,6 +151,21 @@ export function submitStudentCrossfireQuestion(
   });
 }
 
+/** Student-requested AI follow-up pressing a specific answer the backend
+ * already flagged as evasive or contradictory. `exchangeId` identifies the
+ * target exchange — the backend derives the auth'd user from the session,
+ * never from the request body. */
+export function requestCrossfireFollowUp(
+  roundId: string,
+  exchangeId: string,
+): Promise<CrossfireExchange> {
+  return apiFetch<CrossfireExchange>(`${BASE}/${roundId}/crossfire/follow-up`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ round_id: roundId, exchange_id: exchangeId }),
+  });
+}
+
 // ── Phase ───────────────────────────────────────────────────────────────────
 
 export function advancePhase(

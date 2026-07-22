@@ -48,6 +48,9 @@ import {
   crossfireEffectTone,
   crossfireEffectForExchange,
   crossfireEffectForArgument,
+  isCrossfireFollowUp,
+  canRequestCrossfireFollowUp,
+  crossfireFollowUpReason,
 } from "@/lib/roundModel";
 import type { CrossfireEffect, CrossfireExchange, RoundArgument, RoundDecision } from "@/types/round";
 
@@ -707,5 +710,92 @@ describe("crossfireEffectForArgument", () => {
   it("returns undefined for effects with no argument target (general questions)", () => {
     const effects = [makeEffect({ affected_argument_label: undefined })];
     expect(crossfireEffectForArgument(effects, "P1")).toBeUndefined();
+  });
+});
+
+// ── Crossfire follow-ups (Phase 8E) ─────────────────────────────────────────────
+
+describe("isCrossfireFollowUp", () => {
+  it("is false for an exchange with no follow_up_to", () => {
+    const ex = makeExchange({ follow_up_to: undefined });
+    expect(isCrossfireFollowUp(ex)).toBe(false);
+  });
+
+  it("is true when follow_up_to references a parent exchange", () => {
+    const ex = makeExchange({ follow_up_to: "ex-parent" });
+    expect(isCrossfireFollowUp(ex)).toBe(true);
+  });
+});
+
+describe("canRequestCrossfireFollowUp", () => {
+  const studentSide = "pro" as const;
+
+  it("is false when the exchange has no diagnostic at all", () => {
+    const ex = makeExchange({
+      questioner_side: "con", answer: "A clean answer.",
+      evasion_detected: false, contradiction: undefined,
+    });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex])).toBe(false);
+  });
+
+  it("is true for an evasive, answered, AI-asked exchange", () => {
+    const ex = makeExchange({ questioner_side: "con", answer: "Let's move on.", evasion_detected: true });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex])).toBe(true);
+  });
+
+  it("is true for a contradictory, answered, AI-asked exchange", () => {
+    const ex = makeExchange({
+      questioner_side: "con", answer: "The opposite, actually.",
+      contradiction: "Conflicts with earlier claim.",
+    });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex])).toBe(true);
+  });
+
+  it("is false for an unanswered exchange even with a diagnostic set", () => {
+    const ex = makeExchange({ questioner_side: "con", answer: undefined, evasion_detected: true });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex])).toBe(false);
+  });
+
+  it("is false when the student asked the question (wrong lane)", () => {
+    const ex = makeExchange({ questioner_side: "pro", answer: "An answer.", evasion_detected: true });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex])).toBe(false);
+  });
+
+  it("is false once a follow-up already exists for this exchange", () => {
+    const ex = makeExchange({ id: "ex-1", questioner_side: "con", answer: "Evasive.", evasion_detected: true });
+    const followUp = makeExchange({ id: "ex-2", questioner_side: "con", follow_up_to: "ex-1" });
+    expect(canRequestCrossfireFollowUp(ex, studentSide, [ex, followUp])).toBe(false);
+  });
+});
+
+describe("crossfireFollowUpReason", () => {
+  it("returns null when there's no diagnostic", () => {
+    const ex = makeExchange({ evasion_detected: false, contradiction: undefined });
+    expect(crossfireFollowUpReason(ex)).toBeNull();
+  });
+
+  it("explains evasion in plain language", () => {
+    const ex = makeExchange({ evasion_detected: true });
+    expect(crossfireFollowUpReason(ex)).toBe("The answer looked evasive.");
+  });
+
+  it("explains contradiction in plain language", () => {
+    const ex = makeExchange({ contradiction: "Conflicts with earlier claim." });
+    expect(crossfireFollowUpReason(ex)).toBe("The answer contradicted earlier material.");
+  });
+
+  it("prefers contradiction over evasion when both are present", () => {
+    const ex = makeExchange({ evasion_detected: true, contradiction: "Conflicts with earlier claim." });
+    expect(crossfireFollowUpReason(ex)).toBe("The answer contradicted earlier material.");
+  });
+});
+
+describe("a follow-up exchange is classified as an AI question artifact", () => {
+  it("classifies an unanswered follow-up (questioner is the AI) as ai_question", () => {
+    const followUp = makeExchange({
+      id: "ex-followup", questioner_side: "con", follow_up_to: "ex-parent", answer: undefined,
+    });
+    const artifacts = crossfireExchangeArtifacts(followUp, "pro");
+    expect(artifacts.map((a) => a.kind)).toEqual(["ai_question"]);
   });
 });

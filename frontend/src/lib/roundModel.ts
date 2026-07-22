@@ -346,6 +346,36 @@ export function crossfireEffectForArgument(
   return effects.find((e) => e.affected_argument_label === argumentLabel);
 }
 
+// ── Crossfire follow-ups (Phase 8E) ─────────────────────────────────────────────
+// A follow-up is only offered when the backend already flagged the answer —
+// never inferred client-side, never automatic.
+
+export function isCrossfireFollowUp(exchange: CrossfireExchange): boolean {
+  return Boolean(exchange.follow_up_to);
+}
+
+/** True only when the target exchange is answered, in the AI-asks-student
+ * lane, carries a real diagnostic, and hasn't already been followed up on. */
+export function canRequestCrossfireFollowUp(
+  exchange: CrossfireExchange,
+  studentSide: RoundSide,
+  allExchanges: CrossfireExchange[],
+): boolean {
+  if (exchange.questioner_side === studentSide) return false;
+  if (!exchange.answer) return false;
+  if (!(exchange.evasion_detected || exchange.contradiction)) return false;
+  const alreadyFollowedUp = allExchanges.some((e) => e.follow_up_to === exchange.id);
+  return !alreadyFollowedUp;
+}
+
+/** Human-readable reason shown next to the "Ask follow-up" action — mirrors
+ * the same precedence (contradiction over evasion) used server-side. */
+export function crossfireFollowUpReason(exchange: CrossfireExchange): string | null {
+  if (exchange.contradiction) return "The answer contradicted earlier material.";
+  if (exchange.evasion_detected) return "The answer looked evasive.";
+  return null;
+}
+
 // ── Speech type labels ────────────────────────────────────────────────────────
 
 export function speechTypeLabel(phase: RoundPhaseType): string {

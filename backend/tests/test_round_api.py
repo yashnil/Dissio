@@ -5,6 +5,7 @@ Tests verify: module importable, router has correct prefix, all expected routes 
 """
 from __future__ import annotations
 import pytest
+from unittest.mock import patch, MagicMock, ANY
 
 
 def test_round_simulations_api_importable():
@@ -169,7 +170,7 @@ def test_crossfire_exchange_model_dump_matches_known_db_columns():
         "id", "round_id", "phase", "sequence", "questioner_side", "question",
         "answer", "target_argument", "exchange_type", "concession_extracted",
         "contradiction", "evasion_detected", "evidence_challenge",
-        "strategic_significance", "created_at",
+        "strategic_significance", "follow_up_to", "created_at",
     }
     exchange = _cx_exchange()
     assert set(exchange.model_dump().keys()) == known_db_columns
@@ -190,6 +191,153 @@ def test_local_duplicate_ai_crossfire_answer_removed():
     """The old untested duplicate implementation must not silently reappear."""
     from app.api import round_simulations
     assert not hasattr(round_simulations, "_generate_ai_crossfire_answer")
+
+
+# ── request_crossfire_followup (Phase 8E) ───────────────────────────────────────
+
+
+def _followup_request(round_id="r1", exchange_id="ex-target"):
+    from app.models.round_simulation import FollowUpCrossfireRequest
+    return FollowUpCrossfireRequest(round_id=round_id, exchange_id=exchange_id)
+
+
+def _sim(phase="first_crossfire", student_side="pro", judge_type="flow"):
+    from app.models.round_simulation import RoundSimulation, RoundSimulationConfig
+    config = RoundSimulationConfig(
+        student_side=student_side, speaking_order="first", resolution="Test resolution.",
+        judge_type=judge_type,
+    )
+    return RoundSimulation(
+        id="r1", user_id="u1", config=config, status="active", current_phase=phase,
+        created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+    )
+
+
+class TestRequestCrossfireFollowup:
+    """Endpoint-level tests via direct function call with mocked collaborators —
+    the established pattern in this file avoids a live Supabase connection."""
+
+    def _call(self, req, user_id="u1", sim=None, existing=None, followup_result=None):
+        from app.api import round_simulations as mod
+        sim = sim or _sim()
+        existing = existing if existing is not None else []
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(mod, "_verify_owner", return_value={"id": "r1", "user_id": user_id}) as mock_verify, \
+             patch.object(mod, "_load_simulation", return_value=sim), \
+             patch.object(mod, "load_crossfire_exchanges", return_value=existing), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "generate_followup_question", return_value=followup_result) as mock_gen, \
+             patch.object(mod, "save_crossfire_exchange") as mock_save, \
+             patch.object(mod, "track_product_event"):
+            result = mod.request_crossfire_followup(req.round_id, req, user_id)
+        return result, mock_verify, mock_gen, mock_save
+
+    def test_rejects_outside_crossfire_phase(self):
+        from fastapi import HTTPException
+        req = _followup_request()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, sim=_sim(phase="first_constructive"))
+        assert exc_info.value.status_code == 400
+        assert "crossfire" in exc_info.value.detail.lower()
+
+    def test_rejects_missing_target_exchange(self):
+        from fastapi import HTTPException
+        req = _followup_request(exchange_id="does-not-exist")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, existing=[_cx_exchange(id="ex-other")])
+        assert exc_info.value.status_code == 404
+
+    def test_rejects_exchange_the_student_asked(self):
+        """Only the AI-asks-student direction has real diagnostics."""
+        from fastapi import HTTPException
+        target = _cx_exchange(
+            id="ex-target", questioner_side="pro", answer="An answer.", evasion_detected=True,
+        )
+        req = _followup_request()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, sim=_sim(student_side="pro"), existing=[target])
+        assert exc_info.value.status_code == 400
+        assert "ai opponent asked you" in exc_info.value.detail.lower()
+
+    def test_rejects_unanswered_exchange(self):
+        from fastapi import HTTPException
+        target = _cx_exchange(id="ex-target", questioner_side="con", answer=None)
+        req = _followup_request()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, sim=_sim(student_side="pro"), existing=[target])
+        assert exc_info.value.status_code == 400
+        assert "hasn't been answered" in exc_info.value.detail
+
+    def test_rejects_exchange_without_diagnostic(self):
+        from fastapi import HTTPException
+        target = _cx_exchange(
+            id="ex-target", questioner_side="con", answer="A clean direct answer.",
+            evasion_detected=False, contradiction=None,
+        )
+        req = _followup_request()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(req, sim=_sim(student_side="pro"), existing=[target])
+        assert exc_info.value.status_code == 400
+        assert "doesn't have a diagnostic" in exc_info.value.detail
+
+    def test_accepts_evasion_and_persists_followup_with_correct_sequence(self):
+        target = _cx_exchange(
+            id="ex-target", questioner_side="con", sequence=2, answer="Let's move on.",
+            evasion_detected=True,
+        )
+        generated = _cx_exchange(id="ex-new", questioner_side="con", sequence=99, question="Follow-up?")
+        req = _followup_request()
+        result, mock_verify, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"), existing=[target], followup_result=generated,
+        )
+        mock_verify.assert_called_once()
+        mock_gen.assert_called_once()
+        assert result.follow_up_to == "ex-target"
+        assert result.sequence == 2  # len(existing) + 1 = 2, not the generator's own guess of 99
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        assert saved.follow_up_to == "ex-target"
+
+    def test_accepts_contradiction_alone(self):
+        target = _cx_exchange(
+            id="ex-target", questioner_side="con", answer="Actually the opposite.",
+            contradiction="Conflicts with an earlier claim.",
+        )
+        generated = _cx_exchange(id="ex-new", questioner_side="con", question="Follow-up?")
+        req = _followup_request()
+        result, *_ = self._call(
+            req, sim=_sim(student_side="pro"), existing=[target], followup_result=generated,
+        )
+        assert result.follow_up_to == "ex-target"
+
+    def test_duplicate_request_returns_existing_followup_without_regenerating(self):
+        target = _cx_exchange(id="ex-target", questioner_side="con", answer="Evasive.", evasion_detected=True)
+        prior_followup = _cx_exchange(id="ex-followup", questioner_side="con", follow_up_to="ex-target")
+        req = _followup_request()
+        result, mock_verify, mock_gen, mock_save = self._call(
+            req, sim=_sim(student_side="pro"), existing=[target, prior_followup],
+        )
+        assert result.id == "ex-followup"
+        mock_gen.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_ownership_check_is_invoked(self):
+        target = _cx_exchange(id="ex-target", questioner_side="con", answer="Evasive.", evasion_detected=True)
+        generated = _cx_exchange(id="ex-new", questioner_side="con")
+        req = _followup_request()
+        _, mock_verify, _, _ = self._call(
+            req, user_id="u-real", sim=_sim(student_side="pro"), existing=[target], followup_result=generated,
+        )
+        mock_verify.assert_called_once_with("r1", "u-real", ANY)
+
+    def test_round_id_mismatch_rejected_before_any_lookup(self):
+        from fastapi import HTTPException
+        from app.models.round_simulation import FollowUpCrossfireRequest
+        from app.api import round_simulations as mod
+        req = FollowUpCrossfireRequest(round_id="other-round", exchange_id="ex-1")
+        with pytest.raises(HTTPException) as exc_info:
+            mod.request_crossfire_followup("r1", req, "u1")
+        assert exc_info.value.status_code == 400
 
 
 def test_round_services_importable():

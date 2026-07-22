@@ -7,9 +7,11 @@ import {
   CROSSFIRE_EFFECT_LABELS,
   PHASE_LABELS,
   aiAsksExchanges,
+  canRequestCrossfireFollowUp,
   crossfireEffectForExchange,
   crossfireEffectTone,
   crossfireExchangeArtifacts,
+  crossfireFollowUpReason,
   findAnsweredCrossfireExchanges,
   findPendingCrossfireExchange,
   hasCrossfireDiagnostics,
@@ -95,12 +97,21 @@ function ExchangeTranscriptEntry({
   exchange,
   studentSide,
   effect,
+  followUp,
 }: {
   exchange: CrossfireExchange;
   studentSide: RoundSide;
   effect?: CrossfireEffect;
+  /** Present only for entries in the AI-asks-you lane that may offer a follow-up. */
+  followUp?: {
+    eligible: boolean;
+    busy: boolean;
+    error: string | null;
+    onRequest: (exchangeId: string) => void;
+  };
 }) {
   const artifacts = crossfireExchangeArtifacts(exchange, studentSide);
+  const reason = followUp?.eligible ? crossfireFollowUpReason(exchange) : null;
   return (
     <div className="rounded-md border px-3 py-2.5 space-y-2 text-sm">
       {artifacts.map((a) => (
@@ -113,6 +124,24 @@ function ExchangeTranscriptEntry({
       ))}
       <ExchangeDiagnostics exchange={exchange} />
       {effect && <ExchangeEffectNote effect={effect} />}
+      {followUp?.eligible && (
+        <div className="space-y-1.5 pt-1">
+          {reason && <p className="text-xs text-muted-foreground">{reason}</p>}
+          {followUp.error && (
+            <p role="alert" className="text-xs text-red-600">
+              {followUp.error}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => followUp.onRequest(exchange.id)}
+            disabled={followUp.busy}
+            className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+          >
+            {followUp.busy ? "Asking follow-up…" : "Ask Follow-up"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -210,6 +239,38 @@ export function CrossfireCapture({
     }
   }
 
+  // Follow-up questions (Phase 8E) — student-requested only, never automatic.
+  // Keyed by target exchange id so multiple historical entries can each show
+  // their own busy/error state independently.
+  const [followUpBusyId, setFollowUpBusyId] = useState<string | null>(null);
+  const [followUpErrors, setFollowUpErrors] = useState<Record<string, string>>({});
+  const followUpInFlightRef = useRef<Set<string>>(new Set());
+
+  async function handleRequestFollowUp(exchangeId: string) {
+    if (followUpInFlightRef.current.has(exchangeId)) return;
+    followUpInFlightRef.current.add(exchangeId);
+    setFollowUpBusyId(exchangeId);
+    setFollowUpErrors((prev) => {
+      const next = { ...prev };
+      delete next[exchangeId];
+      return next;
+    });
+    try {
+      const followUp = await roundApi.requestCrossfireFollowUp(roundId, exchangeId);
+      onExchangeSaved(followUp);
+      setAnnouncement("Follow-up question ready.");
+    } catch (e) {
+      setFollowUpErrors((prev) => ({
+        ...prev,
+        [exchangeId]:
+          e instanceof ApiError ? e.message : "Couldn't request a follow-up. Try again.",
+      }));
+    } finally {
+      followUpInFlightRef.current.delete(exchangeId);
+      setFollowUpBusyId(null);
+    }
+  }
+
   // ── Lane B: you ask the opponent ─────────────────────────────────────────────
 
   const [askText, setAskText] = useState("");
@@ -248,7 +309,7 @@ export function CrossfireCapture({
   // ── Shared ────────────────────────────────────────────────────────────────────
 
   const [announcement, setAnnouncement] = useState("");
-  const busy = isLoading || submitState === "submitting" || askState === "asking";
+  const busy = isLoading || submitState === "submitting" || askState === "asking" || followUpBusyId !== null;
 
   return (
     <section aria-label={`${phaseLabel} crossfire`} className="space-y-5">
@@ -278,6 +339,14 @@ export function CrossfireCapture({
                 exchange={ex}
                 studentSide={studentSide}
                 effect={crossfireEffectForExchange(crossfireEffects, ex.id)}
+                followUp={{
+                  // Only offer a follow-up when nothing is already pending —
+                  // resolve what's in front of you before asking for more.
+                  eligible: !pending && canRequestCrossfireFollowUp(ex, studentSide, aiLane),
+                  busy: followUpBusyId === ex.id,
+                  error: followUpErrors[ex.id] ?? null,
+                  onRequest: handleRequestFollowUp,
+                }}
               />
             ))}
           </div>

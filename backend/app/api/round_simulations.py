@@ -25,6 +25,7 @@ from app.models.round_simulation import (
     CrossfireExchange,
     CrossfireExchangeType,
     CrossfireSubmitRequest,
+    FollowUpCrossfireRequest,
     GenerateDecisionRequest,
     GenerateDrillsRequest,
     GenerateOpponentSpeechRequest,
@@ -63,6 +64,7 @@ from app.services.crossfire_simulator import (
     derive_crossfire_effects,
     generate_ai_answer,
     generate_crossfire_question,
+    generate_followup_question,
     load_crossfire_exchanges,
     process_crossfire_response,
     save_crossfire_exchange,
@@ -743,6 +745,77 @@ def submit_student_crossfire_question(
 
     track_product_event(user_id, "student_crossfire_questions_asked", {})
     return exchange
+
+
+@router.post("/{round_id}/crossfire/follow-up", response_model=CrossfireExchange)
+def request_crossfire_followup(
+    round_id: str,
+    req: FollowUpCrossfireRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> CrossfireExchange:
+    """Student-requested AI follow-up question pressing a specific answer that
+    the crossfire engine already flagged as evasive or contradictory.
+
+    Never automatic — only ever called from an explicit student action.
+    Rejects (400) any exchange without a real, persisted diagnostic rather
+    than fabricating pressure. Idempotent per target exchange via
+    follow_up_to: a second request for the same exchange returns the
+    already-generated follow-up instead of creating a duplicate.
+    """
+    if req.round_id != round_id:
+        raise HTTPException(status_code=400, detail="round_id mismatch.")
+    supabase = get_supabase()
+    row = _verify_owner(round_id, user_id, supabase)
+    sim = _load_simulation(row)
+
+    if sim.current_phase not in CROSSFIRE_PHASES:
+        raise HTTPException(status_code=400, detail="Not in a crossfire phase.")
+
+    existing = load_crossfire_exchanges(round_id, sim.current_phase)
+    target = next((e for e in existing if e.id == req.exchange_id), None)
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail="That crossfire exchange wasn't found in the current phase.",
+        )
+
+    # Follow-ups only apply to the AI-asks-student direction — that's the only
+    # lane with real diagnostics, since process_crossfire_response never
+    # analyzes the AI's own answers (see submit_student_crossfire_question).
+    if target.questioner_side == sim.config.student_side:
+        raise HTTPException(
+            status_code=400,
+            detail="Follow-up questions are only available for questions the AI opponent asked you.",
+        )
+
+    if not target.answer:
+        raise HTTPException(status_code=400, detail="This question hasn't been answered yet.")
+
+    if not (target.evasion_detected or target.contradiction):
+        raise HTTPException(
+            status_code=400,
+            detail="This answer doesn't have a diagnostic that justifies a follow-up.",
+        )
+
+    existing_followup = next((e for e in existing if e.follow_up_to == target.id), None)
+    if existing_followup:
+        return existing_followup
+
+    live_args = load_round_arguments(round_id)
+    followup = generate_followup_question(
+        prior_exchange=target,
+        questioner_side=target.questioner_side,
+        live_args=live_args,
+        judge_type=sim.config.judge_type,
+    )
+    followup = followup.model_copy(update={
+        "sequence": len(existing) + 1,
+        "follow_up_to": target.id,
+    })
+    save_crossfire_exchange(followup)
+
+    track_product_event(user_id, "crossfire_followups_requested", {})
+    return followup
 
 
 # ── Phase advancement ─────────────────────────────────────────────────────────

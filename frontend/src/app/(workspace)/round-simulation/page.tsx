@@ -452,12 +452,14 @@ export default function RoundSimulationPage() {
             </div>
 
             <div className="hidden lg:block">
-              <RoundFlow arguments={flowArgs} />
+              <RoundFlow arguments={flowArgs} crossfireEffects={roundState.crossfire_effects} />
             </div>
           </div>
         )}
 
-        {view === "flow" && <RoundFlow arguments={flowArgs} />}
+        {view === "flow" && (
+          <RoundFlow arguments={flowArgs} crossfireEffects={roundState.crossfire_effects} />
+        )}
 
         {view === "ballot" && (
           decision ? (

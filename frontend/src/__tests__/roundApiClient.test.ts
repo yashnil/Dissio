@@ -214,6 +214,21 @@ describe("roundApi client", () => {
     expect(body).not.toHaveProperty("user_id");
   });
 
+  it("exports requestCrossfireFollowUp as a function", () => {
+    expect(typeof roundApi.requestCrossfireFollowUp).toBe("function");
+  });
+
+  it("requestCrossfireFollowUp calls correct route with exchange_id, no user_id", async () => {
+    await roundApi.requestCrossfireFollowUp("r-1", "ex-42");
+    const [path, opts] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/r-1/crossfire/follow-up");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body);
+    expect(body.exchange_id).toBe("ex-42");
+    expect(body.round_id).toBe("r-1");
+    expect(body).not.toHaveProperty("user_id");
+  });
+
   it("createAdaptationReview calls correct route", async () => {
     await roundApi.createAdaptationReview("r-1", "flow", { alternateJudgeType: "truth" });
     const [path, opts] = mockApiFetch.mock.calls[0];
