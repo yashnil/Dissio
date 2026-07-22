@@ -294,8 +294,13 @@ export default function RoundSimulationPage() {
     setLoading(true);
     setError(null);
     try {
-      const isOwner = room.owner_user_id === userId;
-      if (isOwner && room.status === "waiting" && simulation) {
+      // Computed fresh from top-level state (not the render-scoped
+      // canManageRoundContent/viewerParticipant consts, which are declared
+      // after the lobby view's early return and would be uninitialized in
+      // a closure created during that render).
+      const viewer = myParticipant(participants, userId);
+      const canManage = mode === "multiplayer" ? canPerformRoundAction(viewer) : true;
+      if (canManage && room.status === "waiting" && simulation) {
         await roundApi.loadPreparation(simulation.id, {
           cardIds: simulation.config.approved_card_ids,
           blockfileIds: simulation.config.approved_blockfile_ids,
@@ -308,6 +313,48 @@ export default function RoundSimulationPage() {
       setView("round");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't enter the round.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCloseRoom() {
+    if (!room) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await roomApi.closeRoom(room.id);
+      await refreshRoom(room.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't close the room.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRotateInvite() {
+    if (!room) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await roomApi.rotateInviteCode(room.id);
+      await refreshRoom(room.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't rotate the invite code.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLeaveRoom() {
+    if (!room) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await roomApi.leaveRoom(room.id);
+      handleExit();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't leave the room.");
     } finally {
       setLoading(false);
     }
@@ -532,6 +579,9 @@ export default function RoundSimulationPage() {
         onAssignParticipant={handleAssignParticipant}
         onEnterRound={handleEnterRoom}
         onRefresh={() => refreshRoom(room.id)}
+        onCloseRoom={handleCloseRoom}
+        onRotateInvite={handleRotateInvite}
+        onLeaveRoom={handleLeaveRoom}
         loading={loading}
         error={error}
       />
@@ -656,8 +706,8 @@ export default function RoundSimulationPage() {
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Ask a debater in the room to generate the decision and drills — you&#39;ll be able
-                      to view them here once they do.
+                      {generalActionReason ??
+                        "Ask a debater in the room to generate the decision and drills — you'll be able to view them here once they do."}
                     </p>
                   )}
                 </div>
@@ -760,14 +810,20 @@ export default function RoundSimulationPage() {
               <p className="text-sm text-muted-foreground">
                 No decision yet. Complete the round first.
               </p>
-              {isCompleted && canManageRoundContent && (
-                <button
-                  onClick={handleGenerateDecision}
-                  disabled={loading}
-                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                >
-                  {loading ? "Generating..." : "Generate Decision"}
-                </button>
+              {isCompleted && (
+                canManageRoundContent ? (
+                  <button
+                    onClick={handleGenerateDecision}
+                    disabled={loading}
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    {loading ? "Generating..." : "Generate Decision"}
+                  </button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {generalActionReason ?? "Ask a debater in the room to generate the decision."}
+                  </p>
+                )
               )}
             </div>
           )
@@ -780,7 +836,7 @@ export default function RoundSimulationPage() {
             onGenerateDrills={handleGenerateDrills}
             isLoading={loading}
             canManageDrills={canManageRoundContent}
-            disabledReason={turnGate?.reason ?? null}
+            disabledReason={generalActionReason}
           />
         )}
       </div>

@@ -115,6 +115,30 @@ export function joinedParticipants(participants: RoundRoomParticipant[]): RoundR
   return participants.filter((p) => p.status === "joined");
 }
 
+// ── Room lifecycle (Phase 9E) ────────────────────────────────────────────────
+
+export function isRoomClosed(room: RoundRoom): boolean {
+  return room.status === "closed";
+}
+
+/** Owner-only, and only while the room isn't already closed -- gates
+ * showing the Close Room / Rotate Invite Code controls. */
+export function canManageRoomLifecycle(room: RoundRoom, userId: string | null | undefined): boolean {
+  return isRoomOwner(room, userId) && !isRoomClosed(room);
+}
+
+/** A joined, non-owner participant may leave. The owner manages the room
+ * instead of leaving it (no ownership-transfer support); a participant who
+ * already left has nothing left to do. */
+export function canLeaveRoom(
+  participant: RoundRoomParticipant | undefined,
+  room: RoundRoom,
+  userId: string | null | undefined,
+): boolean {
+  if (!participant || participant.status !== "joined") return false;
+  return !isRoomOwner(room, userId);
+}
+
 // ── Turn gating ──────────────────────────────────────────────────────────────
 
 /** Mirrors _require_turn_access/_participant_turn_state: only a joined,

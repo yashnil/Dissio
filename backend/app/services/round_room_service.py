@@ -201,3 +201,27 @@ def sync_room_status(supabase: Any, room_id: str, status: str) -> None:
         ).eq("id", room_id).execute()
     except Exception as exc:
         logger.warning("sync_room_status failed | room_id=%s status=%s | %s", room_id, status, exc)
+
+
+def close_room(supabase: Any, room: Dict[str, Any]) -> Dict[str, Any]:
+    """Owner-initiated archive. Idempotent -- closing an already-closed room
+    is a no-op success, not an error. Unlike sync_room_status this is the
+    *primary* action of its caller, so it deliberately does not swallow
+    exceptions -- a DB failure here must surface as a real error, not a
+    silently-faked success."""
+    if room.get("status") == "closed":
+        return room
+    update = {"status": "closed", "updated_at": _now()}
+    supabase.table("round_rooms").update(update).eq("id", room["id"]).execute()
+    room.update(update)
+    return room
+
+
+def rotate_invite_code(supabase: Any, room: Dict[str, Any]) -> Dict[str, Any]:
+    """Owner-initiated invite rotation. Invalidates the previous code
+    immediately (get_room_by_invite_code will no longer find it). Same
+    raise-don't-swallow contract as close_room."""
+    update = {"invite_code": generate_invite_code(supabase), "updated_at": _now()}
+    supabase.table("round_rooms").update(update).eq("id", room["id"]).execute()
+    room.update(update)
+    return room

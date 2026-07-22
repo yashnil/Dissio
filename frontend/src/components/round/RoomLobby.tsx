@@ -6,7 +6,12 @@ import {
   ROOM_STATUS_LABELS,
   PARTICIPANT_STATUS_LABELS,
   SPEAKER_SLOT_LABELS,
+  canLeaveRoom,
+  canManageRoomLifecycle,
+  canPerformRoundAction,
   formatInviteCode,
+  generalActionDisabledReason,
+  isRoomClosed,
   isRoomOwner,
   sideLabel,
   speakerSlotLabel,
@@ -25,6 +30,9 @@ interface Props {
   ) => void | Promise<void>;
   onEnterRound: () => void;
   onRefresh: () => void;
+  onCloseRoom: () => void | Promise<void>;
+  onRotateInvite: () => void | Promise<void>;
+  onLeaveRoom: () => void | Promise<void>;
   loading?: boolean;
   error?: string | null;
 }
@@ -44,7 +52,7 @@ function ParticipantRow({
   onAssign: (opts: { role?: RoomRole; side?: RoundSide; speaker_slot?: SpeakerSlot }) => void;
 }) {
   const label = participant.display_name?.trim() || ROOM_ROLE_LABELS[participant.role];
-  const canEdit = isOwnerView && participant.role !== "owner";
+  const canEdit = isOwnerView && participant.role !== "owner" && participant.status !== "left";
   const canAssignSlot = participant.side === studentSide && participant.role !== "coach" && participant.role !== "observer";
 
   return (
@@ -58,44 +66,53 @@ function ParticipantRow({
       </div>
 
       {canEdit && (
-        <div className="flex items-center gap-2 shrink-0">
-          <select
-            className="rounded-md border bg-background px-2 py-1 text-xs"
-            value={participant.role}
-            onChange={(e) => onAssign({ role: e.target.value as RoomRole })}
-          >
-            {ASSIGNABLE_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {ROOM_ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={participant.side === studentSide}
-              onChange={(e) => onAssign({ side: e.target.checked ? studentSide : undefined })}
-            />
-            {sideLabel(studentSide)}
-          </label>
-          {canAssignSlot && (
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <div className="flex items-center gap-2">
             <select
               className="rounded-md border bg-background px-2 py-1 text-xs"
-              value={participant.speaker_slot ?? ""}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value === "first" || value === "second") onAssign({ speaker_slot: value });
-              }}
+              value={participant.role}
+              onChange={(e) => onAssign({ role: e.target.value as RoomRole })}
             >
-              <option value="" disabled>
-                Assign slot…
-              </option>
-              {ASSIGNABLE_SLOTS.map((slot) => (
-                <option key={slot} value={slot}>
-                  {SPEAKER_SLOT_LABELS[slot]}
+              {ASSIGNABLE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROOM_ROLE_LABELS[r]}
                 </option>
               ))}
             </select>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={participant.side === studentSide}
+                onChange={(e) => onAssign({ side: e.target.checked ? studentSide : undefined })}
+              />
+              {sideLabel(studentSide)}
+            </label>
+            {canAssignSlot && (
+              <select
+                className="rounded-md border bg-background px-2 py-1 text-xs"
+                value={participant.speaker_slot ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "first" || value === "second") onAssign({ speaker_slot: value });
+                }}
+              >
+                <option value="" disabled>
+                  Assign slot…
+                </option>
+                {ASSIGNABLE_SLOTS.map((slot) => (
+                  <option key={slot} value={slot}>
+                    {SPEAKER_SLOT_LABELS[slot]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {!canAssignSlot && (
+            <p className="text-xs text-muted-foreground italic">
+              {participant.role === "coach" || participant.role === "observer"
+                ? "Coaches/observers don't get a speaker slot."
+                : "Assign a side before choosing a speaker slot."}
+            </p>
           )}
         </div>
       )}
@@ -112,12 +129,19 @@ export function RoomLobby({
   onAssignParticipant,
   onEnterRound,
   onRefresh,
+  onCloseRoom,
+  onRotateInvite,
+  onLeaveRoom,
   loading,
   error,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const owner = isRoomOwner(room, viewerUserId);
+  const closed = isRoomClosed(room);
   const displayCode = formatInviteCode(room.invite_code);
+  const canManageLifecycle = canManageRoomLifecycle(room, viewerUserId);
+  const canManage = canPerformRoundAction(viewerParticipant);
+  const manageReason = generalActionDisabledReason(viewerParticipant);
 
   function copyCode() {
     navigator.clipboard.writeText(room.invite_code).then(() => {
@@ -125,8 +149,6 @@ export function RoomLobby({
       setTimeout(() => setCopied(false), 1800);
     });
   }
-
-  const canEnter = owner || room.status === "active" || room.status === "completed";
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 p-6">
@@ -145,6 +167,15 @@ export function RoomLobby({
         </button>
       </div>
 
+      {closed && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20 px-3 py-2">
+          <p className="text-xs text-amber-800 dark:text-amber-400">
+            This room has been closed by the owner. Existing participants can still view it, but no
+            new participants can join and no further actions can be taken.
+          </p>
+        </div>
+      )}
+
       <div className="rounded-lg border bg-muted/20 p-4 space-y-2">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
           Invite code
@@ -159,7 +190,9 @@ export function RoomLobby({
           </button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Share this code with your partner so they can join.
+          {closed
+            ? "This code no longer works — the room is closed."
+            : "Share this code with your partner so they can join."}
         </p>
       </div>
 
@@ -172,7 +205,7 @@ export function RoomLobby({
             <ParticipantRow
               key={p.id}
               participant={p}
-              isOwnerView={owner}
+              isOwnerView={owner && !closed}
               studentSide={studentSide}
               onAssign={(opts) => onAssignParticipant(p.id, opts)}
             />
@@ -182,15 +215,23 @@ export function RoomLobby({
 
       {error && <p className="text-xs text-red-600">{error}</p>}
 
-      {owner ? (
-        <button
-          onClick={onEnterRound}
-          disabled={loading || room.status === "completed"}
-          className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
-          {loading ? "Starting..." : room.status === "waiting" ? "Start Round" : "Enter Round"}
-        </button>
-      ) : canEnter ? (
+      {closed ? (
+        <p className="text-center text-xs text-muted-foreground py-2">This room is closed.</p>
+      ) : room.status === "waiting" ? (
+        canManage ? (
+          <button
+            onClick={onEnterRound}
+            disabled={loading}
+            className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {loading ? "Starting..." : "Start Round"}
+          </button>
+        ) : (
+          <p className="text-center text-xs text-muted-foreground py-2">
+            {manageReason ?? "Waiting for the room owner or a debater to start the round..."}
+          </p>
+        )
+      ) : (
         <button
           onClick={onEnterRound}
           disabled={loading}
@@ -198,10 +239,6 @@ export function RoomLobby({
         >
           Enter Round
         </button>
-      ) : (
-        <p className="text-center text-xs text-muted-foreground py-2">
-          Waiting for the room owner to start the round...
-        </p>
       )}
 
       {(viewerParticipant.role === "observer" || viewerParticipant.role === "coach") && (
@@ -209,6 +246,38 @@ export function RoomLobby({
           You&#39;re joined as {ROOM_ROLE_LABELS[viewerParticipant.role].toLowerCase()} — you can
           watch the round but can&#39;t submit speeches or crossfire answers.
         </p>
+      )}
+
+      {(canManageLifecycle || canLeaveRoom(viewerParticipant, room, viewerUserId)) && (
+        <div className="border-t pt-4 flex gap-2 flex-wrap">
+          {canManageLifecycle && (
+            <>
+              <button
+                onClick={onRotateInvite}
+                disabled={loading}
+                className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
+              >
+                Rotate Invite Code
+              </button>
+              <button
+                onClick={onCloseRoom}
+                disabled={loading}
+                className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/20 disabled:opacity-50"
+              >
+                Close Room
+              </button>
+            </>
+          )}
+          {canLeaveRoom(viewerParticipant, room, viewerUserId) && (
+            <button
+              onClick={onLeaveRoom}
+              disabled={loading}
+              className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
+            >
+              Leave Room
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

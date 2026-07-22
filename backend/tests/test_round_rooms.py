@@ -245,6 +245,27 @@ class TestRequireGeneralMutateAccess:
                 self._access(is_owner=False, room={"id": "room-1"}, participant=participant)
             )
 
+    def test_closed_room_rejects_even_the_owner(self):
+        """Phase 9E: closing a room blocks all further mutation, full stop --
+        not even the owner who closed it can keep mutating."""
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        with pytest.raises(HTTPException) as exc_info:
+            mod._require_general_mutate_access(
+                self._access(is_owner=True, room={"id": "room-1", "status": "closed"})
+            )
+        assert exc_info.value.status_code == 400
+
+    def test_closed_room_rejects_a_joined_debater(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined"}
+        with pytest.raises(HTTPException) as exc_info:
+            mod._require_general_mutate_access(
+                self._access(is_owner=False, room={"id": "room-1", "status": "closed"}, participant=participant)
+            )
+        assert exc_info.value.status_code == 400
+
 
 class TestRequireTurnAccess:
     def _access(self, is_owner, room=None, participant=None):
@@ -307,6 +328,18 @@ class TestRequireTurnAccess:
             )
         assert exc_info.value.status_code == 403
 
+    def test_closed_room_rejects_a_matching_participant(self):
+        from fastapi import HTTPException
+        from app.models.round_simulation import RoundSide
+        from app.api import round_simulations as mod
+        participant = {"role": "debater_a", "status": "joined", "side": "pro"}
+        with pytest.raises(HTTPException) as exc_info:
+            mod._require_turn_access(
+                self._access(is_owner=False, room={"id": "room-1", "status": "closed"}, participant=participant),
+                RoundSide.PRO,
+            )
+        assert exc_info.value.status_code == 400
+
 
 class TestRequireCoachOrOwnerAccess:
     """Phase 9B: annotations/finding-ratings are owner-or-coach only."""
@@ -352,6 +385,15 @@ class TestRequireCoachOrOwnerAccess:
             mod._require_coach_or_owner_access(
                 self._access(is_owner=False, room={"id": "room-1"}, participant=None)
             )
+
+    def test_closed_room_rejects_the_owner(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        with pytest.raises(HTTPException) as exc_info:
+            mod._require_coach_or_owner_access(
+                self._access(is_owner=True, room={"id": "room-1", "status": "closed"})
+            )
+        assert exc_info.value.status_code == 400
 
 
 class TestParticipantTurnState:
@@ -1079,6 +1121,184 @@ class TestLeaveRoomEndpoint:
             with pytest.raises(HTTPException) as exc_info:
                 mod.leave_room_endpoint("room-1", "stranger")
         assert exc_info.value.status_code == 404
+
+
+class TestCloseRoomEndpoint:
+    """Phase 9E: owner-only room archival. Never deletes the room/round row."""
+
+    def test_owner_can_close_room(self):
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="active")
+        closed = dict(room, status="closed")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "close_room", return_value=closed) as mock_close, \
+             patch.object(mod, "track_product_event"):
+            result = mod.close_room_endpoint("room-1", "owner-1")
+        mock_close.assert_called_once()
+        assert result.status.value == "closed"
+
+    def test_closing_an_already_closed_room_is_idempotent(self):
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="closed")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "close_room", return_value=room), \
+             patch.object(mod, "track_product_event"):
+            result = mod.close_room_endpoint("room-1", "owner-1")
+        assert result.status.value == "closed"
+
+    def test_non_owner_cannot_close_room(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="active")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.close_room_endpoint("room-1", "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_unknown_room_is_404(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.close_room_endpoint("room-x", "owner-1")
+        assert exc_info.value.status_code == 404
+
+    def test_db_failure_surfaces_as_a_real_error_not_a_fake_success(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="active")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "close_room", side_effect=RuntimeError("db down")):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.close_room_endpoint("room-1", "owner-1")
+        assert exc_info.value.status_code == 500
+
+
+class TestRotateInviteCodeEndpoint:
+    """Phase 9E: owner-only invite rotation. Old code stops resolving."""
+
+    def test_owner_can_rotate_invite_code(self):
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="waiting", code="OLDCODE1")
+        rotated = dict(room, invite_code="NEWCODE2")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "rotate_invite_code", return_value=rotated) as mock_rotate, \
+             patch.object(mod, "track_product_event"):
+            result = mod.rotate_invite_code_endpoint("room-1", "owner-1")
+        mock_rotate.assert_called_once()
+        assert result.invite_code == "NEWCODE2"
+        assert result.invite_code != "OLDCODE1"
+
+    def test_old_invite_code_no_longer_resolves_after_rotation(self):
+        """Confirms the rotation is real by exercising get_room_by_invite_code
+        against a supabase mock that only knows the new code."""
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        result = round_room_service.get_room_by_invite_code(supabase, "OLDCODE1")
+        assert result is None
+
+    def test_non_owner_cannot_rotate_invite_code(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="waiting")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.rotate_invite_code_endpoint("room-1", "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_closed_room_cannot_rotate_invite_code(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        room = _room(owner="owner-1", status="closed")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.rotate_invite_code_endpoint("room-1", "owner-1")
+        assert exc_info.value.status_code == 400
+
+
+class TestJoinClosedRoom:
+    """Phase 9E: closed rooms reject new joins but stay idempotent for
+    participants who already joined before the room closed."""
+
+    def test_new_joiner_rejected_from_closed_room(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import JoinRoomRequest
+        room = _room(status="closed", code="CLOSED01")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room_by_invite_code", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.join_room_endpoint(JoinRoomRequest(invite_code="CLOSED01"), "stranger")
+        assert exc_info.value.status_code == 400
+
+    def test_already_joined_participant_stays_idempotent_on_a_closed_room(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import JoinRoomRequest
+        room = _room(status="closed", code="CLOSED01")
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", status="joined")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room_by_invite_code", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "join_room", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]), \
+             patch.object(mod, "track_product_event"):
+            result = mod.join_room_endpoint(JoinRoomRequest(invite_code="CLOSED01"), "u2")
+        assert result.viewer_participant.user_id == "u2"
+
+
+class TestUpdateParticipantClosedRoom:
+    def test_role_change_rejected_on_a_closed_room(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import UpdateRoomParticipantRequest
+        room = _room(owner="owner-1", status="closed")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.update_room_participant_endpoint(
+                    "room-1", "p2", UpdateRoomParticipantRequest(role="debater_a"), "owner-1",
+                )
+        assert exc_info.value.status_code == 400
+
+
+class TestDeleteRoundBugfix:
+    """Phase 9E: _verify_owner(round_id, user_id) was missing the required
+    supabase argument -- every call raised TypeError before the ownership
+    check ran. Confirms the fix without broadening delete beyond owner-only."""
+
+    def test_owner_can_delete_without_a_typeerror(self):
+        import asyncio
+        from app.api import round_simulations as mod
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+            MagicMock(data={"id": "r1", "user_id": "owner-1"})
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase):
+            result = asyncio.run(mod.delete_round("r1", "owner-1"))
+        assert result["deleted"] is True
+        assert result["round_id"] == "r1"
+
+    def test_non_owner_still_rejected(self):
+        import asyncio
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+            MagicMock(data={"id": "r1", "user_id": "owner-1"})
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(mod.delete_round("r1", "stranger"))
+        assert exc_info.value.status_code == 403
 
 
 # ── Phase 9B: participant access expansion ──────────────────────────────────

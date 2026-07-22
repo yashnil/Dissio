@@ -325,9 +325,19 @@ def _load_round_access(round_id: str, user_id: str, supabase: Any) -> _RoundAcce
     raise HTTPException(status_code=403, detail="Access denied.")
 
 
+def _require_room_not_closed(access: "_RoundAccess") -> None:
+    """Phase 9E: a closed room blocks all further mutation, from anyone,
+    including the owner who closed it. Read access is untouched -- closed
+    rooms stay readable to existing participants (matching the existing
+    "completed rounds stay viewable" precedent)."""
+    if access.room and access.room.get("status") == "closed":
+        raise HTTPException(status_code=400, detail="This room has been closed by the owner.")
+
+
 def _require_general_mutate_access(access: "_RoundAccess") -> None:
     """Any joined non-observer/coach participant, or the owner, may perform
     round-progression actions (advance phase, trigger AI speech, judge)."""
+    _require_room_not_closed(access)
     if access.is_owner:
         return
     if access.participant and access.participant.get("role") not in ("coach", "observer"):
@@ -338,6 +348,7 @@ def _require_general_mutate_access(access: "_RoundAccess") -> None:
 def _require_coach_or_owner_access(access: "_RoundAccess") -> None:
     """Coach-authored content (annotations, finding ratings): the room owner,
     or a joined participant with role='coach'."""
+    _require_room_not_closed(access)
     if access.is_owner:
         return
     if access.participant and access.participant.get("role") == "coach":
@@ -402,6 +413,7 @@ def _require_turn_access(
     an owner who isn't a round's debater can't spoof a participant's speech."""
     if access.room is None:
         return
+    _require_room_not_closed(access)
     allowed, reason = _participant_turn_state(
         access.room, access.participant, access.is_owner, expected_side, expected_speaker_slot,
     )
@@ -573,7 +585,9 @@ def join_room_endpoint(
 ) -> RoundRoomStateResponse:
     """Join a room by invite code. Idempotent: repeat calls for an
     already-joined user return the current state without creating a
-    duplicate participant row."""
+    duplicate participant row. Phase 9E: a closed room rejects new joins,
+    but an already-joined participant re-hitting this endpoint (e.g. a
+    stale client retry) stays idempotent even if the room closed meanwhile."""
     supabase = get_supabase()
     code = (req.invite_code or "").strip()
     if not code:
@@ -581,6 +595,12 @@ def join_room_endpoint(
     room = round_room_service.get_room_by_invite_code(supabase, code)
     if not room:
         raise HTTPException(status_code=404, detail="Invalid invite code.")
+    existing_participant = round_room_service.get_participant(supabase, room["id"], user_id)
+    already_joined = bool(existing_participant and existing_participant.get("status") == "joined")
+    if room.get("status") == "closed" and not already_joined:
+        raise HTTPException(
+            status_code=400, detail="This room is closed and no longer accepting new participants.",
+        )
     round_room_service.join_room(supabase, room, user_id, display_name=req.display_name)
     track_product_event(user_id, "round_rooms_joined", {"room_id": room["id"]})
     return _build_room_state_response(room, user_id, supabase)
@@ -611,13 +631,16 @@ def update_room_participant_endpoint(
     yet. Phase 9C: rejects an active speaker_slot for a coach/observer, a
     slot without a side, and a slot that duplicates another joined
     participant's slot on the same side (strict uniqueness -- determinism is
-    the point of adding slots at all)."""
+    the point of adding slots at all). Phase 9E: rejects any change once the
+    room is closed."""
     supabase = get_supabase()
     room = round_room_service.get_room(supabase, room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found.")
     if room["owner_user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Only the room owner can assign roles.")
+    if room.get("status") == "closed":
+        raise HTTPException(status_code=400, detail="This room has been closed; roles can no longer be changed.")
 
     all_participants = round_room_service.list_participants(supabase, room_id)
     target = next((p for p in all_participants if p["id"] == participant_id), None)
@@ -703,6 +726,57 @@ def leave_room_endpoint(
         raise HTTPException(status_code=404, detail="You are not a participant in this room.")
     updated = round_room_service.leave_room(supabase, participant)
     return RoundRoomParticipant.model_validate(updated)
+
+
+@router.post("/rooms/{room_id}/close", response_model=RoundRoom)
+def close_room_endpoint(
+    room_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoom:
+    """Owner-only. Archives the room: blocks all further mutation (from
+    anyone, including the owner -- enforced centrally in
+    _require_room_not_closed) and rejects new joins. Idempotent -- closing
+    an already-closed room is a no-op success. Never deletes the room or
+    round row."""
+    supabase = get_supabase()
+    room = round_room_service.get_room(supabase, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    if room["owner_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can close this room.")
+    try:
+        updated = round_room_service.close_room(supabase, room)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to close room: {exc}") from exc
+    track_product_event(user_id, "round_rooms_closed", {"room_id": room_id})
+    return RoundRoom.model_validate(updated)
+
+
+@router.post("/rooms/{room_id}/rotate-invite", response_model=RoundRoom)
+def rotate_invite_code_endpoint(
+    room_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoom:
+    """Owner-only. Generates a new invite code, immediately invalidating the
+    previous one. Not available once the room is closed (no point inviting
+    anyone to a closed room)."""
+    supabase = get_supabase()
+    room = round_room_service.get_room(supabase, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    if room["owner_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can rotate the invite code.")
+    if room.get("status") == "closed":
+        raise HTTPException(
+            status_code=400,
+            detail="This room has been closed; rotating the invite code is no longer available.",
+        )
+    try:
+        updated = round_room_service.rotate_invite_code(supabase, room)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to rotate invite code: {exc}") from exc
+    track_product_event(user_id, "round_rooms_invite_rotated", {"room_id": room_id})
+    return RoundRoom.model_validate(updated)
 
 
 @router.get("/{round_id}", response_model=RoundStateResponse)
@@ -2173,7 +2247,7 @@ async def delete_round(
     Irreversible. Student must own the round.
     """
     supabase = get_supabase()
-    _verify_owner(round_id, user_id)
+    _verify_owner(round_id, user_id, supabase)
 
     cascade_tables = [
         "round_coach_annotations",

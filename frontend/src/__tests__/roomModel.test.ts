@@ -1,5 +1,5 @@
 /**
- * Pass 27/28/29/30 — Phase 9A/9B/9C/9D. Tests for room/lobby pure helpers.
+ * Pass 27/28/29/30/31 — Phase 9A/9B/9C/9D/9E. Tests for room/lobby pure helpers.
  *
  * Same convention as roundModel.test.ts: no React, no DOM, pure functions
  * called directly with fixture factories.
@@ -24,6 +24,9 @@ import {
   canPerformRoundAction,
   generalActionDisabledReason,
   describeCapabilities,
+  isRoomClosed,
+  canManageRoomLifecycle,
+  canLeaveRoom,
 } from "@/lib/roomModel";
 import type { RoundRoom, RoundRoomParticipant, RoundRoomStateResponse } from "@/types/round";
 
@@ -462,5 +465,71 @@ describe("RoundRoomStateResponse turn_context shape", () => {
   it("turn_context is optional — a solo-shaped response can omit it entirely", () => {
     const state = makeRoomState({ turn_context: undefined });
     expect(state.turn_context).toBeUndefined();
+  });
+});
+
+// ── Phase 9E: room lifecycle ─────────────────────────────────────────────────
+
+describe("isRoomClosed", () => {
+  it("is true only for status='closed'", () => {
+    expect(isRoomClosed(makeRoom({ status: "closed" }))).toBe(true);
+    expect(isRoomClosed(makeRoom({ status: "waiting" }))).toBe(false);
+    expect(isRoomClosed(makeRoom({ status: "active" }))).toBe(false);
+    expect(isRoomClosed(makeRoom({ status: "completed" }))).toBe(false);
+  });
+});
+
+describe("canManageRoomLifecycle", () => {
+  it("allows the owner of an open room", () => {
+    const room = makeRoom({ owner_user_id: "owner-1", status: "waiting" });
+    expect(canManageRoomLifecycle(room, "owner-1")).toBe(true);
+  });
+
+  it("rejects the owner once the room is closed", () => {
+    const room = makeRoom({ owner_user_id: "owner-1", status: "closed" });
+    expect(canManageRoomLifecycle(room, "owner-1")).toBe(false);
+  });
+
+  it("rejects a non-owner regardless of room status", () => {
+    const room = makeRoom({ owner_user_id: "owner-1", status: "waiting" });
+    expect(canManageRoomLifecycle(room, "u2")).toBe(false);
+  });
+
+  it("rejects a missing user id", () => {
+    const room = makeRoom({ owner_user_id: "owner-1", status: "waiting" });
+    expect(canManageRoomLifecycle(room, null)).toBe(false);
+  });
+});
+
+describe("canLeaveRoom", () => {
+  const room = makeRoom({ owner_user_id: "owner-1" });
+
+  it("allows a joined non-owner participant", () => {
+    const p = makeParticipant({ user_id: "u2", status: "joined" });
+    expect(canLeaveRoom(p, room, "u2")).toBe(true);
+  });
+
+  it("rejects the owner", () => {
+    const p = makeParticipant({ user_id: "owner-1", role: "owner", status: "joined" });
+    expect(canLeaveRoom(p, room, "owner-1")).toBe(false);
+  });
+
+  it("rejects a participant who has already left", () => {
+    const p = makeParticipant({ user_id: "u2", status: "left" });
+    expect(canLeaveRoom(p, room, "u2")).toBe(false);
+  });
+
+  it("rejects when there is no participant record", () => {
+    expect(canLeaveRoom(undefined, room, "u2")).toBe(false);
+  });
+
+  it("never includes a raw room or participant id in its inputs/outputs", () => {
+    // canLeaveRoom returns a plain boolean -- nothing to leak by
+    // construction, but confirm the room/participant ids used in these
+    // fixtures never need to appear in any user-facing string this helper
+    // could feed (defensive documentation of the contract).
+    const p = makeParticipant({ id: "p-secret-1", user_id: "u2", status: "joined" });
+    const result = canLeaveRoom(p, room, "u2");
+    expect(typeof result).toBe("boolean");
   });
 });

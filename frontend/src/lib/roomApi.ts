@@ -14,6 +14,7 @@
 import { apiFetch } from "@/lib/api";
 import type {
   RoomRole,
+  RoundRoom,
   RoundRoomParticipant,
   RoundRoomStateResponse,
   RoundSide,
@@ -78,4 +79,12 @@ export function updateRoomParticipant(
 
 export function leaveRoom(roomId: string): Promise<RoundRoomParticipant> {
   return apiFetch<RoundRoomParticipant>(`${BASE}/${roomId}/leave`, { method: "POST" });
+}
+
+export function closeRoom(roomId: string): Promise<RoundRoom> {
+  return apiFetch<RoundRoom>(`${BASE}/${roomId}/close`, { method: "POST" });
+}
+
+export function rotateInviteCode(roomId: string): Promise<RoundRoom> {
+  return apiFetch<RoundRoom>(`${BASE}/${roomId}/rotate-invite`, { method: "POST" });
 }
