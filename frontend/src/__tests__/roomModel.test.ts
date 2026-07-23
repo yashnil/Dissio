@@ -40,7 +40,10 @@ import {
   distinctCoachNotePhases,
   coachNotesEmptyStateMessage,
   coachNoteCountLabel,
+  coachNoteReviewTarget,
+  reviewContextBannerText,
 } from "@/lib/roomModel";
+import { PHASE_LABELS } from "@/lib/roundModel";
 import type {
   CoachAnnotation,
   RoundPhaseType,
@@ -818,5 +821,141 @@ describe("Phase 9G helpers never leak raw ids", () => {
       expect(output).not.toContain(secretParticipantId);
     }
     expect(filterCoachNotes(notes, "all", "all")).toHaveLength(1); // sanity: fixture actually used
+  });
+});
+
+// ── Phase 9H: note review anchors ───────────────────────────────────────────
+
+describe("coachNoteReviewTarget", () => {
+  it("flow notes always target the Flow tab", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "flow", phase: undefined }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target).not.toBeNull();
+    expect(target?.tab).toBe("flow");
+    expect(target?.actionLabel).toMatch(/flow/i);
+  });
+
+  it("ballot notes always target the Ballot tab", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "ballot" }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target?.tab).toBe("ballot");
+  });
+
+  it("drill notes always target the Drills tab", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "drill" }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target?.tab).toBe("drills");
+  });
+
+  it("a general note with a phase falls back to Flow", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "general", phase: "first_summary" }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target?.tab).toBe("flow");
+    expect(target?.contextLabel).toMatch(/first summary/i);
+  });
+
+  it("a general note with no phase has no safe target", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "general", phase: undefined }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("an unset note_type behaves like general", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: undefined, phase: undefined }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("a crossfire note targets Round only when its phase matches the live crossfire phase", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "crossfire", phase: "first_crossfire" }),
+      "first_crossfire",
+      PHASE_LABELS,
+    );
+    expect(target?.tab).toBe("round");
+    expect(target?.actionLabel).toMatch(/crossfire/i);
+  });
+
+  it("a crossfire note has no target once the round has moved past that phase", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "crossfire", phase: "first_crossfire" }),
+      "first_rebuttal",
+      PHASE_LABELS,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("a crossfire note has no target when the current phase isn't a crossfire phase at all", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "crossfire", phase: "first_constructive" }),
+      "first_constructive",
+      PHASE_LABELS,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("a crossfire note with no phase set has no target, even mid-crossfire", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "crossfire", phase: undefined }),
+      "first_crossfire",
+      PHASE_LABELS,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("contextLabel omits the phase prefix when the note has no phase", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "drill", phase: undefined }),
+      undefined,
+      PHASE_LABELS,
+    );
+    expect(target?.contextLabel).toBe("Drills");
+  });
+
+  it("contextLabel includes the full phase label when present", () => {
+    const target = coachNoteReviewTarget(
+      makeCoachAnnotation({ note_type: "ballot", phase: "second_rebuttal" }),
+      undefined,
+      PHASE_LABELS,
+    );
+    expect(target?.contextLabel).toBe("Second Rebuttal · Ballot");
+  });
+});
+
+describe("reviewContextBannerText", () => {
+  it("wraps the context label in the standard banner sentence", () => {
+    expect(reviewContextBannerText("First Summary · Flow")).toBe(
+      "Viewing coach note context: First Summary · Flow",
+    );
+  });
+});
+
+describe("Phase 9H review-anchor helpers never leak raw ids", () => {
+  it("no raw note id appears in actionLabel/contextLabel/banner text", () => {
+    const secretNoteId = "note-secret-9h";
+    const note = makeCoachAnnotation({ id: secretNoteId, note_type: "flow", phase: "first_summary" });
+    const target = coachNoteReviewTarget(note, "first_summary", PHASE_LABELS);
+    expect(target).not.toBeNull();
+    expect(target?.actionLabel).not.toContain(secretNoteId);
+    expect(target?.contextLabel).not.toContain(secretNoteId);
+    expect(reviewContextBannerText(target?.contextLabel ?? "")).not.toContain(secretNoteId);
   });
 });

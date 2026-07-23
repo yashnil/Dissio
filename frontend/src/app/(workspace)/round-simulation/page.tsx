@@ -27,8 +27,10 @@ import {
   expectedSpeakerLabel,
   generalActionDisabledReason,
   myParticipant,
+  reviewContextBannerText,
   roomClosedNotice,
 } from "@/lib/roomModel";
+import type { CoachNoteReviewTarget, ReviewTargetTab } from "@/lib/roomModel";
 import type {
   CrossfireExchange,
   RoomRole,
@@ -73,6 +75,23 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
   );
 }
 
+/** Phase 9H: shown at the top of a review-target tab after jumping there
+ * from a coach note, so the jump stays understandable and reversible. */
+function ReviewContextBanner({ contextLabel, onClear }: { contextLabel: string; onClear: () => void }) {
+  return (
+    <div className="mb-3 flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+      <p className="text-xs text-muted-foreground">{reviewContextBannerText(contextLabel)}</p>
+      <button
+        type="button"
+        onClick={onClear}
+        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground shrink-0"
+      >
+        Clear
+      </button>
+    </div>
+  );
+}
+
 export default function RoundSimulationPage() {
   const router = useRouter();
   const [authState, setAuthState] = useState<AuthState>("loading");
@@ -94,6 +113,19 @@ export default function RoundSimulationPage() {
   const [participants, setParticipants] = useState<RoundRoomParticipant[]>([]);
   const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
   const [coachNoteCount, setCoachNoteCount] = useState<number>(0);
+  // Phase 9H: which tab a coach-note jump landed on, and the label to show
+  // there. Persists across tab switches (not auto-cleared) so returning to
+  // Notes can still show what was last reviewed.
+  const [reviewContext, setReviewContext] = useState<{ tab: ReviewTargetTab; contextLabel: string } | null>(null);
+
+  function handleReviewTarget(target: CoachNoteReviewTarget) {
+    setReviewContext({ tab: target.tab, contextLabel: target.contextLabel });
+    setView(target.tab);
+  }
+
+  function handleClearReviewContext() {
+    setReviewContext(null);
+  }
 
   // Applies a full RoundRoomStateResponse to every piece of state it covers —
   // used by the resume effect, create/join, and refreshRoom so those four
@@ -701,6 +733,10 @@ export default function RoundSimulationPage() {
       )}
 
       <div className="flex-1 p-4">
+        {reviewContext && reviewContext.tab === view && (
+          <ReviewContextBanner contextLabel={reviewContext.contextLabel} onClear={handleClearReviewContext} />
+        )}
+
         {view === "round" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
             <div className="space-y-4">
@@ -872,6 +908,9 @@ export default function RoundSimulationPage() {
             participants={participants}
             viewerParticipant={viewerParticipant}
             currentPhase={roundState.current_phase}
+            onReviewTarget={handleReviewTarget}
+            reviewContext={reviewContext}
+            onClearReviewContext={handleClearReviewContext}
           />
         )}
       </div>

@@ -8,12 +8,14 @@ import {
   canCreateCoachNote,
   coachNoteCountLabel,
   coachNoteDisabledReason,
+  coachNoteReviewTarget,
   coachNoteTypeLabel,
   coachNotesEmptyStateMessage,
   distinctCoachNotePhases,
   filterCoachNotes,
+  reviewContextBannerText,
 } from "@/lib/roomModel";
-import type { CoachNoteTypeFilter, CoachNotePhaseFilter } from "@/lib/roomModel";
+import type { CoachNoteTypeFilter, CoachNotePhaseFilter, CoachNoteReviewTarget, ReviewTargetTab } from "@/lib/roomModel";
 import { FULL_PHASE_ORDER, PHASE_LABELS } from "@/lib/roundModel";
 import type {
   CoachAnnotation,
@@ -29,6 +31,12 @@ interface Props {
   participants: RoundRoomParticipant[];
   viewerParticipant: RoundRoomParticipant | undefined;
   currentPhase?: RoundPhaseType;
+  /** Phase 9H: called when the viewer clicks a note's "Review in X" action. */
+  onReviewTarget?: (target: CoachNoteReviewTarget) => void;
+  /** Phase 9H: the last review jump made from this panel, if any -- shown as
+   * a small "you were reviewing" line when the viewer returns to Notes. */
+  reviewContext?: { tab: ReviewTargetTab; contextLabel: string } | null;
+  onClearReviewContext?: () => void;
 }
 
 const NOTE_TYPES: CoachNoteType[] = ["general", "flow", "crossfire", "drill", "ballot"];
@@ -38,7 +46,18 @@ function authorLabel(coachId: string, participants: RoundRoomParticipant[]): str
   return author?.display_name?.trim() || "Coach";
 }
 
-function NoteEntry({ note, participants }: { note: CoachAnnotation; participants: RoundRoomParticipant[] }) {
+function NoteEntry({
+  note,
+  participants,
+  currentPhase,
+  onReviewTarget,
+}: {
+  note: CoachAnnotation;
+  participants: RoundRoomParticipant[];
+  currentPhase?: RoundPhaseType;
+  onReviewTarget?: (target: CoachNoteReviewTarget) => void;
+}) {
+  const target = coachNoteReviewTarget(note, currentPhase, PHASE_LABELS);
   return (
     <div className="rounded-md border px-3 py-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -58,11 +77,29 @@ function NoteEntry({ note, participants }: { note: CoachAnnotation; participants
         </span>
       </div>
       <p className="text-sm leading-relaxed whitespace-pre-wrap">{note.content}</p>
+      {target && onReviewTarget && (
+        <button
+          type="button"
+          onClick={() => onReviewTarget(target)}
+          className="text-xs text-primary underline underline-offset-2 hover:no-underline"
+        >
+          {target.actionLabel}
+        </button>
+      )}
     </div>
   );
 }
 
-export function CoachNotesPanel({ roundId, room, participants, viewerParticipant, currentPhase }: Props) {
+export function CoachNotesPanel({
+  roundId,
+  room,
+  participants,
+  viewerParticipant,
+  currentPhase,
+  onReviewTarget,
+  reviewContext,
+  onClearReviewContext,
+}: Props) {
   const textareaId = useId();
   const canCreate = canCreateCoachNote(viewerParticipant, room);
   const disabledReason = coachNoteDisabledReason(viewerParticipant, room);
@@ -147,6 +184,21 @@ export function CoachNotesPanel({ roundId, room, participants, viewerParticipant
       <p className="text-xs text-muted-foreground">
         Coaches can review and leave notes, but cannot take debate turns.
       </p>
+
+      {reviewContext && (
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+          <p className="text-xs text-muted-foreground">{reviewContextBannerText(reviewContext.contextLabel)}</p>
+          {onClearReviewContext && (
+            <button
+              type="button"
+              onClick={onClearReviewContext}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground shrink-0"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {canCreate ? (
         <div className="space-y-2.5 rounded-lg border p-3">
@@ -256,7 +308,13 @@ export function CoachNotesPanel({ roundId, room, participants, viewerParticipant
         {loadState === "idle" && !emptyMessage && (
           <div className="space-y-2">
             {filteredNotes.map((n) => (
-              <NoteEntry key={n.id} note={n} participants={participants} />
+              <NoteEntry
+                key={n.id}
+                note={n}
+                participants={participants}
+                currentPhase={currentPhase}
+                onReviewTarget={onReviewTarget}
+              />
             ))}
           </div>
         )}

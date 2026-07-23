@@ -386,3 +386,72 @@ export function coachNoteCountLabel(filteredCount: number, totalCount: number): 
   if (filteredCount === totalCount) return noun(totalCount);
   return `${filteredCount} of ${noun(totalCount)}`;
 }
+
+// ── Note review anchors (Phase 9H) ──────────────────────────────────────────
+// Turns a note's note_type/phase into a real, honest navigation target. Every
+// branch that can't point at something truthful returns null -- callers must
+// never render a link to nowhere.
+
+export type ReviewTargetTab = "round" | "flow" | "ballot" | "drills";
+
+export const REVIEW_TAB_LABELS: Record<ReviewTargetTab, string> = {
+  round: "Round",
+  flow: "Flow",
+  ballot: "Ballot",
+  drills: "Drills",
+};
+
+export interface CoachNoteReviewTarget {
+  tab: ReviewTargetTab;
+  actionLabel: string;
+  contextLabel: string;
+}
+
+// Mirrors roundModel.ts's CROSSFIRE_PHASES by value (not imported, to keep
+// this file decoupled from roundModel.ts, an established layering rule).
+const REVIEW_CROSSFIRE_PHASES = new Set<RoundPhaseType>([
+  "first_crossfire",
+  "grand_crossfire",
+  "final_crossfire",
+]);
+
+/** phaseLabels is passed in (rather than importing roundModel.ts's
+ * PHASE_LABELS) so this file never needs a cross-import. A crossfire note
+ * only ever gets a target while the round is still literally on that phase
+ * -- there's no replay surface to show a past crossfire phase in, so an
+ * older crossfire note becomes context-only rather than a fake link. */
+export function coachNoteReviewTarget(
+  note: CoachAnnotation,
+  currentPhase: RoundPhaseType | undefined,
+  phaseLabels: Record<RoundPhaseType, string>,
+): CoachNoteReviewTarget | null {
+  const noteType = note.note_type ?? "general";
+
+  function target(tab: ReviewTargetTab, actionLabel: string): CoachNoteReviewTarget {
+    const phaseSuffix = note.phase ? phaseLabels[note.phase] : null;
+    return {
+      tab,
+      actionLabel,
+      contextLabel: phaseSuffix ? `${phaseSuffix} · ${REVIEW_TAB_LABELS[tab]}` : REVIEW_TAB_LABELS[tab],
+    };
+  }
+
+  if (noteType === "flow") return target("flow", "Review in Flow");
+  if (noteType === "ballot") return target("ballot", "Review Ballot");
+  if (noteType === "drill") return target("drills", "Review Drills");
+  if (noteType === "crossfire") {
+    if (note.phase && note.phase === currentPhase && REVIEW_CROSSFIRE_PHASES.has(currentPhase)) {
+      return target("round", "Review Crossfire");
+    }
+    return null;
+  }
+  // general (or unset) -- only actionable when a phase is attached; Flow is
+  // the one tab that's always a truthful destination regardless of which
+  // historical phase the note referenced, since flow state is cumulative.
+  if (note.phase) return target("flow", "Review in Flow");
+  return null;
+}
+
+export function reviewContextBannerText(contextLabel: string): string {
+  return `Viewing coach note context: ${contextLabel}`;
+}
