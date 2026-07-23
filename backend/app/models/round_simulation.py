@@ -669,6 +669,7 @@ class RoundRoomStateResponse(BaseModel):
     viewer_participant: RoundRoomParticipant
     round_state: Optional[RoundStateResponse] = None
     turn_context: Optional[TurnContext] = None
+    coach_note_count: int = 0
 
 
 class GenerateDecisionRequest(BaseModel):

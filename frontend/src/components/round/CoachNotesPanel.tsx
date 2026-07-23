@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import * as roundApi from "@/lib/roundApi";
 import { ApiError } from "@/lib/api";
 import {
   COACH_NOTE_TYPE_LABELS,
   canCreateCoachNote,
+  coachNoteCountLabel,
   coachNoteDisabledReason,
   coachNoteTypeLabel,
+  coachNotesEmptyStateMessage,
+  distinctCoachNotePhases,
+  filterCoachNotes,
 } from "@/lib/roomModel";
+import type { CoachNoteTypeFilter, CoachNotePhaseFilter } from "@/lib/roomModel";
+import { FULL_PHASE_ORDER, PHASE_LABELS } from "@/lib/roundModel";
 import type {
   CoachAnnotation,
   CoachNoteType,
@@ -69,6 +75,21 @@ export function CoachNotesPanel({ roundId, room, participants, viewerParticipant
   const [content, setContent] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "error">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [typeFilter, setTypeFilter] = useState<CoachNoteTypeFilter>("all");
+  const [phaseFilter, setPhaseFilter] = useState<CoachNotePhaseFilter>("all");
+  const filtersActive = typeFilter !== "all" || phaseFilter !== "all";
+  const presentPhases = useMemo(() => distinctCoachNotePhases(notes, FULL_PHASE_ORDER), [notes]);
+  const filteredNotes = useMemo(
+    () => filterCoachNotes(notes, typeFilter, phaseFilter),
+    [notes, typeFilter, phaseFilter],
+  );
+  const emptyMessage = coachNotesEmptyStateMessage(notes.length, filteredNotes.length);
+
+  function handleResetFilters() {
+    setTypeFilter("all");
+    setPhaseFilter("all");
+  }
 
   async function loadNotes() {
     setLoadState("loading");
@@ -181,6 +202,47 @@ export function CoachNotesPanel({ roundId, room, participants, viewerParticipant
         </p>
       )}
 
+      {loadState === "idle" && notes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="rounded-md border bg-background px-2 py-1 text-xs"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as CoachNoteTypeFilter)}
+          >
+            <option value="all">All types</option>
+            {NOTE_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {COACH_NOTE_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded-md border bg-background px-2 py-1 text-xs"
+            value={phaseFilter}
+            onChange={(e) => setPhaseFilter(e.target.value as CoachNotePhaseFilter)}
+          >
+            <option value="all">All phases</option>
+            {presentPhases.map((p) => (
+              <option key={p} value={p}>
+                {PHASE_LABELS[p]}
+              </option>
+            ))}
+          </select>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Reset filters
+            </button>
+          )}
+          <span className="ml-auto text-xs text-muted-foreground">
+            {coachNoteCountLabel(filteredNotes.length, notes.length)}
+          </span>
+        </div>
+      )}
+
       <div className="space-y-2">
         {loadState === "loading" && (
           <p className="text-xs text-muted-foreground">Loading notes…</p>
@@ -188,12 +250,12 @@ export function CoachNotesPanel({ roundId, room, participants, viewerParticipant
         {loadState === "error" && (
           <p className="text-xs text-red-600">Couldn&#39;t load coach notes.</p>
         )}
-        {loadState === "idle" && notes.length === 0 && (
-          <p className="text-xs text-muted-foreground">No coach notes yet.</p>
+        {loadState === "idle" && emptyMessage && (
+          <p className="text-xs text-muted-foreground">{emptyMessage}</p>
         )}
-        {loadState === "idle" && notes.length > 0 && (
+        {loadState === "idle" && !emptyMessage && (
           <div className="space-y-2">
-            {notes.map((n) => (
+            {filteredNotes.map((n) => (
               <NoteEntry key={n.id} note={n} participants={participants} />
             ))}
           </div>

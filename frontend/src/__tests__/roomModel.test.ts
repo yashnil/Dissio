@@ -32,8 +32,22 @@ import {
   coachNoteDisabledReason,
   coachNoteTypeLabel,
   COACH_NOTE_TYPE_LABELS,
+  coachNoteBadgeLabel,
+  coachNoteCountSummary,
+  coachNotesAvailableMessage,
+  roomClosedNotice,
+  filterCoachNotes,
+  distinctCoachNotePhases,
+  coachNotesEmptyStateMessage,
+  coachNoteCountLabel,
 } from "@/lib/roomModel";
-import type { RoundRoom, RoundRoomParticipant, RoundRoomStateResponse } from "@/types/round";
+import type {
+  CoachAnnotation,
+  RoundPhaseType,
+  RoundRoom,
+  RoundRoomParticipant,
+  RoundRoomStateResponse,
+} from "@/types/round";
 
 function makeRoom(overrides: Partial<RoundRoom> = {}): RoundRoom {
   return {
@@ -58,6 +72,19 @@ function makeParticipant(overrides: Partial<RoundRoomParticipant> = {}): RoundRo
     status: "joined",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeCoachAnnotation(overrides: Partial<CoachAnnotation> = {}): CoachAnnotation {
+  return {
+    id: "note-1",
+    round_id: "r1",
+    coach_id: "owner-1",
+    annotation_type: "speech_note",
+    content: "Good weighing.",
+    is_correction: false,
+    created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -445,6 +472,7 @@ describe("RoundRoomStateResponse turn_context shape", () => {
         expected_side: "pro",
         expected_role: "debater",
       },
+      coach_note_count: 0,
       ...overrides,
     };
   }
@@ -637,5 +665,158 @@ describe("coachNoteTypeLabel / COACH_NOTE_TYPE_LABELS", () => {
   it("falls back to General for missing/unknown values", () => {
     expect(coachNoteTypeLabel(undefined)).toBe("General");
     expect(coachNoteTypeLabel(null)).toBe("General");
+  });
+});
+
+// ── Phase 9G: badges, filtering, room-closed copy ───────────────────────────
+
+describe("coachNoteBadgeLabel", () => {
+  it("returns null at zero", () => {
+    expect(coachNoteBadgeLabel(0)).toBeNull();
+  });
+
+  it("returns the count as a string", () => {
+    expect(coachNoteBadgeLabel(1)).toBe("1");
+    expect(coachNoteBadgeLabel(42)).toBe("42");
+  });
+
+  it("caps display at 99+", () => {
+    expect(coachNoteBadgeLabel(150)).toBe("99+");
+  });
+});
+
+describe("coachNoteCountSummary", () => {
+  it("returns null at zero", () => {
+    expect(coachNoteCountSummary(0)).toBeNull();
+  });
+
+  it("pluralizes correctly", () => {
+    expect(coachNoteCountSummary(1)).toBe("1 coach note available.");
+    expect(coachNoteCountSummary(3)).toBe("3 coach notes available.");
+  });
+});
+
+describe("coachNotesAvailableMessage", () => {
+  it("returns null at zero regardless of role", () => {
+    expect(coachNotesAvailableMessage(0, makeParticipant({ role: "debater_a" }))).toBeNull();
+  });
+
+  it("returns a message for debater-ish roles", () => {
+    expect(coachNotesAvailableMessage(2, makeParticipant({ role: "debater_a" }))).toMatch(/available for review/i);
+    expect(coachNotesAvailableMessage(2, makeParticipant({ role: "owner" }))).toMatch(/available for review/i);
+  });
+
+  it("returns null for a coach (they wrote the notes)", () => {
+    expect(coachNotesAvailableMessage(2, makeParticipant({ role: "coach", side: undefined }))).toBeNull();
+  });
+
+  it("returns null for an observer (separate passive copy elsewhere)", () => {
+    expect(coachNotesAvailableMessage(2, makeParticipant({ role: "observer", side: undefined }))).toBeNull();
+  });
+
+  it("returns null when there's no participant record", () => {
+    expect(coachNotesAvailableMessage(2, undefined)).toBeNull();
+  });
+});
+
+describe("roomClosedNotice", () => {
+  it("returns null for an open room", () => {
+    expect(roomClosedNotice(makeRoom({ status: "waiting" }))).toBeNull();
+  });
+
+  it("returns the notice for a closed room", () => {
+    expect(roomClosedNotice(makeRoom({ status: "closed" }))).toMatch(/closed/i);
+    expect(roomClosedNotice(makeRoom({ status: "closed" }))).toMatch(/remain viewable/i);
+  });
+});
+
+describe("filterCoachNotes", () => {
+  const notes = [
+    makeCoachAnnotation({ id: "n1", note_type: "flow", phase: "first_summary" }),
+    makeCoachAnnotation({ id: "n2", note_type: "crossfire", phase: "first_crossfire" }),
+    makeCoachAnnotation({ id: "n3", note_type: undefined, phase: undefined }),
+  ];
+
+  it("returns everything when both filters are 'all'", () => {
+    expect(filterCoachNotes(notes, "all", "all")).toHaveLength(3);
+  });
+
+  it("filters by note_type, treating an unset note_type as general", () => {
+    expect(filterCoachNotes(notes, "flow", "all").map((n) => n.id)).toEqual(["n1"]);
+    expect(filterCoachNotes(notes, "general", "all").map((n) => n.id)).toEqual(["n3"]);
+  });
+
+  it("filters by phase", () => {
+    expect(filterCoachNotes(notes, "all", "first_crossfire").map((n) => n.id)).toEqual(["n2"]);
+  });
+
+  it("combines both filters", () => {
+    expect(filterCoachNotes(notes, "flow", "first_summary").map((n) => n.id)).toEqual(["n1"]);
+    expect(filterCoachNotes(notes, "flow", "first_crossfire")).toHaveLength(0);
+  });
+});
+
+describe("distinctCoachNotePhases", () => {
+  it("returns only phases present among the notes, in phase order", () => {
+    const notes = [
+      makeCoachAnnotation({ phase: "second_summary" }),
+      makeCoachAnnotation({ phase: "first_constructive" }),
+      makeCoachAnnotation({ phase: undefined }),
+    ];
+    const order: RoundPhaseType[] = [
+      "first_constructive", "second_constructive", "first_summary", "second_summary",
+    ];
+    expect(distinctCoachNotePhases(notes, order)).toEqual(["first_constructive", "second_summary"]);
+  });
+
+  it("returns an empty list when no notes carry a phase", () => {
+    const notes = [makeCoachAnnotation({ phase: undefined })];
+    expect(distinctCoachNotePhases(notes, ["first_constructive"])).toEqual([]);
+  });
+});
+
+describe("coachNotesEmptyStateMessage", () => {
+  it("distinguishes 'no notes yet' from 'filters hid everything'", () => {
+    expect(coachNotesEmptyStateMessage(0, 0)).toMatch(/no coach notes yet/i);
+    expect(coachNotesEmptyStateMessage(5, 0)).toMatch(/no notes match/i);
+  });
+
+  it("returns null when there's a non-empty filtered result", () => {
+    expect(coachNotesEmptyStateMessage(5, 2)).toBeNull();
+  });
+});
+
+describe("coachNoteCountLabel", () => {
+  it("shows a plain count when unfiltered", () => {
+    expect(coachNoteCountLabel(3, 3)).toBe("3 notes");
+    expect(coachNoteCountLabel(1, 1)).toBe("1 note");
+  });
+
+  it("shows 'X of Y notes' once filtered", () => {
+    expect(coachNoteCountLabel(2, 5)).toBe("2 of 5 notes");
+  });
+});
+
+describe("Phase 9G helpers never leak raw ids", () => {
+  it("no raw note/participant id appears in any label these helpers produce", () => {
+    const secretNoteId = "note-secret-1";
+    const secretParticipantId = "participant-secret-2";
+    const notes = [makeCoachAnnotation({ id: secretNoteId, coach_id: "owner-1" })];
+    const participant = makeParticipant({ id: secretParticipantId, role: "debater_a" });
+
+    const outputs = [
+      coachNoteBadgeLabel(1),
+      coachNoteCountSummary(1),
+      coachNotesAvailableMessage(1, participant),
+      roomClosedNotice(makeRoom({ status: "closed" })),
+      coachNotesEmptyStateMessage(1, 0),
+      coachNoteCountLabel(1, 1),
+    ].filter((s): s is string => s !== null);
+
+    for (const output of outputs) {
+      expect(output).not.toContain(secretNoteId);
+      expect(output).not.toContain(secretParticipantId);
+    }
+    expect(filterCoachNotes(notes, "all", "all")).toHaveLength(1); // sanity: fixture actually used
   });
 });

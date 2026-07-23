@@ -9,6 +9,8 @@ import {
   canLeaveRoom,
   canManageRoomLifecycle,
   canPerformRoundAction,
+  canReadCoachNotes,
+  coachNoteCountSummary,
   formatInviteCode,
   generalActionDisabledReason,
   isRoomClosed,
@@ -35,6 +37,8 @@ interface Props {
   onLeaveRoom: () => void | Promise<void>;
   loading?: boolean;
   error?: string | null;
+  /** Phase 9G: badge/count surfacing -- omitted (undefined) is treated as 0. */
+  coachNoteCount?: number;
 }
 
 const ASSIGNABLE_ROLES: RoomRole[] = ["debater_a", "debater_b", "coach", "observer"];
@@ -134,6 +138,7 @@ export function RoomLobby({
   onLeaveRoom,
   loading,
   error,
+  coachNoteCount = 0,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const owner = isRoomOwner(room, viewerUserId);
@@ -142,6 +147,7 @@ export function RoomLobby({
   const canManageLifecycle = canManageRoomLifecycle(room, viewerUserId);
   const canManage = canPerformRoundAction(viewerParticipant);
   const manageReason = generalActionDisabledReason(viewerParticipant);
+  const noteSummary = canReadCoachNotes(viewerParticipant) ? coachNoteCountSummary(coachNoteCount) : null;
 
   function copyCode() {
     navigator.clipboard.writeText(room.invite_code).then(() => {
@@ -173,6 +179,12 @@ export function RoomLobby({
             This room has been closed by the owner. Existing participants can still view it, but no
             new participants can join and no further actions can be taken.
           </p>
+        </div>
+      )}
+
+      {noteSummary && (
+        <div className="rounded-md border bg-muted/20 px-3 py-2">
+          <p className="text-xs text-muted-foreground">{noteSummary}</p>
         </div>
       )}
 

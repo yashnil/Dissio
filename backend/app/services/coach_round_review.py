@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from app.services.supabase_client import get_supabase
 
@@ -198,6 +198,22 @@ def list_coach_annotations(
 
     result = query.execute()
     return [_row_to_annotation(r) for r in (result.data or [])]
+
+
+def count_coach_annotations(supabase: Any, round_id: str) -> int:
+    """Count-only query for badge/summary surfacing (Phase 9G) -- selects
+    just `id`, never note bodies, so a caller that only needs a number never
+    receives content. Takes supabase explicitly (unlike its list/add
+    siblings above, which fetch their own via get_supabase()) so a caller
+    that already holds a request-scoped client never risks a second,
+    potentially-unmocked client lookup."""
+    result = (
+        supabase.table(_ANNOTATION_TABLE)
+        .select("id", count="exact")
+        .eq("round_id", round_id)
+        .execute()
+    )
+    return int(result.count or 0)
 
 
 def assign_drill_from_round(

@@ -383,6 +383,7 @@ export interface RoundRoomStateResponse {
   viewer_participant: RoundRoomParticipant;
   round_state?: RoundStateResponse;
   turn_context?: TurnContext;
+  coach_note_count: number;
 }
 
 // ── Coach review / shared room notes (Phase 9F) ─────────────────────────────

@@ -12,10 +12,12 @@
  */
 
 import type {
+  CoachAnnotation,
   CoachNoteType,
   RoomParticipantStatus,
   RoomRole,
   RoomStatus,
+  RoundPhaseType,
   RoundRoom,
   RoundRoomParticipant,
   RoundSide,
@@ -237,10 +239,10 @@ export function describeCapabilities(
   }
   const roleLabel = ROOM_ROLE_LABELS[participant.role];
   if (participant.role === "coach") {
-    return `You're a ${roleLabel} — you can review the round and leave notes for the debaters, but can't submit speeches, crossfire, or drill attempts.`;
+    return "Review mode: you can leave notes, but not take debate turns.";
   }
   if (participant.role === "observer") {
-    return `You're an ${roleLabel} — you can watch the round, but can't act or leave notes.`;
+    return `You're an ${roleLabel} — you can watch the round and read coach notes, but can't act or add your own.`;
   }
   if (participant.side == null) {
     return `You're ${roleLabel} — ask the room owner to assign you a side before you can act.`;
@@ -302,4 +304,85 @@ export function coachNoteDisabledReason(
     return "Observers can read coach notes but can't add them.";
   }
   return "Only the room owner or a coach can add notes — you can still read them.";
+}
+
+// ── Note badges, filtering, room-closed copy (Phase 9G) ─────────────────────
+
+/** Compact numeric badge for the Notes tab. Null (no badge) at zero. */
+export function coachNoteBadgeLabel(count: number): string | null {
+  if (count <= 0) return null;
+  return count > 99 ? "99+" : String(count);
+}
+
+/** Role-agnostic summary sentence for surfaces any joined participant sees
+ * (e.g. the room lobby), not gated to a specific role. */
+export function coachNoteCountSummary(count: number): string | null {
+  if (count <= 0) return null;
+  return `${count} coach note${count === 1 ? "" : "s"} available.`;
+}
+
+/** Debater-focused sentence for the active round view's capability banner.
+ * Coaches already know about their own notes; observers get their own
+ * passive copy via describeCapabilities instead. */
+export function coachNotesAvailableMessage(
+  count: number,
+  participant: RoundRoomParticipant | undefined,
+): string | null {
+  if (count <= 0) return null;
+  if (!participant || participant.role === "coach" || participant.role === "observer") return null;
+  return `${count} coach note${count === 1 ? "" : "s"} available for review.`;
+}
+
+/** Closed-room notice for the active round view, where no lifecycle
+ * messaging existed before Phase 9G (RoomLobby already had its own). */
+export function roomClosedNotice(room: RoundRoom): string | null {
+  if (!isRoomClosed(room)) return null;
+  return "This room is closed; notes and round materials remain viewable.";
+}
+
+export type CoachNoteTypeFilter = CoachNoteType | "all";
+export type CoachNotePhaseFilter = RoundPhaseType | "all";
+
+/** Pure filter over an already-loaded note list -- no backend call. A note
+ * with no note_type set is treated as "general" for filtering purposes,
+ * matching coachNoteTypeLabel's fallback. */
+export function filterCoachNotes(
+  notes: CoachAnnotation[],
+  typeFilter: CoachNoteTypeFilter,
+  phaseFilter: CoachNotePhaseFilter,
+): CoachAnnotation[] {
+  return notes.filter((n) => {
+    if (typeFilter !== "all" && (n.note_type ?? "general") !== typeFilter) return false;
+    if (phaseFilter !== "all" && n.phase !== phaseFilter) return false;
+    return true;
+  });
+}
+
+/** Only the phases actually present among these notes, in the given phase
+ * order -- keeps the phase filter dropdown short instead of listing all 13
+ * round phases regardless of whether any note references them. */
+export function distinctCoachNotePhases(
+  notes: CoachAnnotation[],
+  phaseOrder: RoundPhaseType[],
+): RoundPhaseType[] {
+  const present = new Set(notes.map((n) => n.phase).filter((p): p is RoundPhaseType => !!p));
+  return phaseOrder.filter((p) => present.has(p));
+}
+
+/** Distinguishes "nothing has ever been posted" from "filters hid
+ * everything" -- null means render the (non-empty) filtered list instead. */
+export function coachNotesEmptyStateMessage(
+  totalCount: number,
+  filteredCount: number,
+): string | null {
+  if (totalCount === 0) return "No coach notes yet.";
+  if (filteredCount === 0) return "No notes match the selected filters.";
+  return null;
+}
+
+/** "3 notes" when unfiltered, "2 of 5 notes" once a filter narrows the list. */
+export function coachNoteCountLabel(filteredCount: number, totalCount: number): string {
+  const noun = (n: number) => `${n} note${n === 1 ? "" : "s"}`;
+  if (filteredCount === totalCount) return noun(totalCount);
+  return `${filteredCount} of ${noun(totalCount)}`;
 }

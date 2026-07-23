@@ -69,6 +69,7 @@ from app.services.auth import get_current_user_id
 from app.services.coach_round_review import (
     add_coach_annotation,
     assign_drill_from_round,
+    count_coach_annotations,
     export_round_report,
     list_coach_annotations,
     rate_automated_finding,
@@ -500,12 +501,24 @@ def _build_room_state_response(room: Dict[str, Any], user_id: str, supabase: Any
             viewer_access, round_state.current_phase, round_state.simulation.config,
         )
 
+    # Phase 9G: best-effort note count, same contract as round_state above --
+    # a query hiccup here must never block the rest of the room state. Every
+    # caller of this function already passed _load_room_access's
+    # owner-or-joined-any-role check, which is exactly notes' read tier
+    # (_load_round_access's room branch), so no extra gating is needed here.
+    coach_note_count = 0
+    try:
+        coach_note_count = count_coach_annotations(supabase, room["round_id"])
+    except Exception:
+        coach_note_count = 0
+
     return RoundRoomStateResponse(
         room=RoundRoom.model_validate(room),
         participants=participants,
         viewer_participant=RoundRoomParticipant.model_validate(viewer_raw),
         round_state=round_state,
         turn_context=turn_context,
+        coach_note_count=coach_note_count,
     )
 
 

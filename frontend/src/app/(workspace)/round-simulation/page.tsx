@@ -20,11 +20,14 @@ import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
 import {
   canPerformRoundAction,
   canSubmitCurrentTurn,
+  coachNoteBadgeLabel,
+  coachNotesAvailableMessage,
   describeCapabilities,
   disabledSubmitReason,
   expectedSpeakerLabel,
   generalActionDisabledReason,
   myParticipant,
+  roomClosedNotice,
 } from "@/lib/roomModel";
 import type {
   CrossfireExchange,
@@ -90,6 +93,7 @@ export default function RoundSimulationPage() {
   const [room, setRoom] = useState<RoundRoom | null>(null);
   const [participants, setParticipants] = useState<RoundRoomParticipant[]>([]);
   const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
+  const [coachNoteCount, setCoachNoteCount] = useState<number>(0);
 
   // Applies a full RoundRoomStateResponse to every piece of state it covers —
   // used by the resume effect, create/join, and refreshRoom so those four
@@ -99,6 +103,7 @@ export default function RoundSimulationPage() {
     setRoom(state.room);
     setParticipants(state.participants);
     setTurnContext(state.turn_context ?? null);
+    setCoachNoteCount(state.coach_note_count ?? 0);
     const rs = state.round_state;
     if (rs) {
       setRoundState(rs);
@@ -586,6 +591,7 @@ export default function RoundSimulationPage() {
         onLeaveRoom={handleLeaveRoom}
         loading={loading}
         error={error}
+        coachNoteCount={coachNoteCount}
       />
     );
   }
@@ -652,6 +658,11 @@ export default function RoundSimulationPage() {
               }`}
             >
               {v}
+              {v === "notes" && coachNoteBadgeLabel(coachNoteCount) && (
+                <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary align-middle">
+                  {coachNoteBadgeLabel(coachNoteCount)}
+                </span>
+              )}
             </button>
           ))}
           <button
@@ -677,6 +688,14 @@ export default function RoundSimulationPage() {
           )}
           {turnGate && !turnGate.allowed && turnGate.reason && (
             <p className="text-xs text-muted-foreground">{turnGate.reason}</p>
+          )}
+          {coachNotesAvailableMessage(coachNoteCount, viewerParticipant) && (
+            <p className="text-xs text-muted-foreground">
+              {coachNotesAvailableMessage(coachNoteCount, viewerParticipant)}
+            </p>
+          )}
+          {room && roomClosedNotice(room) && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{roomClosedNotice(room)}</p>
           )}
         </div>
       )}

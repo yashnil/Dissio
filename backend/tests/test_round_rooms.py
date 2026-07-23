@@ -1882,6 +1882,96 @@ class TestCoachNotes:
         assert results[0].note_type is None
 
 
+class TestCoachNoteCount:
+    """Phase 9G: coach_note_count on RoundRoomStateResponse -- badge/summary
+    surfacing without fetching note bodies. get_room_endpoint's read tier
+    (_load_room_access: owner or joined, any role) is exactly notes' read
+    tier, so no separate gating logic exists to test here -- only that the
+    count is wired through correctly and fails safely."""
+
+    def test_count_coach_annotations_returns_the_query_count(self):
+        from app.services.coach_round_review import count_coach_annotations
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(count=3)
+        assert count_coach_annotations(supabase, "r1") == 3
+
+    def test_count_coach_annotations_defaults_to_zero_on_a_null_count(self):
+        from app.services.coach_round_review import count_coach_annotations
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(count=None)
+        assert count_coach_annotations(supabase, "r1") == 0
+
+    def test_count_only_selects_id_never_note_bodies(self):
+        """Backward compat: the count query doesn't reference phase/note_type
+        or content at all, so old rows missing those fields still count fine."""
+        from app.services.coach_round_review import count_coach_annotations
+        supabase = MagicMock()
+        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(count=2)
+        assert count_coach_annotations(supabase, "r1") == 2
+        supabase.table.return_value.select.assert_called_once_with("id", count="exact")
+
+    def test_owner_sees_note_count_via_get_room_endpoint(self):
+        from app.api import round_simulations as mod
+        room = _room()
+        participant = _participant()
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]), \
+             patch.object(mod, "count_coach_annotations", return_value=4):
+            result = mod.get_room_endpoint("room-1", "owner-1")
+        assert result.coach_note_count == 4
+
+    def test_joined_participant_of_any_role_sees_note_count(self):
+        from app.api import round_simulations as mod
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]), \
+             patch.object(mod, "count_coach_annotations", return_value=1):
+            result = mod.get_room_endpoint("room-1", "u2")
+        assert result.coach_note_count == 1
+
+    def test_stranger_never_triggers_a_note_count_query(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        room = _room()
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(mod, "count_coach_annotations") as mock_count:
+            with pytest.raises(HTTPException) as exc_info:
+                mod.get_room_endpoint("room-1", "stranger")
+        assert exc_info.value.status_code == 403
+        mock_count.assert_not_called()
+
+    def test_closed_room_still_returns_a_real_note_count(self):
+        from app.api import round_simulations as mod
+        room = _room(status="closed")
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]), \
+             patch.object(mod, "count_coach_annotations", return_value=5):
+            result = mod.get_room_endpoint("room-1", "u2")
+        assert result.coach_note_count == 5
+
+    def test_note_count_query_failure_defaults_to_zero_without_breaking_the_response(self):
+        from app.api import round_simulations as mod
+        room = _room()
+        participant = _participant()
+        with patch.object(mod, "get_supabase", return_value=MagicMock()), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]), \
+             patch.object(mod, "count_coach_annotations", side_effect=RuntimeError("db hiccup")):
+            result = mod.get_room_endpoint("room-1", "owner-1")
+        assert result.coach_note_count == 0
+
+
 class _FakeRejudgeDecision:
     """Lightweight stand-in for RoundDecision -- avoids constructing the full
     real model just to prove crossfire_effects/insert plumbing isn't dropped
