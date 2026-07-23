@@ -1888,6 +1888,8 @@ def create_annotation(
             target_type=req.target_type,
             is_correction=req.is_correction,
             finding_id=req.finding_id,
+            phase=req.phase.value if req.phase else None,
+            note_type=req.note_type,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1906,6 +1908,8 @@ def create_annotation(
         "is_correction": annotation.is_correction,
         "finding_id": annotation.finding_id,
         "created_at": annotation.created_at,
+        "phase": annotation.phase,
+        "note_type": annotation.note_type,
     }
 
 
@@ -1936,6 +1940,8 @@ def list_annotations(
             "is_correction": a.is_correction,
             "finding_id": a.finding_id,
             "created_at": a.created_at,
+            "phase": a.phase,
+            "note_type": a.note_type,
         }
         for a in annotations
     ]

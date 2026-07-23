@@ -1603,6 +1603,7 @@ class TestCoachOrOwnerEndpoints:
             id="a1", round_id="r1", coach_id="u2", annotation_type="note",
             target_id="t1", target_type="argument", content="Good job.",
             is_correction=False, finding_id=None, created_at="2026-01-01T00:00:00Z",
+            phase=None, note_type=None,
         ))()
         req = AddAnnotationRequest(
             round_id="r1", annotation_type="note", content="Good job.",
@@ -1649,6 +1650,236 @@ class TestCoachOrOwnerEndpoints:
             with pytest.raises(HTTPException) as exc_info:
                 mod.rate_finding("r1", "f1", req, "stranger")
         assert exc_info.value.status_code == 403
+
+
+class TestCoachNotes:
+    """Phase 9F: coach notes reuse the existing owner-or-coach create /
+    any-joined-participant read tiers (already proven above) -- these tests
+    cover the new phase/note_type fields threading through, the read side
+    for debaters and observers explicitly, left-participant and closed-room
+    writes, invalid note_type, and old-style backward compatibility."""
+
+    def _fake_annotation(self, **overrides):
+        base = dict(
+            id="a1", round_id="r1", coach_id="owner-1", annotation_type="speech_note",
+            target_id=None, target_type=None, content="Good weighing in the 2AR.",
+            is_correction=False, finding_id=None, created_at="2026-01-01T00:00:00Z",
+            phase=None, note_type=None,
+        )
+        base.update(overrides)
+        return type("Annotation", (), base)()
+
+    def test_owner_can_create_note_with_phase_and_note_type(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(role="owner")
+        supabase = _configure_round_access(round_row)
+        fake_annotation = self._fake_annotation(phase="first_summary", note_type="flow")
+        req = AddAnnotationRequest(
+            round_id="r1", annotation_type="speech_note", content="Good weighing in the 2AR.",
+            phase="first_summary", note_type="flow",
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "add_coach_annotation", return_value=fake_annotation) as mock_add, \
+             patch.object(mod, "track_product_event"):
+            result = mod.create_annotation("r1", req, "owner-1")
+        mock_add.assert_called_once_with(
+            round_id="r1", coach_id="owner-1", annotation_type="speech_note",
+            content="Good weighing in the 2AR.", target_id=None, target_type=None,
+            is_correction=False, finding_id=None, phase="first_summary", note_type="flow",
+        )
+        assert result["phase"] == "first_summary"
+        assert result["note_type"] == "flow"
+
+    def test_coach_can_create_note(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        supabase = _configure_round_access(round_row)
+        fake_annotation = self._fake_annotation(coach_id="u2", note_type="general")
+        req = AddAnnotationRequest(
+            round_id="r1", annotation_type="speech_note", content="Good weighing in the 2AR.",
+            note_type="general",
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "add_coach_annotation", return_value=fake_annotation), \
+             patch.object(mod, "track_product_event"):
+            result = mod.create_annotation("r1", req, "u2")
+        assert result["note_type"] == "general"
+
+    def test_debater_can_read_notes_but_not_create(self):
+        """Debaters are read-only for coach notes (unchanged tier)."""
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "list_coach_annotations", return_value=[self._fake_annotation()]) as mock_list:
+            result = mod.list_annotations("r1", "u2", None)
+        mock_list.assert_called_once()
+        assert len(result) == 1
+
+        req = AddAnnotationRequest(round_id="r1", annotation_type="speech_note", content="x")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_observer_can_read_notes_but_not_create(self):
+        """Chosen policy (Phase 9F): observers keep read access, never write."""
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "list_coach_annotations", return_value=[self._fake_annotation()]):
+            result = mod.list_annotations("r1", "u2", None)
+        assert len(result) == 1
+
+        req = AddAnnotationRequest(round_id="r1", annotation_type="speech_note", content="x")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_non_member_cannot_create_or_read_notes(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.list_annotations("r1", "stranger", None)
+        assert exc_info.value.status_code == 403
+
+        req = AddAnnotationRequest(round_id="r1", annotation_type="speech_note", content="x")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "stranger")
+        assert exc_info.value.status_code == 403
+
+    def test_left_participant_cannot_create_note(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None, status="left")
+        supabase = _configure_round_access(round_row)
+        req = AddAnnotationRequest(round_id="r1", annotation_type="speech_note", content="x")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_closed_room_blocks_new_notes_even_for_the_owner(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import AddAnnotationRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room(status="closed")
+        participant = _participant(role="owner")
+        supabase = _configure_round_access(round_row)
+        req = AddAnnotationRequest(round_id="r1", annotation_type="speech_note", content="x")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_annotation("r1", req, "owner-1")
+        assert exc_info.value.status_code == 400
+
+    def test_closed_room_still_allows_reading_existing_notes(self):
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room(status="closed")
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "list_coach_annotations", return_value=[self._fake_annotation()]):
+            result = mod.list_annotations("r1", "u2", None)
+        assert len(result) == 1
+
+    def test_invalid_note_type_rejected(self):
+        from app.services.coach_round_review import add_coach_annotation
+        with pytest.raises(ValueError):
+            add_coach_annotation(
+                round_id="r1", coach_id="owner-1", annotation_type="speech_note",
+                content="x", note_type="not-a-real-type",
+            )
+
+    def test_old_style_note_without_phase_or_note_type_still_round_trips(self):
+        """Backward compatibility: a caller that omits phase/note_type
+        entirely (pre-9F behavior) still creates successfully and reads back
+        with both fields None."""
+        from app.services.coach_round_review import add_coach_annotation, list_coach_annotations
+        from unittest.mock import MagicMock as _MM
+        supabase = _MM()
+        inserted = {}
+
+        def _capture_insert(row):
+            inserted.update(row)
+            return _MM(execute=lambda: _MM(data=[row]))
+
+        supabase.table.return_value.insert.side_effect = _capture_insert
+        with patch("app.services.coach_round_review.get_supabase", return_value=supabase):
+            annotation = add_coach_annotation(
+                round_id="r1", coach_id="owner-1", annotation_type="speech_note", content="x",
+            )
+        assert annotation.phase is None
+        assert annotation.note_type is None
+        assert inserted["phase"] is None
+        assert inserted["note_type"] is None
+
+        supabase2 = _MM()
+        supabase2.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+            _MM(data=[{
+                "id": "old-1", "round_id": "r1", "coach_id": "owner-1",
+                "annotation_type": "speech_note", "target_id": None, "target_type": None,
+                "content": "pre-9F note", "is_correction": False, "finding_id": None,
+                "created_at": "2026-01-01T00:00:00Z",
+                # no "phase"/"note_type" keys at all -- simulates a row from before this migration
+            }])
+        )
+        with patch("app.services.coach_round_review.get_supabase", return_value=supabase2):
+            results = list_coach_annotations(round_id="r1")
+        assert len(results) == 1
+        assert results[0].phase is None
+        assert results[0].note_type is None
 
 
 class _FakeRejudgeDecision:

@@ -27,6 +27,11 @@ import {
   isRoomClosed,
   canManageRoomLifecycle,
   canLeaveRoom,
+  canCreateCoachNote,
+  canReadCoachNotes,
+  coachNoteDisabledReason,
+  coachNoteTypeLabel,
+  COACH_NOTE_TYPE_LABELS,
 } from "@/lib/roomModel";
 import type { RoundRoom, RoundRoomParticipant, RoundRoomStateResponse } from "@/types/round";
 
@@ -372,9 +377,11 @@ describe("describeCapabilities", () => {
     expect(describeCapabilities(p, "pro")).toMatch(/watch/i);
   });
 
-  it("describes a coach as watch-only", () => {
-    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
-    expect(describeCapabilities(p, "pro")).toMatch(/watch/i);
+  it("describes a coach's review/notes capability, distinct from an observer", () => {
+    const coachDesc = describeCapabilities(makeParticipant({ role: "coach", side: undefined, status: "joined" }), "pro");
+    const observerDesc = describeCapabilities(makeParticipant({ role: "observer", side: undefined, status: "joined" }), "pro");
+    expect(coachDesc).toMatch(/notes/i);
+    expect(coachDesc).not.toBe(observerDesc);
   });
 
   it("describes an unassigned debater as needing a side assignment", () => {
@@ -531,5 +538,104 @@ describe("canLeaveRoom", () => {
     const p = makeParticipant({ id: "p-secret-1", user_id: "u2", status: "joined" });
     const result = canLeaveRoom(p, room, "u2");
     expect(typeof result).toBe("boolean");
+  });
+});
+
+// ── Phase 9F: coach review / shared room notes ──────────────────────────────
+
+describe("canCreateCoachNote", () => {
+  const openRoom = makeRoom({ status: "waiting" });
+  const closedRoom = makeRoom({ status: "closed" });
+
+  it("allows the owner in an open room", () => {
+    const p = makeParticipant({ role: "owner", status: "joined" });
+    expect(canCreateCoachNote(p, openRoom)).toBe(true);
+  });
+
+  it("allows a joined coach in an open room", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(canCreateCoachNote(p, openRoom)).toBe(true);
+  });
+
+  it("rejects a debater", () => {
+    const p = makeParticipant({ role: "debater_a", status: "joined" });
+    expect(canCreateCoachNote(p, openRoom)).toBe(false);
+  });
+
+  it("rejects an observer", () => {
+    const p = makeParticipant({ role: "observer", side: undefined, status: "joined" });
+    expect(canCreateCoachNote(p, openRoom)).toBe(false);
+  });
+
+  it("rejects a coach once the room is closed", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(canCreateCoachNote(p, closedRoom)).toBe(false);
+  });
+
+  it("rejects a participant who isn't joined", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "invited" });
+    expect(canCreateCoachNote(p, openRoom)).toBe(false);
+  });
+
+  it("rejects when there is no participant record", () => {
+    expect(canCreateCoachNote(undefined, openRoom)).toBe(false);
+  });
+});
+
+describe("canReadCoachNotes", () => {
+  it("allows any joined participant, including observers", () => {
+    expect(canReadCoachNotes(makeParticipant({ role: "observer", side: undefined, status: "joined" }))).toBe(true);
+    expect(canReadCoachNotes(makeParticipant({ role: "debater_a", status: "joined" }))).toBe(true);
+  });
+
+  it("rejects a non-joined or missing participant", () => {
+    expect(canReadCoachNotes(makeParticipant({ status: "invited" }))).toBe(false);
+    expect(canReadCoachNotes(undefined)).toBe(false);
+  });
+});
+
+describe("coachNoteDisabledReason", () => {
+  it("returns null when creation is allowed", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(coachNoteDisabledReason(p, makeRoom({ status: "waiting" }))).toBeNull();
+  });
+
+  it("explains a missing/unjoined participant", () => {
+    expect(coachNoteDisabledReason(undefined, makeRoom())).toMatch(/not an active participant/i);
+  });
+
+  it("explains a closed room", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(coachNoteDisabledReason(p, makeRoom({ status: "closed" }))).toMatch(/closed/i);
+  });
+
+  it("explains that observers can read but not add", () => {
+    const p = makeParticipant({ role: "observer", side: undefined, status: "joined" });
+    expect(coachNoteDisabledReason(p, makeRoom({ status: "waiting" }))).toMatch(/observers/i);
+  });
+
+  it("explains that a debater isn't the owner or a coach", () => {
+    const p = makeParticipant({ role: "debater_a", status: "joined" });
+    expect(coachNoteDisabledReason(p, makeRoom({ status: "waiting" }))).toMatch(/owner or a coach/i);
+  });
+});
+
+describe("coachNoteTypeLabel / COACH_NOTE_TYPE_LABELS", () => {
+  it("has a label for every note type", () => {
+    expect(COACH_NOTE_TYPE_LABELS.general).toBe("General");
+    expect(COACH_NOTE_TYPE_LABELS.flow).toBe("Flow");
+    expect(COACH_NOTE_TYPE_LABELS.crossfire).toBe("Crossfire");
+    expect(COACH_NOTE_TYPE_LABELS.drill).toBe("Drill");
+    expect(COACH_NOTE_TYPE_LABELS.ballot).toBe("Ballot");
+  });
+
+  it("resolves each valid note type", () => {
+    expect(coachNoteTypeLabel("flow")).toBe("Flow");
+    expect(coachNoteTypeLabel("ballot")).toBe("Ballot");
+  });
+
+  it("falls back to General for missing/unknown values", () => {
+    expect(coachNoteTypeLabel(undefined)).toBe("General");
+    expect(coachNoteTypeLabel(null)).toBe("General");
   });
 });

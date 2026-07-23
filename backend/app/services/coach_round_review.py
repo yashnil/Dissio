@@ -35,6 +35,8 @@ class CoachAnnotation:
     is_correction: bool        # True if correcting an automated finding
     finding_id: Optional[str]  # if correcting a finding
     created_at: str
+    phase: Optional[str] = None  # Phase 9F: round phase this note is tied to
+    note_type: Optional[str] = None  # Phase 9F: "general"/"flow"/"crossfire"/"drill"/"ballot"
 
 
 @dataclass
@@ -73,6 +75,14 @@ _VALID_RATINGS = {
     "not_useful",
 }
 
+_VALID_NOTE_TYPES = {
+    "general",
+    "flow",
+    "crossfire",
+    "drill",
+    "ballot",
+}
+
 _ANNOTATION_TABLE = "round_coach_annotations"
 _FINDING_RATING_TABLE = "round_finding_ratings"
 
@@ -96,6 +106,8 @@ def _row_to_annotation(row: dict) -> CoachAnnotation:
         is_correction=bool(row.get("is_correction", False)),
         finding_id=row.get("finding_id"),
         created_at=row["created_at"],
+        phase=row.get("phase"),
+        note_type=row.get("note_type"),
     )
 
 
@@ -123,6 +135,8 @@ def add_coach_annotation(
     target_type: Optional[str] = None,
     is_correction: bool = False,
     finding_id: Optional[str] = None,
+    phase: Optional[str] = None,
+    note_type: Optional[str] = None,
 ) -> CoachAnnotation:
     """Create and persist a coach annotation. Never modifies historical records."""
     if annotation_type not in _VALID_ANNOTATION_TYPES:
@@ -134,6 +148,11 @@ def add_coach_annotation(
         raise ValueError(
             f"Invalid target_type {target_type!r}. "
             f"Must be one of: {sorted(_VALID_TARGET_TYPES)}"
+        )
+    if note_type is not None and note_type not in _VALID_NOTE_TYPES:
+        raise ValueError(
+            f"Invalid note_type {note_type!r}. "
+            f"Must be one of: {sorted(_VALID_NOTE_TYPES)}"
         )
     if not content or not content.strip():
         raise ValueError("Annotation content must not be empty.")
@@ -152,6 +171,8 @@ def add_coach_annotation(
         "is_correction": is_correction,
         "finding_id": finding_id,
         "created_at": created_at,
+        "phase": phase,
+        "note_type": note_type,
     }
 
     supabase = get_supabase()

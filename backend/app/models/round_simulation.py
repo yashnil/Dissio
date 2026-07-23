@@ -712,6 +712,8 @@ class CoachAnnotation(BaseModel):
     is_correction: bool = False
     finding_id: Optional[str] = None
     created_at: str
+    phase: Optional[RoundPhaseType] = None
+    note_type: Optional[str] = None
 
 
 class AutomatedFindingRating(BaseModel):
@@ -732,6 +734,8 @@ class AddAnnotationRequest(BaseModel):
     target_type: Optional[str] = None
     is_correction: bool = False
     finding_id: Optional[str] = None
+    phase: Optional[RoundPhaseType] = None
+    note_type: Optional[str] = None
 
 
 class RateFindingRequest(BaseModel):

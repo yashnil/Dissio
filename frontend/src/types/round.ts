@@ -384,3 +384,22 @@ export interface RoundRoomStateResponse {
   round_state?: RoundStateResponse;
   turn_context?: TurnContext;
 }
+
+// ── Coach review / shared room notes (Phase 9F) ─────────────────────────────
+
+export type CoachNoteType = "general" | "flow" | "crossfire" | "drill" | "ballot";
+
+export interface CoachAnnotation {
+  id: string;
+  round_id: string;
+  coach_id: string;
+  annotation_type: string;
+  target_id?: string;
+  target_type?: string;
+  content: string;
+  is_correction: boolean;
+  finding_id?: string;
+  created_at: string;
+  phase?: RoundPhaseType;
+  note_type?: CoachNoteType;
+}

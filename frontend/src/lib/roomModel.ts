@@ -12,6 +12,7 @@
  */
 
 import type {
+  CoachNoteType,
   RoomParticipantStatus,
   RoomRole,
   RoomStatus,
@@ -235,8 +236,11 @@ export function describeCapabilities(
     return "You're not an active participant in this room yet.";
   }
   const roleLabel = ROOM_ROLE_LABELS[participant.role];
-  if (participant.role === "coach" || participant.role === "observer") {
-    return `You're a ${roleLabel} — you can watch the round and review outputs, but can't act.`;
+  if (participant.role === "coach") {
+    return `You're a ${roleLabel} — you can review the round and leave notes for the debaters, but can't submit speeches, crossfire, or drill attempts.`;
+  }
+  if (participant.role === "observer") {
+    return `You're an ${roleLabel} — you can watch the round, but can't act or leave notes.`;
   }
   if (participant.side == null) {
     return `You're ${roleLabel} — ask the room owner to assign you a side before you can act.`;
@@ -245,4 +249,57 @@ export function describeCapabilities(
     return `You're ${roleLabel} (${sideLabel(participant.side)}, ${speakerSlotLabel(participant.speaker_slot)}) — you can submit your assigned speeches and any crossfire for ${sideLabel(studentSide)}.`;
   }
   return `You're ${roleLabel} (${sideLabel(participant.side)}) — you can submit speeches and crossfire for ${sideLabel(studentSide)}.`;
+}
+
+// ── Coach review / shared room notes (Phase 9F) ─────────────────────────────
+
+export const COACH_NOTE_TYPE_LABELS: Record<CoachNoteType, string> = {
+  general: "General",
+  flow: "Flow",
+  crossfire: "Crossfire",
+  drill: "Drill",
+  ballot: "Ballot",
+};
+
+export function coachNoteTypeLabel(noteType: CoachNoteType | null | undefined): string {
+  if (noteType && noteType in COACH_NOTE_TYPE_LABELS) return COACH_NOTE_TYPE_LABELS[noteType];
+  return "General";
+}
+
+/** Mirrors _require_coach_or_owner_access, plus 9E's room-not-closed gate:
+ * only the owner or a joined coach may add a note, and only while the room
+ * isn't closed. Never broadens who can submit a speech/crossfire/drill
+ * attempt -- this is a separate, additive capability. */
+export function canCreateCoachNote(
+  participant: RoundRoomParticipant | undefined,
+  room: RoundRoom,
+): boolean {
+  if (!participant || participant.status !== "joined") return false;
+  if (isRoomClosed(room)) return false;
+  return participant.role === "owner" || participant.role === "coach";
+}
+
+/** Mirrors _load_round_access's read tier: any joined participant, any
+ * role, can read notes -- including observers. */
+export function canReadCoachNotes(participant: RoundRoomParticipant | undefined): boolean {
+  return !!participant && participant.status === "joined";
+}
+
+/** Human-readable reason coach-note creation is disabled, or null when it's
+ * allowed. The reason-returning counterpart to canCreateCoachNote. */
+export function coachNoteDisabledReason(
+  participant: RoundRoomParticipant | undefined,
+  room: RoundRoom,
+): string | null {
+  if (canCreateCoachNote(participant, room)) return null;
+  if (!participant || participant.status !== "joined") {
+    return "You're not an active participant in this room yet.";
+  }
+  if (isRoomClosed(room)) {
+    return "This room has been closed; new notes can no longer be added.";
+  }
+  if (participant.role === "observer") {
+    return "Observers can read coach notes but can't add them.";
+  }
+  return "Only the room owner or a coach can add notes — you can still read them.";
 }

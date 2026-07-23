@@ -10,11 +10,14 @@
 
 import { apiFetch } from "@/lib/api";
 import type {
+  CoachAnnotation,
+  CoachNoteType,
   RoundArgument,
   RoundDecision,
   RoundDrill,
   RoundDrillAttempt,
   RoundDrillAttemptResult,
+  RoundPhaseType,
   RoundSimulation,
   RoundSimulationConfig,
   RoundSpeech,
@@ -265,4 +268,37 @@ export function createAdaptationReview(
 
 export function listAdaptationReviews(roundId: string): Promise<RoundAdaptationReview[]> {
   return apiFetch<RoundAdaptationReview[]>(`${BASE}/${roundId}/adaptation-reviews`);
+}
+
+// ── Coach review / shared room notes (Phase 9F) ─────────────────────────────
+//
+// Reuses the existing Pass 17 coach-annotation endpoint under a "coach note"
+// framing for the multiplayer round surface. annotation_type is fixed at
+// "speech_note" -- that field is a separate, older per-artifact vocabulary
+// this feature doesn't repurpose; note_type is the new, intentionally
+// distinct axis ("which round section is this about").
+
+export function createCoachNote(
+  roundId: string,
+  opts: { content: string; noteType?: CoachNoteType; phase?: RoundPhaseType },
+): Promise<CoachAnnotation> {
+  return apiFetch<CoachAnnotation>(`${BASE}/${roundId}/annotations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      round_id: roundId,
+      annotation_type: "speech_note",
+      content: opts.content,
+      target_id: null,
+      target_type: null,
+      is_correction: false,
+      finding_id: null,
+      phase: opts.phase ?? null,
+      note_type: opts.noteType ?? null,
+    }),
+  });
+}
+
+export function listCoachNotes(roundId: string): Promise<CoachAnnotation[]> {
+  return apiFetch<CoachAnnotation[]>(`${BASE}/${roundId}/annotations`);
 }

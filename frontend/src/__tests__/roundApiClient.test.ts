@@ -305,4 +305,42 @@ describe("roundApi client", () => {
     expect(body).not.toHaveProperty("user_id");
     expect(body.card_ids).toEqual(["c-1", "c-2"]);
   });
+
+  // ── Phase 9F: coach review / shared room notes ────────────────────────────
+
+  it("exports createCoachNote as a function", () => {
+    expect(typeof roundApi.createCoachNote).toBe("function");
+  });
+
+  it("exports listCoachNotes as a function", () => {
+    expect(typeof roundApi.listCoachNotes).toBe("function");
+  });
+
+  it("createCoachNote posts to the annotations route with a fixed annotation_type and no user_id", async () => {
+    await roundApi.createCoachNote("r-1", { content: "Nice weighing.", noteType: "flow", phase: "first_summary" });
+    const [path, opts] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/r-1/annotations");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body);
+    expect(body.round_id).toBe("r-1");
+    expect(body.annotation_type).toBe("speech_note");
+    expect(body.content).toBe("Nice weighing.");
+    expect(body.note_type).toBe("flow");
+    expect(body.phase).toBe("first_summary");
+    expect(body).not.toHaveProperty("user_id");
+  });
+
+  it("createCoachNote defaults noteType/phase to null when omitted", async () => {
+    await roundApi.createCoachNote("r-1", { content: "General note." });
+    const [_path, opts] = mockApiFetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.note_type).toBeNull();
+    expect(body.phase).toBeNull();
+  });
+
+  it("listCoachNotes calls GET the same annotations route", async () => {
+    await roundApi.listCoachNotes("r-1");
+    const [path] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/r-1/annotations");
+  });
 });

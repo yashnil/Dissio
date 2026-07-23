@@ -241,10 +241,16 @@ export function RoomLobby({
         </button>
       )}
 
-      {(viewerParticipant.role === "observer" || viewerParticipant.role === "coach") && (
+      {viewerParticipant.role === "coach" && (
         <p className="text-center text-xs text-muted-foreground">
-          You&#39;re joined as {ROOM_ROLE_LABELS[viewerParticipant.role].toLowerCase()} — you can
-          watch the round but can&#39;t submit speeches or crossfire answers.
+          You&#39;re joined as a coach — you can review the round and leave notes for the
+          debaters, but can&#39;t submit speeches, crossfire, or drill attempts.
+        </p>
+      )}
+      {viewerParticipant.role === "observer" && (
+        <p className="text-center text-xs text-muted-foreground">
+          You&#39;re joined as an observer — you can watch the round, but can&#39;t act or leave
+          notes.
         </p>
       )}
 

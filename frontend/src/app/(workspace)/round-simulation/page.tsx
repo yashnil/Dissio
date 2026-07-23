@@ -13,6 +13,7 @@ import { RoundSpeechCapture } from "@/components/round/RoundSpeechCapture";
 import { CrossfireCapture } from "@/components/round/CrossfireCapture";
 import { RoundBallotView } from "@/components/round/RoundBallotView";
 import { RoundDrillsView } from "@/components/round/RoundDrillsView";
+import { CoachNotesPanel } from "@/components/round/CoachNotesPanel";
 import { ModeSelect } from "@/components/round/ModeSelect";
 import { RoomLobby } from "@/components/round/RoomLobby";
 import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
@@ -52,7 +53,8 @@ type View =
   | "flow"
   | "evidence"
   | "ballot"
-  | "drills";
+  | "drills"
+  | "notes";
 type AuthState = "loading" | "signed-in" | "signed-out";
 type Mode = "solo" | "multiplayer" | null;
 
@@ -635,7 +637,11 @@ export default function RoundSimulationPage() {
       {/* View tabs */}
       <div className="border-b px-4">
         <div className="flex gap-1 -mb-px">
-          {(["round", "flow", "ballot", "drills"] as View[]).map((v) => (
+          {(
+            mode === "multiplayer"
+              ? (["round", "flow", "ballot", "drills", "notes"] as View[])
+              : (["round", "flow", "ballot", "drills"] as View[])
+          ).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -837,6 +843,16 @@ export default function RoundSimulationPage() {
             isLoading={loading}
             canManageDrills={canManageRoundContent}
             disabledReason={generalActionReason}
+          />
+        )}
+
+        {view === "notes" && mode === "multiplayer" && room && (
+          <CoachNotesPanel
+            roundId={simulation.id}
+            room={room}
+            participants={participants}
+            viewerParticipant={viewerParticipant}
+            currentPhase={roundState.current_phase}
           />
         )}
       </div>
