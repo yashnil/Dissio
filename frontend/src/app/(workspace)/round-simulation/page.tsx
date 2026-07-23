@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { ApiError } from "@/lib/api";
@@ -14,6 +14,7 @@ import { CrossfireCapture } from "@/components/round/CrossfireCapture";
 import { RoundBallotView } from "@/components/round/RoundBallotView";
 import { RoundDrillsView } from "@/components/round/RoundDrillsView";
 import { CoachNotesPanel } from "@/components/round/CoachNotesPanel";
+import { CrossfireReadinessPanel } from "@/components/round/CrossfireReadinessPanel";
 import { ModeSelect } from "@/components/round/ModeSelect";
 import { RoomLobby } from "@/components/round/RoomLobby";
 import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
@@ -22,10 +23,13 @@ import {
   canSubmitCurrentTurn,
   coachNoteBadgeLabel,
   coachNotesAvailableMessage,
+  CROSSFIRE_POLL_INTERVAL_MS,
   describeCapabilities,
   disabledSubmitReason,
   expectedSpeakerLabel,
   generalActionDisabledReason,
+  isCrossfirePhase,
+  isRoomClosed,
   myParticipant,
   reviewContextBannerText,
   roomClosedNotice,
@@ -236,6 +240,26 @@ export default function RoundSimulationPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Phase 10B: poll room state (incl. turn_context and readiness) only
+  // while in a multiplayer crossfire phase on an open room -- paused
+  // everywhere else. Mirrors the dashboard's active-poll pattern: a ref to
+  // the latest refreshRoom avoids stale closures inside the interval.
+  const refreshRoomRef = useRef(refreshRoom);
+  useEffect(() => {
+    refreshRoomRef.current = refreshRoom;
+  }, [refreshRoom]);
+
+  const pollActive =
+    mode === "multiplayer" && !!room && !isRoomClosed(room) && !!roundState && isCrossfirePhase(roundState.current_phase);
+
+  useEffect(() => {
+    if (!pollActive || !room) return;
+    const id = setInterval(() => {
+      refreshRoomRef.current(room.id);
+    }, CROSSFIRE_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [pollActive, room?.id]);
 
   // Dispatches to whichever refresh keeps turn_context fresh for the current
   // mode — multiplayer must go through refreshRoom (the only response that
@@ -776,17 +800,31 @@ export default function RoundSimulationPage() {
                   )}
                 </div>
               ) : isCrossfire(roundState.current_phase) ? (
-                <CrossfireCapture
-                  roundId={simulation.id}
-                  phase={roundState.current_phase}
-                  studentSide={simulation.config.student_side}
-                  exchanges={roundState.active_crossfire ?? []}
-                  crossfireEffects={roundState.crossfire_effects ?? []}
-                  onExchangeSaved={handleCrossfireExchangeSaved}
-                  onAdvancePhase={handleAdvancePhase}
-                  isLoading={loading}
-                  turnGate={turnGate}
-                />
+                <>
+                  {mode === "multiplayer" && room && (
+                    <CrossfireReadinessPanel
+                      roomId={room.id}
+                      room={room}
+                      participants={participants}
+                      viewerParticipant={viewerParticipant}
+                      studentSide={simulation.config.student_side}
+                      currentPhase={roundState.current_phase}
+                      pollActive={pollActive}
+                      onReadyChanged={applyRoomState}
+                    />
+                  )}
+                  <CrossfireCapture
+                    roundId={simulation.id}
+                    phase={roundState.current_phase}
+                    studentSide={simulation.config.student_side}
+                    exchanges={roundState.active_crossfire ?? []}
+                    crossfireEffects={roundState.crossfire_effects ?? []}
+                    onExchangeSaved={handleCrossfireExchangeSaved}
+                    onAdvancePhase={handleAdvancePhase}
+                    isLoading={loading}
+                    turnGate={turnGate}
+                  />
+                </>
               ) : (
                 <RoundSpeechCapture
                   roundId={simulation.id}

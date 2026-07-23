@@ -620,6 +620,11 @@ class RoundRoomParticipant(BaseModel):
     joined_at: Optional[str] = None
     created_at: str
     updated_at: str
+    # Phase 10B: crossfire readiness. is_ready is only meaningful when
+    # ready_phase matches the round's current phase -- this keeps readiness
+    # from leaking across phases without needing a reset write anywhere.
+    is_ready: bool = False
+    ready_phase: Optional[RoundPhaseType] = None
 
 
 class CreateRoomRequest(BaseModel):
@@ -643,6 +648,15 @@ class UpdateRoomParticipantRequest(BaseModel):
     role: Optional[RoomRole] = None
     side: Optional[RoundSide] = None
     speaker_slot: Optional[SpeakerSlot] = None
+
+
+class SetCrossfireReadyRequest(BaseModel):
+    """phase is an optional client-side staleness check only -- the backend
+    always stamps its own current_phase, never trusting this value as the
+    source of truth. A mismatch means the client's view of the round is
+    stale (the phase advanced since it last refreshed)."""
+    ready: bool
+    phase: Optional[RoundPhaseType] = None
 
 
 class TurnContext(BaseModel):

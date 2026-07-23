@@ -407,14 +407,6 @@ export interface CoachNoteReviewTarget {
   contextLabel: string;
 }
 
-// Mirrors roundModel.ts's CROSSFIRE_PHASES by value (not imported, to keep
-// this file decoupled from roundModel.ts, an established layering rule).
-const REVIEW_CROSSFIRE_PHASES = new Set<RoundPhaseType>([
-  "first_crossfire",
-  "grand_crossfire",
-  "final_crossfire",
-]);
-
 /** phaseLabels is passed in (rather than importing roundModel.ts's
  * PHASE_LABELS) so this file never needs a cross-import. A crossfire note
  * only ever gets a target while the round is still literally on that phase
@@ -440,7 +432,7 @@ export function coachNoteReviewTarget(
   if (noteType === "ballot") return target("ballot", "Review Ballot");
   if (noteType === "drill") return target("drills", "Review Drills");
   if (noteType === "crossfire") {
-    if (note.phase && note.phase === currentPhase && REVIEW_CROSSFIRE_PHASES.has(currentPhase)) {
+    if (note.phase && note.phase === currentPhase && isCrossfirePhase(currentPhase)) {
       return target("round", "Review Crossfire");
     }
     return null;
@@ -454,4 +446,136 @@ export function coachNoteReviewTarget(
 
 export function reviewContextBannerText(contextLabel: string): string {
   return `Viewing coach note context: ${contextLabel}`;
+}
+
+// ── Crossfire readiness (Phase 10B) ─────────────────────────────────────────
+// Polling-based, not push -- backend remains authoritative. These helpers
+// only ever read data already present on RoundRoomParticipant/RoundRoom;
+// none of them broaden who can submit a crossfire answer/question.
+
+/** Canonical crossfire-phase check, mirroring round_state_machine.py's
+ * CROSSFIRE_PHASES by value (not imported, to keep this file decoupled from
+ * roundModel.ts, an established layering rule). */
+const CROSSFIRE_PHASES = new Set<RoundPhaseType>([
+  "first_crossfire",
+  "grand_crossfire",
+  "final_crossfire",
+]);
+
+export function isCrossfirePhase(phase: RoundPhaseType): boolean {
+  return CROSSFIRE_PHASES.has(phase);
+}
+
+/** Suggested polling cadence while in a crossfire phase -- within the
+ * requested 2-5s window; the dashboard's less time-sensitive poll uses 6s. */
+export const CROSSFIRE_POLL_INTERVAL_MS = 3000;
+
+/** A participant is "ready" only when ready_phase matches the phase being
+ * asked about -- this is what makes readiness never leak from one crossfire
+ * phase into the next, with no reset write required anywhere. */
+function isParticipantReadyForPhase(
+  participant: RoundRoomParticipant,
+  phase: RoundPhaseType | undefined,
+): boolean {
+  return participant.is_ready === true && !!phase && participant.ready_phase === phase;
+}
+
+export function isViewerCrossfireReady(
+  participant: RoundRoomParticipant | undefined,
+  currentPhase: RoundPhaseType | undefined,
+): boolean {
+  return !!participant && isParticipantReadyForPhase(participant, currentPhase);
+}
+
+export interface CrossfireReadyCounts {
+  readyCount: number;
+  eligibleCount: number;
+}
+
+/** Eligible = joined, non-coach/non-observer, assigned to the student's
+ * side -- the exact set of roles _require_turn_access would allow to answer
+ * a crossfire question, mirrored here for display purposes only. */
+export function crossfireReadyCounts(
+  participants: RoundRoomParticipant[],
+  studentSide: RoundSide,
+  currentPhase: RoundPhaseType | undefined,
+): CrossfireReadyCounts {
+  const eligible = participants.filter(
+    (p) => p.status === "joined" && p.side === studentSide && p.role !== "coach" && p.role !== "observer",
+  );
+  const ready = eligible.filter((p) => isParticipantReadyForPhase(p, currentPhase));
+  return { readyCount: ready.length, eligibleCount: eligible.length };
+}
+
+export function crossfireReadyLabel(viewerReady: boolean): string {
+  return viewerReady ? "Ready" : "Not ready";
+}
+
+export function crossfireReadyCountLabel(readyCount: number, eligibleCount: number): string {
+  return `${readyCount} of ${eligibleCount} ready`;
+}
+
+/** Human-facing team coordination sentence. Generalizes past exactly one
+ * partner -- "partner" reads naturally for the common 2-debater case, and
+ * still holds together for a lone debater or a larger team split. */
+export function crossfirePartnerReadyLabel(
+  viewerReady: boolean,
+  readyCount: number,
+  eligibleCount: number,
+): string {
+  if (eligibleCount <= 1) return "No partner in this room yet.";
+  const partnersReady = Math.max(readyCount - (viewerReady ? 1 : 0), 0);
+  const partnersTotal = eligibleCount - 1;
+  if (partnersReady >= partnersTotal) return "Partner ready.";
+  return "Waiting for partner.";
+}
+
+/** Mirrors _require_turn_access exactly: joined, not coach/observer, on the
+ * student's side, room not closed, and only during a crossfire phase.
+ * Never broadens who can submit an actual crossfire answer/question --
+ * readiness is advisory coordination layered on top of that existing tier. */
+export function canToggleCrossfireReady(
+  participant: RoundRoomParticipant | undefined,
+  room: RoundRoom,
+  studentSide: RoundSide,
+  currentPhase: RoundPhaseType | undefined,
+): boolean {
+  if (!participant || participant.status !== "joined") return false;
+  if (isRoomClosed(room)) return false;
+  if (participant.role === "coach" || participant.role === "observer") return false;
+  if (participant.side !== studentSide) return false;
+  if (!currentPhase || !isCrossfirePhase(currentPhase)) return false;
+  return true;
+}
+
+/** The reason-returning counterpart to canToggleCrossfireReady. */
+export function crossfireReadyDisabledReason(
+  participant: RoundRoomParticipant | undefined,
+  room: RoundRoom,
+  studentSide: RoundSide,
+  currentPhase: RoundPhaseType | undefined,
+): string | null {
+  if (canToggleCrossfireReady(participant, room, studentSide, currentPhase)) return null;
+  if (!participant || participant.status !== "joined") {
+    return "You're not an active participant in this room yet.";
+  }
+  if (isRoomClosed(room)) {
+    return "This room is closed; readiness can no longer be changed.";
+  }
+  if (participant.role === "coach") {
+    return "Coaches can watch crossfire but can't mark ready.";
+  }
+  if (participant.role === "observer") {
+    return "Observers can watch crossfire but can't mark ready.";
+  }
+  if (participant.side !== studentSide) {
+    return `You're assigned to ${sideLabel(participant.side)} — readiness applies to ${sideLabel(studentSide)}.`;
+  }
+  return "Readiness only applies during crossfire phases.";
+}
+
+/** Honest connection-status copy -- this is polling, never claims to be
+ * "live" or "connected" the way a real realtime channel would. */
+export function connectionStateLabel(pollActive: boolean): string {
+  return pollActive ? "Syncing crossfire state…" : "Polling paused outside crossfire.";
 }

@@ -14,6 +14,7 @@
 import { apiFetch } from "@/lib/api";
 import type {
   RoomRole,
+  RoundPhaseType,
   RoundRoom,
   RoundRoomParticipant,
   RoundRoomStateResponse,
@@ -87,4 +88,21 @@ export function closeRoom(roomId: string): Promise<RoundRoom> {
 
 export function rotateInviteCode(roomId: string): Promise<RoundRoom> {
   return apiFetch<RoundRoom>(`${BASE}/${roomId}/rotate-invite`, { method: "POST" });
+}
+
+/** Phase 10B: mark (or clear) the caller's crossfire readiness. `phase` is
+ * an optional client-side staleness check only -- the backend always
+ * stamps its own current phase, never trusting this value as truth. */
+export function setCrossfireReady(
+  roomId: string,
+  opts: { ready: boolean; phase?: RoundPhaseType },
+): Promise<RoundRoomStateResponse> {
+  return apiFetch<RoundRoomStateResponse>(`${BASE}/${roomId}/crossfire/ready`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ready: opts.ready,
+      phase: opts.phase ?? null,
+    }),
+  });
 }

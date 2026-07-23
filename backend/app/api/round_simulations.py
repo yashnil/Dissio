@@ -56,6 +56,7 @@ from app.models.round_simulation import (
     RoundSpeech,
     RoundStateResponse,
     RoundStatus,
+    SetCrossfireReadyRequest,
     SpeakerSlot,
     StudentCrossfireQuestionRequest,
     SubmitRoundDrillAttemptRequest,
@@ -741,6 +742,49 @@ def leave_room_endpoint(
     return RoundRoomParticipant.model_validate(updated)
 
 
+@router.post("/rooms/{room_id}/crossfire/ready", response_model=RoundRoomStateResponse)
+def set_crossfire_ready_endpoint(
+    room_id: str,
+    req: SetCrossfireReadyRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> RoundRoomStateResponse:
+    """Phase 10B: mark (or clear) crossfire readiness for the caller's own
+    participant row. Reuses _require_turn_access exactly -- the same tier
+    that gates crossfire answer/question submission -- so readiness never
+    broadens who can act; it's advisory coordination, not a new permission.
+    req.phase (if given) is only a client-side staleness check: a mismatch
+    against the round's real current phase means the client's view is stale,
+    and is rejected rather than silently applied to the wrong phase."""
+    supabase = get_supabase()
+    room = _load_room_access(room_id, user_id, supabase)
+
+    round_resp = supabase.table("round_simulations").select("*").eq("id", room["round_id"]).single().execute()
+    round_row = round_resp.data
+    if not round_row:
+        raise HTTPException(status_code=404, detail="Round not found.")
+    sim = _load_simulation(round_row)
+
+    participant = round_room_service.get_participant(supabase, room_id, user_id)
+    access = _RoundAccess(
+        round_row=round_row, room=room, participant=participant,
+        is_owner=room["owner_user_id"] == user_id,
+    )
+    _require_turn_access(access, sim.config.student_side)
+
+    if sim.current_phase not in CROSSFIRE_PHASES:
+        raise HTTPException(status_code=400, detail="Readiness only applies during crossfire phases.")
+    if req.phase is not None and req.phase != sim.current_phase:
+        raise HTTPException(
+            status_code=409,
+            detail="The round has moved to a different phase. Refresh and try again.",
+        )
+
+    round_room_service.set_crossfire_ready(
+        supabase, participant, req.ready, sim.current_phase.value if req.ready else None,
+    )
+    return _build_room_state_response(room, user_id, supabase)
+
+
 @router.post("/rooms/{room_id}/close", response_model=RoundRoom)
 def close_room_endpoint(
     room_id: str,
@@ -1197,12 +1241,23 @@ def submit_crossfire_answer(
     live_args = load_round_arguments(round_id)
     updated = process_crossfire_response(exchange, student_answer, live_args)
 
+    # Phase 10B: guard against two partners answering the same pending
+    # question concurrently. The update is conditional on the exchange still
+    # being unanswered -- Postgres serializes concurrent UPDATEs to the same
+    # row, so a second writer's WHERE clause simply won't match once the
+    # first writer's answer has committed. No app-level lock needed.
     try:
-        supabase.table("round_crossfire_exchanges").update(
-            updated.model_dump()
-        ).eq("id", updated.id).execute()
+        result = (
+            supabase.table("round_crossfire_exchanges")
+            .update(updated.model_dump())
+            .eq("id", updated.id)
+            .is_("answer", "null")
+            .execute()
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to save answer: {exc}") from exc
+    if not result.data:
+        raise HTTPException(status_code=409, detail="This question was already answered.")
 
     # Phase 8D: a real, extracted concession weakens the specific argument it
     # targeted, via the existing "concede" flow transition — bounded to that

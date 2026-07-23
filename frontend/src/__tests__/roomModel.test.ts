@@ -42,6 +42,15 @@ import {
   coachNoteCountLabel,
   coachNoteReviewTarget,
   reviewContextBannerText,
+  isCrossfirePhase,
+  isViewerCrossfireReady,
+  crossfireReadyCounts,
+  crossfireReadyLabel,
+  crossfireReadyCountLabel,
+  crossfirePartnerReadyLabel,
+  canToggleCrossfireReady,
+  crossfireReadyDisabledReason,
+  connectionStateLabel,
 } from "@/lib/roomModel";
 import { PHASE_LABELS } from "@/lib/roundModel";
 import type {
@@ -75,6 +84,7 @@ function makeParticipant(overrides: Partial<RoundRoomParticipant> = {}): RoundRo
     status: "joined",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    is_ready: false,
     ...overrides,
   };
 }
@@ -957,5 +967,182 @@ describe("Phase 9H review-anchor helpers never leak raw ids", () => {
     expect(target?.actionLabel).not.toContain(secretNoteId);
     expect(target?.contextLabel).not.toContain(secretNoteId);
     expect(reviewContextBannerText(target?.contextLabel ?? "")).not.toContain(secretNoteId);
+  });
+});
+
+// ── Phase 10B: crossfire readiness ──────────────────────────────────────────
+
+describe("isCrossfirePhase", () => {
+  it("is true for all three crossfire phases", () => {
+    expect(isCrossfirePhase("first_crossfire")).toBe(true);
+    expect(isCrossfirePhase("grand_crossfire")).toBe(true);
+    expect(isCrossfirePhase("final_crossfire")).toBe(true);
+  });
+
+  it("is false for non-crossfire phases", () => {
+    expect(isCrossfirePhase("first_constructive")).toBe(false);
+    expect(isCrossfirePhase("judge_deliberation")).toBe(false);
+    expect(isCrossfirePhase("completed")).toBe(false);
+  });
+});
+
+describe("isViewerCrossfireReady", () => {
+  it("is true only when is_ready and ready_phase match the current phase", () => {
+    const p = makeParticipant({ is_ready: true, ready_phase: "first_crossfire" });
+    expect(isViewerCrossfireReady(p, "first_crossfire")).toBe(true);
+  });
+
+  it("does not leak readiness from one crossfire phase into another", () => {
+    const p = makeParticipant({ is_ready: true, ready_phase: "first_crossfire" });
+    expect(isViewerCrossfireReady(p, "grand_crossfire")).toBe(false);
+  });
+
+  it("is false when is_ready is false regardless of ready_phase", () => {
+    const p = makeParticipant({ is_ready: false, ready_phase: "first_crossfire" });
+    expect(isViewerCrossfireReady(p, "first_crossfire")).toBe(false);
+  });
+
+  it("is false for a missing participant or phase", () => {
+    expect(isViewerCrossfireReady(undefined, "first_crossfire")).toBe(false);
+    expect(isViewerCrossfireReady(makeParticipant({ is_ready: true, ready_phase: "first_crossfire" }), undefined)).toBe(false);
+  });
+});
+
+describe("crossfireReadyCounts", () => {
+  it("counts only joined, non-coach/observer participants on the student's side as eligible", () => {
+    const participants = [
+      makeParticipant({ id: "p1", role: "debater_a", side: "pro", status: "joined", is_ready: true, ready_phase: "first_crossfire" }),
+      makeParticipant({ id: "p2", role: "debater_b", side: "pro", status: "joined", is_ready: false }),
+      makeParticipant({ id: "p3", role: "coach", side: "pro", status: "joined", is_ready: true, ready_phase: "first_crossfire" }),
+      makeParticipant({ id: "p4", role: "observer", side: "pro", status: "joined", is_ready: true, ready_phase: "first_crossfire" }),
+      makeParticipant({ id: "p5", role: "debater_a", side: "con", status: "joined", is_ready: true, ready_phase: "first_crossfire" }),
+      makeParticipant({ id: "p6", role: "debater_b", side: "pro", status: "left", is_ready: true, ready_phase: "first_crossfire" }),
+    ];
+    const { readyCount, eligibleCount } = crossfireReadyCounts(participants, "pro", "first_crossfire");
+    expect(eligibleCount).toBe(2); // p1, p2 only
+    expect(readyCount).toBe(1); // p1 only
+  });
+
+  it("does not count readiness stamped for a different phase", () => {
+    const participants = [
+      makeParticipant({ role: "debater_a", side: "pro", status: "joined", is_ready: true, ready_phase: "first_crossfire" }),
+    ];
+    const { readyCount, eligibleCount } = crossfireReadyCounts(participants, "pro", "grand_crossfire");
+    expect(eligibleCount).toBe(1);
+    expect(readyCount).toBe(0);
+  });
+});
+
+describe("crossfireReadyLabel / crossfireReadyCountLabel", () => {
+  it("labels ready/not-ready", () => {
+    expect(crossfireReadyLabel(true)).toBe("Ready");
+    expect(crossfireReadyLabel(false)).toBe("Not ready");
+  });
+
+  it("formats the count sentence", () => {
+    expect(crossfireReadyCountLabel(1, 2)).toBe("1 of 2 ready");
+    expect(crossfireReadyCountLabel(0, 0)).toBe("0 of 0 ready");
+  });
+});
+
+describe("crossfirePartnerReadyLabel", () => {
+  it("reports no partner when the viewer is alone on their side", () => {
+    expect(crossfirePartnerReadyLabel(true, 1, 1)).toMatch(/no partner/i);
+  });
+
+  it("reports the partner as ready once every other eligible debater is ready", () => {
+    expect(crossfirePartnerReadyLabel(true, 2, 2)).toMatch(/partner ready/i);
+  });
+
+  it("reports waiting when the partner has not marked ready", () => {
+    expect(crossfirePartnerReadyLabel(true, 1, 2)).toMatch(/waiting/i);
+  });
+
+  it("reports the partner as ready even if the viewer themselves is not — the two states are independent", () => {
+    // readyCount=1 with viewerReady=false means the one ready participant
+    // must be the partner, not the viewer.
+    expect(crossfirePartnerReadyLabel(false, 1, 2)).toMatch(/partner ready/i);
+  });
+
+  it("reports waiting when neither the viewer nor the partner is ready", () => {
+    expect(crossfirePartnerReadyLabel(false, 0, 2)).toMatch(/waiting/i);
+  });
+});
+
+describe("canToggleCrossfireReady / crossfireReadyDisabledReason", () => {
+  const openRoom = makeRoom({ status: "waiting" });
+  const closedRoom = makeRoom({ status: "closed" });
+
+  it("allows a joined debater on the student's side during a crossfire phase", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_crossfire")).toBe(true);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_crossfire")).toBeNull();
+  });
+
+  it("rejects a coach", () => {
+    const p = makeParticipant({ role: "coach", side: undefined, status: "joined" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_crossfire")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_crossfire")).toMatch(/coach/i);
+  });
+
+  it("rejects an observer", () => {
+    const p = makeParticipant({ role: "observer", side: undefined, status: "joined" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_crossfire")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_crossfire")).toMatch(/observer/i);
+  });
+
+  it("rejects a debater on the wrong side", () => {
+    const p = makeParticipant({ role: "debater_a", side: "con", status: "joined" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_crossfire")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_crossfire")).toMatch(/assigned to/i);
+  });
+
+  it("rejects a closed room", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined" });
+    expect(canToggleCrossfireReady(p, closedRoom, "pro", "first_crossfire")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, closedRoom, "pro", "first_crossfire")).toMatch(/closed/i);
+  });
+
+  it("rejects a non-crossfire phase", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "joined" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_constructive")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_constructive")).toMatch(/crossfire/i);
+  });
+
+  it("rejects a left participant", () => {
+    const p = makeParticipant({ role: "debater_a", side: "pro", status: "left" });
+    expect(canToggleCrossfireReady(p, openRoom, "pro", "first_crossfire")).toBe(false);
+    expect(crossfireReadyDisabledReason(p, openRoom, "pro", "first_crossfire")).toMatch(/not an active participant/i);
+  });
+
+  it("rejects a missing participant", () => {
+    expect(canToggleCrossfireReady(undefined, openRoom, "pro", "first_crossfire")).toBe(false);
+  });
+});
+
+describe("connectionStateLabel", () => {
+  it("never claims to be live -- honest polling copy only", () => {
+    expect(connectionStateLabel(true)).toMatch(/syncing/i);
+    expect(connectionStateLabel(false)).toMatch(/paused/i);
+    expect(connectionStateLabel(true)).not.toMatch(/live|connected|realtime/i);
+    expect(connectionStateLabel(false)).not.toMatch(/live|connected|realtime/i);
+  });
+});
+
+describe("Phase 10B readiness helpers never leak raw ids", () => {
+  it("no raw participant id appears in any readiness label", () => {
+    const secretId = "participant-secret-10b";
+    const p = makeParticipant({ id: secretId, role: "debater_a", side: "pro", status: "joined", is_ready: true, ready_phase: "first_crossfire" });
+    const room = makeRoom({ status: "waiting" });
+    const outputs = [
+      crossfireReadyLabel(true),
+      crossfireReadyCountLabel(1, 2),
+      crossfirePartnerReadyLabel(true, 1, 2),
+      connectionStateLabel(true),
+      crossfireReadyDisabledReason(p, room, "con", "first_crossfire"),
+    ].filter((s): s is string => s !== null);
+    for (const output of outputs) {
+      expect(output).not.toContain(secretId);
+    }
   });
 });

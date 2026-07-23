@@ -182,6 +182,24 @@ def update_participant(
     return participant
 
 
+def set_crossfire_ready(
+    supabase: Any,
+    participant: Dict[str, Any],
+    ready: bool,
+    phase: Optional[str],
+) -> Dict[str, Any]:
+    """Phase 10B: set (or clear) this participant's crossfire readiness.
+    `phase` should be the round's current phase when ready=True, and is
+    ignored (stored as None) when ready=False -- a cleared readiness has no
+    phase to be stale against."""
+    update = {"is_ready": ready, "ready_phase": phase if ready else None, "updated_at": _now()}
+    supabase.table("round_room_participants").update(update).eq(
+        "id", participant["id"]
+    ).execute()
+    participant.update(update)
+    return participant
+
+
 def leave_room(supabase: Any, participant: Dict[str, Any]) -> Dict[str, Any]:
     update = {"status": "left", "updated_at": _now()}
     supabase.table("round_room_participants").update(update).eq(

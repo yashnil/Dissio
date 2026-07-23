@@ -358,6 +358,10 @@ export interface RoundRoomParticipant {
   joined_at?: string;
   created_at: string;
   updated_at: string;
+  // Phase 10B: crossfire readiness. is_ready is only meaningful when
+  // ready_phase matches the round's current phase.
+  is_ready: boolean;
+  ready_phase?: RoundPhaseType;
 }
 
 // ── Speaker-role / turn contract (Phase 9B/9C) ──────────────────────────────

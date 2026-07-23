@@ -113,4 +113,29 @@ describe("roomApi client", () => {
     expect(path).toBe("/round-simulations/rooms/room-1/leave");
     expect(opts.method).toBe("POST");
   });
+
+  // ── Phase 10B: crossfire readiness ────────────────────────────────────────
+
+  it("exports setCrossfireReady as a function", () => {
+    expect(typeof roomApi.setCrossfireReady).toBe("function");
+  });
+
+  it("setCrossfireReady posts to the exact ready route with no user_id", async () => {
+    await roomApi.setCrossfireReady("room-1", { ready: true, phase: "first_crossfire" });
+    const [path, opts] = mockApiFetch.mock.calls[0];
+    expect(path).toBe("/round-simulations/rooms/room-1/crossfire/ready");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body as string);
+    expect(body.ready).toBe(true);
+    expect(body.phase).toBe("first_crossfire");
+    expect(body).not.toHaveProperty("user_id");
+  });
+
+  it("setCrossfireReady defaults phase to null when omitted", async () => {
+    await roomApi.setCrossfireReady("room-1", { ready: false });
+    const [, opts] = mockApiFetch.mock.calls[0];
+    const body = JSON.parse(opts.body as string);
+    expect(body.ready).toBe(false);
+    expect(body.phase).toBeNull();
+  });
 });

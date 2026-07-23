@@ -2039,6 +2039,252 @@ class TestCoachNoteCount:
         assert result.coach_note_count == 0
 
 
+def _crossfire_round_row(round_id="r1", user_id="owner-1", phase="first_crossfire"):
+    row = _full_round_row(round_id=round_id, user_id=user_id)
+    row["current_phase"] = phase
+    return row
+
+
+class TestCrossfireReadyEndpoint:
+    """Phase 10B: POST /rooms/{room_id}/crossfire/ready. Reuses
+    _require_turn_access exactly -- same tier as crossfire answer/question
+    submission -- so every rejection case here mirrors that tier's existing,
+    already-proven behavior."""
+
+    def test_joined_debater_can_mark_ready(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]):
+            result = mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert result.viewer_participant.is_ready is True
+        assert result.viewer_participant.ready_phase.value == "first_crossfire"
+
+    def test_ready_true_twice_is_idempotent(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]):
+            first = mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+            second = mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert first.viewer_participant.is_ready is True
+        assert second.viewer_participant.is_ready is True
+
+    def test_ready_false_clears_readiness(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(
+            pid="p2", user_id="u2", role="debater_a", side="pro",
+        )
+        participant["is_ready"] = True
+        participant["ready_phase"] = "first_crossfire"
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=False)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(round_room_service, "list_participants", return_value=[participant]):
+            result = mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert result.viewer_participant.is_ready is False
+        assert result.viewer_participant.ready_phase is None
+
+    def test_coach_cannot_mark_ready(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="coach", side=None)
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_observer_cannot_mark_ready(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_non_member_cannot_mark_ready(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "stranger")
+        assert exc_info.value.status_code == 403
+
+    def test_left_participant_cannot_mark_ready(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro", status="left")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_closed_room_cannot_mark_ready(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row()
+        room = _room(status="closed")
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 400
+
+    def test_non_crossfire_phase_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row(phase="first_constructive")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 400
+
+    def test_stale_phase_mismatch_rejected(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import SetCrossfireReadyRequest
+        round_row = _crossfire_round_row(phase="first_crossfire")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = SetCrossfireReadyRequest(ready=True, phase="grand_crossfire")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.set_crossfire_ready_endpoint("room-1", req, "u2")
+        assert exc_info.value.status_code == 409
+
+    def test_old_participant_with_no_readiness_fields_loads_as_not_ready(self):
+        """Backward compat: a raw dict missing is_ready/ready_phase entirely
+        (pre-migration row shape) still validates, defaulting to not-ready."""
+        from app.models.round_simulation import RoundRoomParticipant
+        old_row = _participant()
+        assert "is_ready" not in old_row
+        assert "ready_phase" not in old_row
+        p = RoundRoomParticipant.model_validate(old_row)
+        assert p.is_ready is False
+        assert p.ready_phase is None
+
+
+class TestCrossfireAnswerConcurrency:
+    """Phase 10B: submit_crossfire_answer's update is now conditional on the
+    exchange still being unanswered, closing the overwrite race identified
+    in the Phase 10A audit."""
+
+    def _exchange(self, answer=None):
+        from app.models.round_simulation import CrossfireExchange
+        return CrossfireExchange(
+            id="ex-1", round_id="r1", phase="first_crossfire", sequence=0,
+            questioner_side="con", question="Why does that hold?",
+            answer=answer, target_argument="general",
+            created_at="2026-01-01T00:00:00Z",
+        )
+
+    def test_answer_succeeds_when_exchange_still_unanswered(self):
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import CrossfireSubmitRequest
+        round_row = _crossfire_round_row()
+        supabase = _configure_round_access(round_row)
+        pending = self._exchange()
+        updated = pending.model_copy(update={"answer": "My answer."})
+        supabase.table.return_value.update.return_value.eq.return_value.is_.return_value.execute.return_value = (
+            MagicMock(data=[updated.model_dump()])
+        )
+        req = CrossfireSubmitRequest(round_id="r1", phase="first_crossfire", typed_response="My answer.")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None), \
+             patch.object(mod, "load_crossfire_exchanges", return_value=[pending]), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "process_crossfire_response", return_value=updated), \
+             patch.object(mod, "track_product_event"):
+            result = mod.submit_crossfire_answer("r1", req, "owner-1")
+        assert result["answer"] == "My answer."
+
+    def test_duplicate_answer_to_already_answered_exchange_returns_409(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import CrossfireSubmitRequest
+        round_row = _crossfire_round_row()
+        supabase = _configure_round_access(round_row)
+        pending = self._exchange()
+        updated = pending.model_copy(update={"answer": "My answer."})
+        # Simulate a concurrent writer having already answered this exchange:
+        # the conditional UPDATE (WHERE answer IS NULL) matches zero rows.
+        supabase.table.return_value.update.return_value.eq.return_value.is_.return_value.execute.return_value = (
+            MagicMock(data=[])
+        )
+        req = CrossfireSubmitRequest(round_id="r1", phase="first_crossfire", typed_response="My answer.")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=None), \
+             patch.object(mod, "load_crossfire_exchanges", return_value=[pending]), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "process_crossfire_response", return_value=updated):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.submit_crossfire_answer("r1", req, "owner-1")
+        assert exc_info.value.status_code == 409
+
+
 class _FakeRejudgeDecision:
     """Lightweight stand-in for RoundDecision -- avoids constructing the full
     real model just to prove crossfire_effects/insert plumbing isn't dropped
