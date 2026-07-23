@@ -13,6 +13,7 @@ import {
   coachNoteCountSummary,
   formatInviteCode,
   generalActionDisabledReason,
+  isDebaterRole,
   isRoomClosed,
   isRoomOwner,
   sideLabel,
@@ -64,8 +65,11 @@ function ParticipantRow({
       <div className="min-w-0">
         <p className="text-sm font-medium truncate">{label}</p>
         <p className="text-xs text-muted-foreground">
-          {ROOM_ROLE_LABELS[participant.role]} · {sideLabel(participant.side)} ·{" "}
-          {speakerSlotLabel(participant.speaker_slot)} · {PARTICIPANT_STATUS_LABELS[participant.status]}
+          {ROOM_ROLE_LABELS[participant.role]}
+          {isDebaterRole(participant.role) && (
+            <> · {sideLabel(participant.side)} · {speakerSlotLabel(participant.speaker_slot)}</>
+          )}
+          {" "}· {PARTICIPANT_STATUS_LABELS[participant.status]}
         </p>
       </div>
 

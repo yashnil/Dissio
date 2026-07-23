@@ -1635,8 +1635,9 @@ def create_adaptation_review(
     if req.round_id != round_id:
         raise HTTPException(status_code=400, detail="round_id mismatch.")
     supabase = get_supabase()
-    row = _verify_owner(round_id, user_id, supabase)
-    sim = _load_simulation(row)
+    access = _load_round_access(round_id, user_id, supabase)
+    _require_general_mutate_access(access)
+    sim = _load_simulation(access.round_row)
 
     all_args = load_round_arguments(round_id)
     evidence_uses = load_evidence_uses(round_id)
@@ -1683,7 +1684,7 @@ def list_adaptation_reviews(
 ) -> List[RoundAdaptationReview]:
     """List all adaptation reviews for a round."""
     supabase = get_supabase()
-    _verify_owner(round_id, user_id, supabase)
+    _load_round_access(round_id, user_id, supabase)
     try:
         resp = (
             supabase.table("round_adaptation_reviews")

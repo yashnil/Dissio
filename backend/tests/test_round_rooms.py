@@ -1588,6 +1588,73 @@ class TestGeneralMutateEndpoints:
                 mod.submit_round_drill_attempt("r1", "drill-1", req, "u2")
         assert exc_info.value.status_code == 403
 
+    def test_joined_debater_can_create_adaptation_review(self):
+        """Stabilization fix: this endpoint used to hard-require solo
+        ownership (_verify_owner) even inside a room, unlike every sibling
+        general-mutate endpoint -- a joined non-owner debater now works here
+        exactly like it already does for decision/rejudge/drills."""
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import CreateAdaptationReviewRequest
+        round_row = _full_round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="debater_a", side="pro")
+        supabase = _configure_round_access(round_row)
+        req = CreateAdaptationReviewRequest(round_id="r1", judge_type="flow")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant), \
+             patch.object(mod, "load_round_arguments", return_value=[]), \
+             patch.object(mod, "load_evidence_uses", return_value=[]), \
+             patch.object(mod, "_analyze_judge_adaptation", return_value=([], [])):
+            result = mod.create_adaptation_review("r1", req, "u2")
+        assert result.judge_type == "flow"
+
+    def test_observer_cannot_create_adaptation_review(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        from app.models.round_simulation import CreateAdaptationReviewRequest
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        req = CreateAdaptationReviewRequest(round_id="r1", judge_type="flow")
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.create_adaptation_review("r1", req, "u2")
+        assert exc_info.value.status_code == 403
+
+    def test_joined_participant_can_list_adaptation_reviews(self):
+        """Read tier: any joined participant, any role -- matches every
+        other list/read endpoint (annotations, drills, flow)."""
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        participant = _participant(pid="p2", user_id="u2", role="observer", side=None)
+        supabase = _configure_round_access(round_row)
+        supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+            MagicMock(data=[])
+        )
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=participant):
+            result = mod.list_adaptation_reviews("r1", "u2")
+        assert result == []
+
+    def test_non_member_cannot_list_adaptation_reviews(self):
+        from fastapi import HTTPException
+        from app.api import round_simulations as mod
+        round_row = _round_row(user_id="owner-1")
+        room = _room()
+        supabase = _configure_round_access(round_row)
+        with patch.object(mod, "get_supabase", return_value=supabase), \
+             patch.object(round_room_service, "get_room_by_round_id", return_value=room), \
+             patch.object(round_room_service, "get_participant", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                mod.list_adaptation_reviews("r1", "stranger")
+        assert exc_info.value.status_code == 403
+
 
 class TestCoachOrOwnerEndpoints:
     """annotations-create / rate-finding: owner or coach role only."""

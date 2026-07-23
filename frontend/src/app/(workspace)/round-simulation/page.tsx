@@ -516,6 +516,9 @@ export default function RoundSimulationPage() {
     setDrills([]);
     setRoom(null);
     setParticipants([]);
+    setTurnContext(null);
+    setCoachNoteCount(0);
+    setReviewContext(null);
     setMode(null);
     setView("mode-select");
     setError(null);
