@@ -42,6 +42,13 @@ sys.path.insert(0, str(ROOT))
 MIGRATIONS_DIR = ROOT.parent / "supabase" / "migrations"
 MIGRATION_FILE = "20260724000000_pass31_round_content_participant_rls.sql"
 
+# Pass 32: found live by this file's own test_joined_non_coach_participant_
+# cannot_write (see class TestRoundCoachAnnotationsRLS below) -- the Pass 17
+# round_coach_annotations policy had no WITH CHECK, so its USING clause
+# (coach_id = auth.uid() OR round owner) doubled as the write check, which
+# any authenticated user could satisfy by just self-declaring coach_id.
+FIX_MIGRATION_FILE = "20260724010000_pass32_coach_annotations_write_check.sql"
+
 # ── Local Supabase defaults (same values as test_pass21p4_rls_enforcement.py) ─
 
 _LOCAL_URL = "http://127.0.0.1:54321"
@@ -65,6 +72,7 @@ SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", _LOCAL_SERVICE)
 # other tests' seed data or user accounts.
 STUDENT_A = "00000000-0000-0000-0001-000000000001"  # round owner in these tests
 STUDENT_B = "00000000-0000-0000-0001-000000000002"  # joined participant
+COACH_A = "00000000-0000-0000-0002-000000000001"    # joined role='coach' participant (Pass 32 tests)
 COACH_B = "00000000-0000-0000-0002-000000000002"    # unrelated / non-member
 
 PASSWORD = "Dissio_Test1!"
@@ -282,6 +290,60 @@ class TestMigrationStaticAnalysis:
             assert f"on {table} for select" not in text, f"{table} unexpectedly touched in this pass"
 
 
+class TestFixMigrationStaticAnalysis:
+    """Pass 32: static checks for the coach_annotations write-check fix
+    found by this file's own live tests (see class TestRoundCoachAnnotationsRLS)."""
+
+    def _text(self) -> str:
+        path = MIGRATIONS_DIR / FIX_MIGRATION_FILE
+        assert path.exists(), f"{FIX_MIGRATION_FILE} not found in {MIGRATIONS_DIR}"
+        return path.read_text()
+
+    def _code_only(self) -> str:
+        """Strip `--` line comments before any keyword-position analysis --
+        the migration's own prose (explaining the bug) legitimately contains
+        the words "using"/"with check" ahead of the real SQL clauses, which
+        would otherwise throw off a naive split()."""
+        lines = [ln for ln in self._text().splitlines() if not ln.strip().startswith("--")]
+        return "\n".join(lines).lower()
+
+    def test_fix_migration_file_exists(self):
+        assert (MIGRATIONS_DIR / FIX_MIGRATION_FILE).exists()
+
+    def test_old_policy_dropped_before_recreation(self):
+        text = self._code_only()
+        assert 'drop policy if exists "coach_annotations_owner"' in text
+        assert 'create policy "coach_annotations_owner"' in text
+
+    def test_with_check_clause_present(self):
+        """The whole point of the fix -- a FOR ALL policy with no WITH CHECK
+        silently reuses USING for writes, which was the bug."""
+        text = self._code_only()
+        assert "with check" in text
+
+    def test_with_check_requires_coach_id_equals_caller(self):
+        text = self._code_only()
+        with_check_section = text.split("with check")[1]
+        assert "coach_id = auth.uid()" in with_check_section
+
+    def test_with_check_requires_coach_role_not_just_any_participant(self):
+        """Must not be satisfiable by a debater/observer -- only a genuinely
+        joined role='coach' participant or the round owner."""
+        text = self._code_only()
+        with_check_section = text.split("with check")[1]
+        assert "rrp.role = 'coach'" in with_check_section
+        assert "rrp.status = 'joined'" in with_check_section
+
+    def test_read_using_clause_unchanged_from_pass_17(self):
+        """The fix must only tighten writes -- read access (coach_id = self
+        OR round owner) stays exactly as it was, since Pass 31 already
+        separately broadened reads correctly."""
+        text = self._code_only()
+        using_section = text.split("using")[1].split("with check")[0]
+        assert "coach_id = auth.uid()" in using_section
+        assert "round_simulations rs" in using_section
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. Live RLS tests -- require a local Supabase stack; skip gracefully if not.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -305,6 +367,13 @@ def coach_b_token():
     if not _is_dissio_schema_present():
         pytest.skip("Dissio's local Supabase schema not present")
     return _sign_in("test_coach_b@dissio.local")
+
+
+@pytest.fixture(scope="module")
+def coach_a_token():
+    if not _is_dissio_schema_present():
+        pytest.skip("Dissio's local Supabase schema not present")
+    return _sign_in("test_coach_a@dissio.local")
 
 
 @pytest.fixture(scope="module")
@@ -348,6 +417,36 @@ def seeded_round():
     })
 
     return {"round_id": round_id, "room_id": room_id, "exchange_id": exchange_id}
+
+
+@pytest.fixture(scope="module")
+def seeded_coach_round():
+    """A second, isolated round -- owned by Student A, with Coach A joined
+    as a genuine role='coach' participant -- kept separate from
+    seeded_round so Coach A's positive write access here never interacts
+    with COACH_B's "non-member" role used throughout the rest of this file."""
+    if not _is_dissio_schema_present():
+        pytest.skip("Dissio's local Supabase schema not present")
+
+    round_id = str(uuid.uuid4())
+    room_id = str(uuid.uuid4())
+    invite_code = uuid.uuid4().hex[:8].upper()
+
+    _service_insert("round_simulations", {
+        "id": round_id, "user_id": STUDENT_A, "config_json": {"student_side": "pro"},
+    })
+    _service_insert("round_rooms", {
+        "id": room_id, "round_id": round_id, "owner_user_id": STUDENT_A,
+        "invite_code": invite_code, "status": "waiting",
+    })
+    _service_insert("round_room_participants", {
+        "room_id": room_id, "user_id": STUDENT_A, "role": "owner", "side": "pro", "status": "joined",
+    })
+    _service_insert("round_room_participants", {
+        "room_id": room_id, "user_id": COACH_A, "role": "coach", "side": None, "status": "joined",
+    })
+
+    return {"round_id": round_id, "room_id": room_id}
 
 
 @_requires_local
@@ -488,13 +587,37 @@ class TestRoundCoachAnnotationsRLS:
         assert len(rows) == 0, "Non-member read coach notes — RLS violation"
 
     def test_joined_non_coach_participant_cannot_write(self, seeded_round, student_b_token):
-        """The pre-existing FOR ALL policy (coach_id = auth.uid() OR owner)
-        is untouched -- a non-coach joined participant still cannot insert."""
+        """Pass 32 regression: a joined but non-coach participant (role=
+        debater_b) must not be able to insert a coach annotation just by
+        self-declaring coach_id = their own auth.uid(). This test is what
+        caught the Pass 17 policy's missing WITH CHECK live, on a real
+        Postgres/PostgREST stack -- before the Pass 32 fix it returned 201."""
         status = _rest_write(student_b_token, "POST", "round_coach_annotations", {
             "round_id": seeded_round["round_id"], "coach_id": STUDENT_B,
             "annotation_type": "speech_note", "content": "Forged note",
         })
         assert status in (401, 403, 404), f"Non-coach participant inserted a coach annotation — status={status}"
+
+    def test_forged_coach_id_rejected_even_for_a_legitimate_coach(self, seeded_coach_round, coach_a_token):
+        """A genuine coach participant still cannot attribute a note to a
+        DIFFERENT coach_id than their own auth.uid() -- the WITH CHECK's
+        `coach_id = auth.uid()` clause is a separate, additional guard, not
+        just a byproduct of the role check."""
+        status = _rest_write(coach_a_token, "POST", "round_coach_annotations", {
+            "round_id": seeded_coach_round["round_id"], "coach_id": STUDENT_A,
+            "annotation_type": "speech_note", "content": "Attributed to someone else",
+        })
+        assert status in (401, 403, 404), f"Coach forged a different coach_id — status={status}"
+
+    def test_legitimate_joined_coach_can_write(self, seeded_coach_round, coach_a_token):
+        """Positive case: proves Pass 32 didn't over-restrict -- a genuinely
+        joined role='coach' participant, correctly self-attributing
+        coach_id, can still write a note."""
+        status = _rest_write(coach_a_token, "POST", "round_coach_annotations", {
+            "round_id": seeded_coach_round["round_id"], "coach_id": COACH_A,
+            "annotation_type": "speech_note", "content": "Legitimate coach note",
+        })
+        assert status == 201, f"Legitimate joined coach could not write a note — status={status}"
 
 
 @_requires_local
