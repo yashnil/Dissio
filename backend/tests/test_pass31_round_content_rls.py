@@ -49,6 +49,26 @@ MIGRATION_FILE = "20260724000000_pass31_round_content_participant_rls.sql"
 # any authenticated user could satisfy by just self-declaring coach_id.
 FIX_MIGRATION_FILE = "20260724010000_pass32_coach_annotations_write_check.sql"
 
+# Pass 33: the same bug class swept across every other Pass 16/17 Full Round
+# table -- round_finding_ratings had the identical shape (FOR ALL USING
+# (rater_id = auth.uid()), no WITH CHECK) but *worse*: no owner-fallback
+# clause at all, so round_id was never verified against any real
+# relationship whatsoever.
+FIX_MIGRATION_2_FILE = "20260724020000_pass33_finding_ratings_write_check.sql"
+
+# Every Full Round migration touching an authenticated-facing policy --
+# scanned by TestWriteCheckSweep below for the same bug class.
+ALL_ROUND_MIGRATION_FILES = [
+    "20260623020000_pass16_round_simulation.sql",
+    "20260623025000_pass16_round_legality.sql",
+    "20260623040000_pass17_round_quality.sql",
+    "20260721040000_pass26_round_drill_attempts.sql",
+    "20260721050000_pass27_round_rooms.sql",
+    MIGRATION_FILE,
+    FIX_MIGRATION_FILE,
+    FIX_MIGRATION_2_FILE,
+]
+
 # ── Local Supabase defaults (same values as test_pass21p4_rls_enforcement.py) ─
 
 _LOCAL_URL = "http://127.0.0.1:54321"
@@ -344,6 +364,183 @@ class TestFixMigrationStaticAnalysis:
         assert "round_simulations rs" in using_section
 
 
+class TestFixMigration2StaticAnalysis:
+    """Pass 33: static checks for the round_finding_ratings write-check fix
+    -- same shape of assertions as TestFixMigrationStaticAnalysis, applied to
+    the second table found by the bug-class sweep."""
+
+    def _text(self) -> str:
+        path = MIGRATIONS_DIR / FIX_MIGRATION_2_FILE
+        assert path.exists(), f"{FIX_MIGRATION_2_FILE} not found in {MIGRATIONS_DIR}"
+        return path.read_text()
+
+    def _code_only(self) -> str:
+        lines = [ln for ln in self._text().splitlines() if not ln.strip().startswith("--")]
+        return "\n".join(lines).lower()
+
+    def test_fix_migration_file_exists(self):
+        assert (MIGRATIONS_DIR / FIX_MIGRATION_2_FILE).exists()
+
+    def test_old_policy_dropped_before_recreation(self):
+        text = self._code_only()
+        assert 'drop policy if exists "finding_ratings_owner"' in text
+        assert 'create policy "finding_ratings_owner"' in text
+
+    def test_with_check_clause_present(self):
+        text = self._code_only()
+        assert "with check" in text
+
+    def test_with_check_requires_rater_id_equals_caller(self):
+        text = self._code_only()
+        with_check_section = text.split("with check")[1]
+        assert "rater_id = auth.uid()" in with_check_section
+
+    def test_with_check_requires_coach_role_not_just_any_participant(self):
+        text = self._code_only()
+        with_check_section = text.split("with check")[1]
+        assert "rrp.role = 'coach'" in with_check_section
+        assert "rrp.status = 'joined'" in with_check_section
+
+    def test_read_using_clause_unchanged_from_pass_17(self):
+        """Pass 17's read semantics (rater_id = self, no owner fallback) are
+        deliberately left exactly as they were -- this fix only tightens
+        writes."""
+        text = self._code_only()
+        using_section = text.split("using")[1].split("with check")[0]
+        assert using_section.strip() == "(rater_id = auth.uid())"
+
+
+class TestWriteCheckSweep:
+    """Phase 10D bug-class sweep: scans every Full Round migration for a
+    FOR ALL/INSERT/UPDATE/DELETE policy granted to authenticated users (i.e.
+    not `to service_role`) that lacks an explicit WITH CHECK. Appearing in
+    this scan is not automatically a bug -- USING clauses built from a
+    genuine, non-forgeable relationship (e.g. an EXISTS subquery against
+    round_simulations.user_id, which a caller cannot fake) are safe even
+    without an explicit WITH CHECK, because Postgres reusing USING as the
+    check re-verifies that same real relationship. The bug class Pass 32/33
+    fixed was specifically a USING clause built from a *self-declarable*
+    column (coach_id, rater_id) with no check on the actual round_id/room
+    relationship at all.
+
+    This test's job is to keep the set of such "authenticated write, no
+    explicit CHECK" policies from silently growing: every entry must be
+    consciously reviewed and either fixed (added to the exception list only
+    after adding a WITH CHECK) or justified (added to KNOWN_SAFE with a
+    reason). A brand-new table that reintroduces the same bug class fails
+    this test immediately instead of waiting for a live test to catch it."""
+
+    _POLICY_RE = re.compile(
+        r'CREATE POLICY\s+"([^"]+)"\s+ON\s+(\w+)\s+(.*?);',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    # (table, policy_name) -> reason it's safe despite no explicit WITH CHECK.
+    # Every entry here was individually audited during the Phase 10D sweep.
+    KNOWN_SAFE_NO_WITH_CHECK = {
+        ("round_simulations", "Users own their round simulations"):
+            "user_id IS the ownership gate itself -- self-declaring your own "
+            "user_id on INSERT is correct (you may only create rounds you own), "
+            "and USING already filters UPDATE/DELETE to rows you already own "
+            "before any write is attempted, so there is no cross-user row to "
+            "target in the first place.",
+        ("round_strategic_memory", "strategic_memory_round_owner"):
+            "round ownership is verified via a genuine EXISTS subquery against "
+            "round_simulations.user_id, not a self-declarable column -- cannot "
+            "be forged to target a round the caller doesn't own.",
+        ("round_replay_markers", "replay_markers_round_owner"):
+            "same reasoning as round_strategic_memory.",
+        ("round_quality_reports", "quality_reports_round_owner"):
+            "same reasoning as round_strategic_memory.",
+    }
+
+    def _all_migration_text(self) -> str:
+        parts = []
+        for filename in ALL_ROUND_MIGRATION_FILES:
+            path = MIGRATIONS_DIR / filename
+            assert path.exists(), f"{filename} not found in {MIGRATIONS_DIR}"
+            # Strip comments per-file so a leading `--` prose block (e.g. Pass
+            # 32/33's own bug-description comments) never gets glued onto the
+            # next file's SQL when concatenated.
+            lines = [ln for ln in path.read_text().splitlines() if not ln.strip().startswith("--")]
+            parts.append("\n".join(lines))
+        return "\n".join(parts)
+
+    def _find_unchecked_authenticated_write_policies(self):
+        """Migration files are append-only history: a later migration's
+        `DROP POLICY ... ; CREATE POLICY <same name> ...` supersedes an
+        earlier one, exactly like Pass 32/33 did. ALL_ROUND_MIGRATION_FILES
+        is listed chronologically and re.finditer walks the concatenated
+        text in that same order, so resolving each (table, policy_name) key
+        to its *last* seen definition -- last write wins -- reproduces what
+        the live database actually ends up with after every migration has
+        applied, not a false positive from a policy's now-superseded
+        original text."""
+        text = self._all_migration_text()
+        latest_has_with_check: dict[tuple[str, str], bool] = {}
+        for match in self._POLICY_RE.finditer(text):
+            policy_name, table, rest = match.group(1), match.group(2), match.group(3)
+            for_match = re.search(r"FOR\s+(ALL|INSERT|UPDATE|DELETE)\b", rest, re.IGNORECASE)
+            if not for_match:
+                continue  # FOR SELECT, or no FOR clause at all -- not a write policy
+            is_service_role = bool(re.search(r"TO\s+service_role", rest, re.IGNORECASE))
+            if is_service_role:
+                continue  # service_role bypass is intentional and out of scope
+            has_with_check = bool(re.search(r"WITH\s+CHECK", rest, re.IGNORECASE))
+            latest_has_with_check[(table, policy_name)] = has_with_check
+        return [key for key, has_check in latest_has_with_check.items() if not has_check]
+
+    def test_sweep_finds_at_least_the_known_safe_policies(self):
+        """Sanity check that the sweep regex actually matches real policies
+        (a silently-broken regex that matches nothing would make every other
+        assertion in this class vacuously true)."""
+        flagged = self._find_unchecked_authenticated_write_policies()
+        assert len(flagged) >= len(self.KNOWN_SAFE_NO_WITH_CHECK), (
+            f"Sweep found fewer policies than expected -- regex may be broken. Found: {flagged}"
+        )
+
+    def test_only_known_safe_policies_lack_an_explicit_write_check(self):
+        """The real regression guard: any FOR ALL/INSERT/UPDATE/DELETE policy
+        granted to authenticated users, without an explicit WITH CHECK, that
+        ISN'T already in the reviewed KNOWN_SAFE_NO_WITH_CHECK list is a new,
+        unreviewed instance of the exact bug class Pass 32/33 fixed."""
+        flagged = set(self._find_unchecked_authenticated_write_policies())
+        known_safe = set(self.KNOWN_SAFE_NO_WITH_CHECK.keys())
+        unreviewed = flagged - known_safe
+        assert not unreviewed, (
+            f"New FOR ALL/INSERT/UPDATE/DELETE policy without an explicit WITH CHECK "
+            f"found and not yet reviewed: {unreviewed}. Either add a WITH CHECK "
+            f"(if it's forgeable, matching Pass 32/33's pattern) or add it to "
+            f"KNOWN_SAFE_NO_WITH_CHECK with a documented reason (if it's genuinely "
+            f"safe, matching round_simulations/round_strategic_memory's pattern)."
+        )
+
+    def test_coach_annotations_and_finding_ratings_no_longer_flagged(self):
+        """Explicit regression proof that Pass 32/33 actually fixed the two
+        real bugs -- these must NOT appear in the flagged set anymore."""
+        flagged = set(self._find_unchecked_authenticated_write_policies())
+        assert ("round_coach_annotations", "coach_annotations_owner") not in flagged
+        assert ("round_finding_ratings", "finding_ratings_owner") not in flagged
+
+    def test_no_broad_authenticated_write_policy_introduced(self):
+        """None of the fix migrations may introduce a policy that grants
+        unconditional (USING/CHECK true, or no real predicate) write access
+        to the authenticated role -- only service_role policies may do that."""
+        for filename in (FIX_MIGRATION_FILE, FIX_MIGRATION_2_FILE):
+            path = MIGRATIONS_DIR / filename
+            lines = [ln for ln in path.read_text().splitlines() if not ln.strip().startswith("--")]
+            text = "\n".join(lines).lower()
+            assert "to authenticated" not in text, (
+                f"{filename} explicitly grants a policy to the authenticated role "
+                f"-- Pass 32/33's policies should apply to all non-service-role "
+                f"callers via their USING/CHECK predicate, not a blanket role grant"
+            )
+            assert "using (true)" not in text and "with check (true)" not in text, (
+                f"{filename} contains an unconditional true predicate outside a "
+                f"service_role policy"
+            )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. Live RLS tests -- require a local Supabase stack; skip gracefully if not.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -618,6 +815,55 @@ class TestRoundCoachAnnotationsRLS:
             "annotation_type": "speech_note", "content": "Legitimate coach note",
         })
         assert status == 201, f"Legitimate joined coach could not write a note — status={status}"
+
+
+@_requires_local
+class TestRoundFindingRatingsRLS:
+    """Pass 33: round_finding_ratings had the same bug class as
+    round_coach_annotations, but worse -- no owner-fallback clause at all,
+    so round_id was never checked against any real relationship. Reuses the
+    same seeded_round / seeded_coach_round fixtures as the coach-annotations
+    tests above."""
+
+    def test_non_member_cannot_write(self, seeded_round, coach_b_token):
+        """Before the Pass 33 fix, this returned 201 -- COACH_B has zero
+        relationship to seeded_round and yet the old policy only checked
+        rater_id = auth.uid(), which is trivially self-satisfiable."""
+        status = _rest_write(coach_b_token, "POST", "round_finding_ratings", {
+            "round_id": seeded_round["round_id"], "finding_id": "finding-1",
+            "rater_id": COACH_B, "rating": "useful",
+        })
+        assert status in (401, 403, 404), f"Non-member forged a finding rating — status={status}"
+
+    def test_joined_non_coach_participant_cannot_write(self, seeded_round, student_b_token):
+        """A joined debater is not a coach or the owner -- still rejected
+        even though they ARE a real participant of the room."""
+        status = _rest_write(student_b_token, "POST", "round_finding_ratings", {
+            "round_id": seeded_round["round_id"], "finding_id": "finding-1",
+            "rater_id": STUDENT_B, "rating": "useful",
+        })
+        assert status in (401, 403, 404), f"Non-coach participant forged a finding rating — status={status}"
+
+    def test_forged_rater_id_rejected_even_for_a_legitimate_coach(self, seeded_coach_round, coach_a_token):
+        status = _rest_write(coach_a_token, "POST", "round_finding_ratings", {
+            "round_id": seeded_coach_round["round_id"], "finding_id": "finding-1",
+            "rater_id": STUDENT_A, "rating": "useful",
+        })
+        assert status in (401, 403, 404), f"Coach forged a different rater_id — status={status}"
+
+    def test_legitimate_joined_coach_can_write(self, seeded_coach_round, coach_a_token):
+        status = _rest_write(coach_a_token, "POST", "round_finding_ratings", {
+            "round_id": seeded_coach_round["round_id"], "finding_id": "finding-1",
+            "rater_id": COACH_A, "rating": "useful",
+        })
+        assert status == 201, f"Legitimate joined coach could not write a rating — status={status}"
+
+    def test_round_owner_can_write(self, seeded_round, student_a_token):
+        status = _rest_write(student_a_token, "POST", "round_finding_ratings", {
+            "round_id": seeded_round["round_id"], "finding_id": "finding-owner-1",
+            "rater_id": STUDENT_A, "rating": "correct",
+        })
+        assert status == 201, f"Round owner could not write a finding rating — status={status}"
 
 
 @_requires_local
