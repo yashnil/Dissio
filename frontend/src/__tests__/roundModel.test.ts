@@ -55,6 +55,13 @@ import {
   isValidDrillAttempt,
   hasDrillAttemptScore,
   hasDrillAttemptCredit,
+  OPPONENT_LEVEL_OPTIONS,
+  OPPONENT_LEVEL_TO_DIFFICULTY,
+  opponentLevelFromDifficulty,
+  opponentLevelLabel,
+  prepTimeOptions,
+  prepTimeLabel,
+  isLobbyConfigValid,
 } from "@/lib/roundModel";
 import type {
   CrossfireEffect,
@@ -418,6 +425,101 @@ describe("defaultRoundConfig", () => {
     expect(config.approved_card_ids).toEqual([]);
     expect(config.approved_blockfile_ids).toEqual([]);
     expect(config.approved_frontline_ids).toEqual([]);
+  });
+});
+
+// ── Match lobby: opponent level ─────────────────────────────────────────────────
+
+describe("opponentLevelFromDifficulty", () => {
+  it("maps jv to medium", () => {
+    expect(opponentLevelFromDifficulty("jv")).toBe("medium");
+  });
+
+  it("maps varsity to advanced", () => {
+    expect(opponentLevelFromDifficulty("varsity")).toBe("advanced");
+  });
+
+  it("collapses legacy novice to medium", () => {
+    expect(opponentLevelFromDifficulty("novice")).toBe("medium");
+  });
+});
+
+describe("opponentLevelLabel", () => {
+  it("labels jv as Medium", () => {
+    expect(opponentLevelLabel("jv")).toBe("Medium");
+  });
+
+  it("labels varsity as Advanced", () => {
+    expect(opponentLevelLabel("varsity")).toBe("Advanced");
+  });
+
+  it("labels legacy novice as Medium", () => {
+    expect(opponentLevelLabel("novice")).toBe("Medium");
+  });
+});
+
+describe("OPPONENT_LEVEL_OPTIONS", () => {
+  it("exposes exactly medium and advanced", () => {
+    expect(OPPONENT_LEVEL_OPTIONS.map((o) => o.value)).toEqual(["medium", "advanced"]);
+  });
+
+  it("every option has a non-empty description", () => {
+    for (const opt of OPPONENT_LEVEL_OPTIONS) {
+      expect(opt.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("round-trips through OPPONENT_LEVEL_TO_DIFFICULTY", () => {
+    for (const opt of OPPONENT_LEVEL_OPTIONS) {
+      expect(opponentLevelFromDifficulty(OPPONENT_LEVEL_TO_DIFFICULTY[opt.value])).toBe(opt.value);
+    }
+  });
+});
+
+// ── Match lobby: prep time ───────────────────────────────────────────────────────
+
+describe("prepTimeOptions", () => {
+  it("includes a no-prep option", () => {
+    expect(prepTimeOptions()).toContain(0);
+  });
+
+  it("is sorted ascending", () => {
+    const opts = prepTimeOptions();
+    expect([...opts].sort((a, b) => a - b)).toEqual(opts);
+  });
+});
+
+describe("prepTimeLabel", () => {
+  it("labels zero as no prep time", () => {
+    expect(prepTimeLabel(0)).toBe("No prep time");
+  });
+
+  it("labels 60 seconds as singular minute", () => {
+    expect(prepTimeLabel(60)).toBe("1 min prep");
+  });
+
+  it("labels 120 seconds as plural minutes", () => {
+    expect(prepTimeLabel(120)).toBe("2 mins prep");
+  });
+
+  it("labels 180 seconds", () => {
+    expect(prepTimeLabel(180)).toBe("3 mins prep");
+  });
+});
+
+// ── Match lobby: setup validation ────────────────────────────────────────────────
+
+describe("isLobbyConfigValid", () => {
+  it("is invalid with an empty resolution", () => {
+    expect(isLobbyConfigValid(defaultRoundConfig({ resolution: "" }))).toBe(false);
+  });
+
+  it("is invalid with a whitespace-only resolution", () => {
+    expect(isLobbyConfigValid(defaultRoundConfig({ resolution: "   " }))).toBe(false);
+  });
+
+  it("is valid with a non-empty resolution and a real side", () => {
+    expect(isLobbyConfigValid(defaultRoundConfig({ resolution: "Resolved: ..." }))).toBe(true);
   });
 });
 

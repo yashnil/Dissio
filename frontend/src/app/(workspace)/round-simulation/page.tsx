@@ -6,18 +6,20 @@ import { createClient } from "@/lib/supabase";
 import { ApiError } from "@/lib/api";
 import * as roundApi from "@/lib/roundApi";
 import * as roomApi from "@/lib/roomApi";
-import { RoundSetupForm } from "@/components/round/RoundSetupForm";
+import { MatchLobby } from "@/components/round/MatchLobby";
 import { RoundPhaseHeader } from "@/components/round/RoundPhaseHeader";
 import { RoundFlow } from "@/components/round/RoundFlow";
 import { RoundSpeechCapture } from "@/components/round/RoundSpeechCapture";
 import { CrossfireCapture } from "@/components/round/CrossfireCapture";
 import { RoundBallotView } from "@/components/round/RoundBallotView";
 import { RoundDrillsView } from "@/components/round/RoundDrillsView";
+import { RoundTierSummary } from "@/components/round/RoundTierSummary";
 import { CoachNotesPanel } from "@/components/round/CoachNotesPanel";
 import { CrossfireReadinessPanel } from "@/components/round/CrossfireReadinessPanel";
 import { ModeSelect } from "@/components/round/ModeSelect";
 import { RoomLobby } from "@/components/round/RoomLobby";
 import { isCrossfire, upsertCrossfireExchange } from "@/lib/roundModel";
+import { subscribeToRoomBroadcast } from "@/lib/roomRealtime";
 import {
   canPerformRoundAction,
   canSubmitCurrentTurn,
@@ -31,10 +33,12 @@ import {
   isCrossfirePhase,
   isRoomClosed,
   myParticipant,
+  realtimeSyncStatusLabel,
   reviewContextBannerText,
   roomClosedNotice,
+  shouldSubscribeToRoomBroadcast,
 } from "@/lib/roomModel";
-import type { CoachNoteReviewTarget, ReviewTargetTab } from "@/lib/roomModel";
+import type { CoachNoteReviewTarget, ReviewTargetTab, RoomBroadcastConnectionState } from "@/lib/roomModel";
 import type {
   CrossfireExchange,
   RoomRole,
@@ -117,6 +121,10 @@ export default function RoundSimulationPage() {
   const [participants, setParticipants] = useState<RoundRoomParticipant[]>([]);
   const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
   const [coachNoteCount, setCoachNoteCount] = useState<number>(0);
+  // Phase 10E: Broadcast connection state, purely for the honest status
+  // label -- polling (pollActive below) is entirely unaffected by this and
+  // remains the transport of record regardless of what this reports.
+  const [realtimeState, setRealtimeState] = useState<RoomBroadcastConnectionState>("connecting");
   // Phase 9H: which tab a coach-note jump landed on, and the label to show
   // there. Persists across tab switches (not auto-cleared) so returning to
   // Notes can still show what was last reviewed.
@@ -260,6 +268,32 @@ export default function RoundSimulationPage() {
     }, CROSSFIRE_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [pollActive, room?.id]);
+
+  // Phase 10E: Broadcast notify-then-refetch, additive to the polling above
+  // (never replaces it). A notify event just means "something changed" --
+  // it always triggers the same authenticated refreshRoom the poll already
+  // uses, never anything derived from the broadcast payload itself.
+  // Debounced/coalesced: several notify events arriving in a short burst
+  // (e.g. a partner's answer plus the resulting phase check) collapse into
+  // one refetch instead of one per event.
+  useEffect(() => {
+    if (!shouldSubscribeToRoomBroadcast(mode === "multiplayer", room) || !room) return;
+    const client = createClient();
+    let debounceId: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeToRoomBroadcast(client, room.id, {
+      onStateChange: setRealtimeState,
+      onNotify: () => {
+        if (debounceId) clearTimeout(debounceId);
+        debounceId = setTimeout(() => {
+          refreshRoomRef.current(room.id);
+        }, 400);
+      },
+    });
+    return () => {
+      if (debounceId) clearTimeout(debounceId);
+      unsubscribe();
+    };
+  }, [mode, room?.id]);
 
   // Dispatches to whichever refresh keeps turn_context fresh for the current
   // mode — multiplayer must go through refreshRoom (the only response that
@@ -597,7 +631,7 @@ export default function RoundSimulationPage() {
     return (
       <div className="flex flex-col">
         <div className="py-8">
-          <RoundSetupForm onStart={handleCreateRound} loading={loading} />
+          <MatchLobby onStart={handleCreateRound} loading={loading} mode="solo" />
           {error && (
             <p className="text-xs text-red-600 text-center mt-4">{error}</p>
           )}
@@ -610,7 +644,7 @@ export default function RoundSimulationPage() {
     return (
       <div className="flex flex-col">
         <div className="py-8">
-          <RoundSetupForm onStart={handleCreateRoom} loading={loading} />
+          <MatchLobby onStart={handleCreateRoom} loading={loading} mode="multiplayer" />
           {error && (
             <p className="text-xs text-red-600 text-center mt-4">{error}</p>
           )}
@@ -737,9 +771,12 @@ export default function RoundSimulationPage() {
 
       {mode === "multiplayer" && (
         <div className="mx-4 mt-3 rounded-md border bg-muted/20 px-3 py-2 space-y-1">
-          <p className="text-xs text-muted-foreground">
-            {describeCapabilities(viewerParticipant, studentSide)}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              {describeCapabilities(viewerParticipant, studentSide)}
+            </p>
+            <p className="text-[10px] text-muted-foreground shrink-0">{realtimeSyncStatusLabel(realtimeState)}</p>
+          </div>
           {turnContext?.expected_side && (
             <p className="text-xs text-muted-foreground">
               Speaking now: {expectedSpeakerLabel(turnContext.expected_side, turnContext.expected_speaker_slot)}
@@ -797,6 +834,14 @@ export default function RoundSimulationPage() {
                       {generalActionReason ??
                         "Ask a debater in the room to generate the decision and drills — you'll be able to view them here once they do."}
                     </p>
+                  )}
+                  {decision && (
+                    <RoundTierSummary
+                      decision={decision}
+                      studentSide={studentSide}
+                      allArguments={flowArgs}
+                      drills={drills}
+                    />
                   )}
                 </div>
               ) : isCrossfire(roundState.current_phase) ? (

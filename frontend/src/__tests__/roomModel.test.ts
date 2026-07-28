@@ -51,6 +51,10 @@ import {
   canToggleCrossfireReady,
   crossfireReadyDisabledReason,
   connectionStateLabel,
+  isSafeBroadcastEventType,
+  roomBroadcastChannelTopic,
+  shouldSubscribeToRoomBroadcast,
+  realtimeSyncStatusLabel,
 } from "@/lib/roomModel";
 import { PHASE_LABELS } from "@/lib/roundModel";
 import type {
@@ -1144,5 +1148,85 @@ describe("Phase 10B readiness helpers never leak raw ids", () => {
     for (const output of outputs) {
       expect(output).not.toContain(secretId);
     }
+  });
+});
+
+// ── Phase 10E: Broadcast notify-then-refetch ────────────────────────────────
+
+describe("isSafeBroadcastEventType", () => {
+  it("accepts every event type the backend allowlist emits", () => {
+    expect(isSafeBroadcastEventType("crossfire_ready_changed")).toBe(true);
+    expect(isSafeBroadcastEventType("crossfire_answer_submitted")).toBe(true);
+    expect(isSafeBroadcastEventType("crossfire_question_submitted")).toBe(true);
+    expect(isSafeBroadcastEventType("crossfire_followup_requested")).toBe(true);
+    expect(isSafeBroadcastEventType("phase_advanced")).toBe(true);
+    expect(isSafeBroadcastEventType("room_closed")).toBe(true);
+    expect(isSafeBroadcastEventType("participant_updated")).toBe(true);
+  });
+
+  it("rejects unknown, empty, or missing event types", () => {
+    expect(isSafeBroadcastEventType("something_made_up")).toBe(false);
+    expect(isSafeBroadcastEventType("")).toBe(false);
+    expect(isSafeBroadcastEventType(null)).toBe(false);
+    expect(isSafeBroadcastEventType(undefined)).toBe(false);
+  });
+});
+
+describe("roomBroadcastChannelTopic", () => {
+  it("is room:<roomId> -- never the invite code", () => {
+    expect(roomBroadcastChannelTopic("room-abc-123")).toBe("room:room-abc-123");
+  });
+
+  it("never special-cases an invite-code-shaped string", () => {
+    expect(roomBroadcastChannelTopic("ABCD1234")).toBe("room:ABCD1234");
+  });
+});
+
+describe("shouldSubscribeToRoomBroadcast", () => {
+  it("subscribes only in multiplayer mode with a room present", () => {
+    const room = makeRoom();
+    expect(shouldSubscribeToRoomBroadcast(true, room)).toBe(true);
+    expect(shouldSubscribeToRoomBroadcast(false, room)).toBe(false);
+    expect(shouldSubscribeToRoomBroadcast(true, null)).toBe(false);
+    expect(shouldSubscribeToRoomBroadcast(true, undefined)).toBe(false);
+    expect(shouldSubscribeToRoomBroadcast(false, null)).toBe(false);
+  });
+
+  it("does not gate on room status -- subscribes across the whole room lifecycle", () => {
+    expect(shouldSubscribeToRoomBroadcast(true, makeRoom({ status: "closed" }))).toBe(true);
+    expect(shouldSubscribeToRoomBroadcast(true, makeRoom({ status: "completed" }))).toBe(true);
+  });
+});
+
+describe("realtimeSyncStatusLabel", () => {
+  it("maps each connection state to exactly the required honest copy", () => {
+    expect(realtimeSyncStatusLabel("connected")).toBe("Realtime sync active");
+    expect(realtimeSyncStatusLabel("unavailable")).toBe("Realtime unavailable; polling backup active");
+    expect(realtimeSyncStatusLabel("connecting")).toBe("Polling backup active");
+  });
+
+  it("never claims live/realtime/connected unless the state actually is connected", () => {
+    expect(realtimeSyncStatusLabel("connecting")).not.toMatch(/live|realtime|connected/i);
+    expect(realtimeSyncStatusLabel("unavailable")).toMatch(/unavailable/i);
+  });
+});
+
+describe("Phase 10E broadcast helpers never leak raw ids", () => {
+  it("no raw room id appears in any status label (topic/eligibility helpers take ids as input, not output)", () => {
+    const secretRoomId = "room-secret-10e";
+    const room = makeRoom({ id: secretRoomId });
+    const outputs = [
+      realtimeSyncStatusLabel("connected"),
+      realtimeSyncStatusLabel("connecting"),
+      realtimeSyncStatusLabel("unavailable"),
+    ];
+    for (const output of outputs) {
+      expect(output).not.toContain(secretRoomId);
+    }
+    // shouldSubscribeToRoomBroadcast/roomBroadcastChannelTopic legitimately
+    // consume/return the room id (needed to construct the channel name for
+    // API/transport routing) -- that's not a UI label leak, so it's exempt
+    // from this check, matching every prior phase's same distinction.
+    expect(shouldSubscribeToRoomBroadcast(true, room)).toBe(true);
   });
 });

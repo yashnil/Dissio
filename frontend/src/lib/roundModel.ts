@@ -5,6 +5,7 @@ import type {
   CrossfireEffect,
   CrossfireEffectType,
   CrossfireExchange,
+  OpponentDifficulty,
   RoundArgument,
   RoundDecision,
   RoundDrillAttempt,
@@ -205,6 +206,62 @@ export function defaultRoundConfig(overrides?: Partial<RoundSimulationConfig>): 
     evidence_testing_mode: false,
     ...overrides,
   };
+}
+
+// ── Match lobby (opponent level / prep time / setup validation) ──────────────
+
+/** Simplified two-rung difficulty the lobby exposes. "novice" still exists on
+ * `OpponentDifficulty` for old rounds/back-compat, but per product direction
+ * the new lobby only ever lets a debater pick medium or advanced. */
+export type OpponentLevel = "medium" | "advanced";
+
+export const OPPONENT_LEVEL_TO_DIFFICULTY: Record<OpponentLevel, OpponentDifficulty> = {
+  medium: "jv",
+  advanced: "varsity",
+};
+
+export const OPPONENT_LEVEL_OPTIONS: Array<{ value: OpponentLevel; label: string; description: string }> = [
+  {
+    value: "medium",
+    label: "Medium",
+    description: "Standard clash and moderate depth — a solid rep for most debaters.",
+  },
+  {
+    value: "advanced",
+    label: "Advanced",
+    description: "Line-by-line responses and evidence indictments — brings real pressure.",
+  },
+];
+
+/** Any difficulty (including legacy "novice") collapses to the nearest of
+ * the two lobby-facing levels — novice rounds display as Medium. */
+export function opponentLevelFromDifficulty(difficulty: OpponentDifficulty): OpponentLevel {
+  return difficulty === "varsity" ? "advanced" : "medium";
+}
+
+export function opponentLevelLabel(difficulty: OpponentDifficulty): string {
+  const level = opponentLevelFromDifficulty(difficulty);
+  return OPPONENT_LEVEL_OPTIONS.find((o) => o.value === level)?.label ?? "Medium";
+}
+
+const PREP_TIME_OPTIONS_SECONDS = [0, 60, 120, 180];
+
+export function prepTimeOptions(): number[] {
+  return PREP_TIME_OPTIONS_SECONDS;
+}
+
+export function prepTimeLabel(seconds: number): string {
+  if (seconds <= 0) return "No prep time";
+  const minutes = seconds / 60;
+  if (!Number.isInteger(minutes)) return `${Math.round(seconds / 60)} min prep`;
+  return `${minutes} min${minutes === 1 ? "" : "s"} prep`;
+}
+
+/** Gates the lobby's primary CTA. Mirrors the one hard requirement the
+ * backend already enforces (non-empty resolution) so the button disables
+ * before a wasted round-trip, not after. */
+export function isLobbyConfigValid(config: Pick<RoundSimulationConfig, "resolution" | "student_side">): boolean {
+  return config.resolution.trim().length > 0 && (config.student_side === "pro" || config.student_side === "con");
 }
 
 // ── Crossfire helpers ─────────────────────────────────────────────────────────

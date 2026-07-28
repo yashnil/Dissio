@@ -579,3 +579,62 @@ export function crossfireReadyDisabledReason(
 export function connectionStateLabel(pollActive: boolean): string {
   return pollActive ? "Syncing crossfire state…" : "Polling paused outside crossfire.";
 }
+
+// ── Broadcast notify-then-refetch (Phase 10E) ───────────────────────────────
+// Backend-mediated, notify-only: a Broadcast event is never trusted as
+// state -- it only ever means "something changed, call refreshRoom()".
+// Polling (above) remains active independently and is never removed; these
+// helpers exist purely to augment it with a faster nudge when available,
+// and to report the *true* connection state instead of guessing at it.
+
+/** Same 7 event types app/services/round_broadcast.py's
+ * SAFE_BROADCAST_EVENT_TYPES allowlists -- kept in sync by hand across the
+ * language boundary. A payload with any other event_type is ignored, not
+ * trusted, even though only our own backend ever writes to this channel. */
+const SAFE_BROADCAST_EVENT_TYPES = new Set([
+  "crossfire_ready_changed",
+  "crossfire_answer_submitted",
+  "crossfire_question_submitted",
+  "crossfire_followup_requested",
+  "phase_advanced",
+  "room_closed",
+  "participant_updated",
+]);
+
+export function isSafeBroadcastEventType(eventType: string | null | undefined): boolean {
+  return !!eventType && SAFE_BROADCAST_EVENT_TYPES.has(eventType);
+}
+
+/** Must stay byte-identical to round_broadcast.py's room_channel_topic --
+ * both ends key off the same string. Room UUIDs only, never invite codes
+ * (docs/REALTIME_AUTHORIZATION_PHASE10C.md §7). */
+export function roomBroadcastChannelTopic(roomId: string): string {
+  return `room:${roomId}`;
+}
+
+/** Broadcast is only ever worth subscribing to inside an active multiplayer
+ * room -- solo rounds have no room/channel at all, and there's nothing to
+ * subscribe to before a room exists. Whole room lifecycle (not just
+ * crossfire phases): the channel also carries phase/lifecycle events, and
+ * subscribing/unsubscribing per-phase would just add churn for no benefit
+ * over the single per-room subscription this enables. */
+export function shouldSubscribeToRoomBroadcast(
+  isMultiplayerMode: boolean,
+  room: RoundRoom | null | undefined,
+): boolean {
+  return isMultiplayerMode && !!room;
+}
+
+export type RoomBroadcastConnectionState = "connecting" | "connected" | "unavailable";
+
+/** The three honest states a viewer can be told, never more optimistic
+ * than reality: "connecting" is the truthful default before the channel
+ * has resolved either way (never claims live in the meantime), "connected"
+ * only after Supabase itself reports SUBSCRIBED, and "unavailable" once a
+ * join has genuinely failed/errored -- at which point polling (unaffected
+ * by any of this) is explicitly named as the thing still covering it. */
+export function realtimeSyncStatusLabel(state: RoomBroadcastConnectionState): string {
+  if (state === "connected") return "Realtime sync active";
+  if (state === "unavailable") return "Realtime unavailable; polling backup active";
+  return "Polling backup active";
+}

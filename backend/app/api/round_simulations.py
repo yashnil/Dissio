@@ -66,6 +66,7 @@ from app.models.round_simulation import (
     UpdateRoomParticipantRequest,
 )
 from app.services import round_room_service
+from app.services.round_broadcast import emit_room_event
 from app.services.auth import get_current_user_id
 from app.services.coach_round_review import (
     add_coach_annotation,
@@ -723,6 +724,7 @@ def update_room_participant_endpoint(
     updated = round_room_service.update_participant(
         supabase, target, role=role_value, side=side_value, speaker_slot=speaker_slot_value,
     )
+    emit_room_event(room_id, "participant_updated")
     return RoundRoomParticipant.model_validate(updated)
 
 
@@ -739,6 +741,7 @@ def leave_room_endpoint(
     if not participant:
         raise HTTPException(status_code=404, detail="You are not a participant in this room.")
     updated = round_room_service.leave_room(supabase, participant)
+    emit_room_event(room_id, "participant_updated")
     return RoundRoomParticipant.model_validate(updated)
 
 
@@ -782,6 +785,7 @@ def set_crossfire_ready_endpoint(
     round_room_service.set_crossfire_ready(
         supabase, participant, req.ready, sim.current_phase.value if req.ready else None,
     )
+    emit_room_event(room_id, "crossfire_ready_changed", phase=sim.current_phase.value)
     return _build_room_state_response(room, user_id, supabase)
 
 
@@ -806,6 +810,7 @@ def close_room_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to close room: {exc}") from exc
     track_product_event(user_id, "round_rooms_closed", {"room_id": room_id})
+    emit_room_event(room_id, "room_closed")
     return RoundRoom.model_validate(updated)
 
 
@@ -1276,6 +1281,8 @@ def submit_crossfire_answer(
             logger.warning("Failed to apply crossfire concession to flow: %s", exc)
 
     track_product_event(user_id, "crossfire_questions_answered", {})
+    if access.room:
+        emit_room_event(access.room["id"], "crossfire_answer_submitted", phase=sim.current_phase.value)
     return updated.model_dump()
 
 
@@ -1335,6 +1342,8 @@ def submit_student_crossfire_question(
         raise HTTPException(status_code=500, detail=f"Failed to save your question: {exc}") from exc
 
     track_product_event(user_id, "student_crossfire_questions_asked", {})
+    if access.room:
+        emit_room_event(access.room["id"], "crossfire_question_submitted", phase=sim.current_phase.value)
     return exchange
 
 
@@ -1429,6 +1438,8 @@ def request_crossfire_followup(
     save_crossfire_exchange(followup)
 
     track_product_event(user_id, "crossfire_followups_requested", {})
+    if access.room:
+        emit_room_event(access.room["id"], "crossfire_followup_requested", phase=sim.current_phase.value)
     return followup
 
 
@@ -1491,6 +1502,9 @@ def advance_phase(
 
     if target == RoundPhaseType.COMPLETED and access.room:
         round_room_service.sync_room_status(supabase, access.room["id"], "completed")
+
+    if access.room:
+        emit_room_event(access.room["id"], "phase_advanced", phase=target.value)
 
     return _load_simulation(row)
 

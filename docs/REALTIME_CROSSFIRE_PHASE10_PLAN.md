@@ -4,6 +4,8 @@
 
 Phase 10A (this doc): architecture audit and plan. No realtime infrastructure exists yet and none was added in this pass.
 
+**Phase 10E is now implemented** — backend-mediated Broadcast notify-then-refetch, built on top of Phase 10D's RLS work exactly as `docs/REALTIME_AUTHORIZATION_PHASE10C.md`'s "Recommended path" §3 (Option C) called for. See the "Phase 10E — Broadcast notify-then-refetch" section near the end of this doc for the full capability audit, channel/payload design, and implementation summary. 10B's polling (below) is unchanged and remains the transport of record; Broadcast only augments it.
+
 ## Current async crossfire architecture
 
 ```
@@ -116,3 +118,148 @@ Do NOT add human-vs-human opposing sides.
 
 Required tests: see "Tests needed for Phase 10B" in the plan doc.
 ```
+
+## Phase 10E — Broadcast notify-then-refetch (implemented)
+
+Builds on 10D's RLS work and follows `docs/REALTIME_AUTHORIZATION_PHASE10C.md`'s
+own recommended path (Option C: backend-mediated Broadcast). Backend HTTP
+remains the sole source of truth throughout -- Broadcast is a best-effort
+"something changed, refetch" nudge, never client-trusted state, and never a
+new authorization surface. 10B's polling is unchanged and stays the
+transport of record; this is additive.
+
+### 1. Capability audit
+
+- **Frontend Realtime client**: already available with zero new
+  dependencies -- `@supabase/supabase-js` (`^2.106.1`) is a direct
+  `package.json` dependency (not just transitive via `@supabase/ssr`), and
+  its `channel()`/`.on("broadcast", ...)`/`.subscribe()`/`removeChannel()`
+  API supports private channels out of the box.
+- **Backend emission**: the installed Python `realtime` package (`2.30.0`)
+  turned out to be a dead end for a synchronous FastAPI handler --
+  `realtime._sync.channel.SyncRealtimeChannel` is an empty stub (no send
+  method at all; verified by reading the installed package source), and the
+  async channel's `send_broadcast` only works over an already-`subscribe()`d
+  websocket, which doesn't fit a stateless per-request handler. Instead,
+  Supabase Realtime's REST broadcast endpoint
+  (`POST {SUPABASE_URL}/realtime/v1/api/broadcast`) works directly with the
+  service-role key as a plain, short-lived HTTP POST -- verified with a real
+  request against Dissio's local self-hosted Realtime server (`202
+  Accepted`). No new dependency: `httpx` is already used for outbound HTTP
+  elsewhere in `app/services` (`grobid_extraction.py`, `web_article_extraction.py`).
+- **Auth tokens for private channels**: yes -- the frontend's
+  `createClient()` (`@supabase/ssr`) already carries the user's session,
+  which the Realtime client uses automatically when joining a `private:
+  true` channel.
+- **Are private channels configured/usable?** Not until this pass --
+  `realtime.messages` had RLS enabled with **zero policies** (verified via
+  direct query against the local stack: any `SELECT`, even as the `postgres`
+  superuser's own probe under a simulated `authenticated` session, returned
+  0 rows), meaning private-channel joins were effectively all-deny. Pass 34
+  (below) adds the first policy.
+- **Safe without new dependencies?** Yes to both ends -- no new Python or
+  JS package was added.
+
+### 2. Channel and payload model
+
+- **Channel name**: `room:<room_id>` -- the room's UUID only, **never** the
+  invite code, matching `docs/REALTIME_AUTHORIZATION_PHASE10C.md` §7
+  exactly. Implemented identically (byte-for-byte) on both ends:
+  `app/services/round_broadcast.py`'s `room_channel_topic()` and
+  `frontend/src/lib/roomModel.ts`'s `roomBroadcastChannelTopic()`.
+- **Payload**: `{event_type, ts, phase?}` only -- no speech/answer/evidence/
+  note text, no participant identity, no raw round content of any kind.
+  `event_type` is drawn from a 7-value allowlist mirrored on both ends
+  (`SAFE_BROADCAST_EVENT_TYPES` in Python, `isSafeBroadcastEventType` in
+  TS): `crossfire_ready_changed`, `crossfire_answer_submitted`,
+  `crossfire_question_submitted`, `crossfire_followup_requested`,
+  `phase_advanced`, `room_closed`, `participant_updated`. `phase` (a
+  `RoundPhaseType` enum value, e.g. `"first_crossfire"`) is included only
+  where relevant -- it's workflow structure already visible to every joined
+  participant via the existing HTTP API, not private content.
+- **Client response is always**: receive event → (debounced 400ms) →
+  `refreshRoom()`. The payload's contents are never read as state; the
+  frontend subscription (`roomRealtime.ts`) doesn't even pass the payload
+  object to its `onNotify` callback.
+
+### 3. Channel-join authorization (Pass 34)
+
+Even though the payload carries no exploitable content, relying on
+room-UUID obscurity alone contradicts `REALTIME_AUTHORIZATION_PHASE10C.md`
+§7's own reasoning ("the channel's authorization check is what actually
+gates access, not the name's secrecy"). Migration
+`20260726000000_pass34_round_room_broadcast_authorization.sql` adds a
+`SELECT`-only RLS policy on `realtime.messages`, scoped to
+`topic like 'room:%'`, reusing the existing `current_user_is_round_room_participant`
+helper (Pass 27) -- the exact same owner-or-participant tier as
+`round_rooms_select_member`. Grants `SELECT` only: clients never need
+`INSERT` (the backend's REST broadcast call bypasses RLS via the realtime
+server's own internal role regardless). Verified live via a direct
+`docker exec ... psql` probe (see `backend/tests/test_round_broadcast.py`):
+a room owner sees a probe row inserted for their room's topic; a
+non-member sees none. This is explicit defense-in-depth, not the primary
+authorization boundary -- that remains the HTTP refetch every event
+triggers.
+
+### 4. Backend emission call sites
+
+`app/services/round_broadcast.py`'s `emit_room_event(room_id, event_type,
+phase=None)` is called, always *after* its mutation has already succeeded,
+from 8 places in `round_simulations.py`: `set_crossfire_ready_endpoint`,
+`submit_crossfire_answer`, `submit_student_crossfire_question`,
+`request_crossfire_followup`, `advance_phase`, `close_room_endpoint`,
+`leave_room_endpoint`, `update_room_participant_endpoint`. The four
+crossfire/phase call sites are gated on `access.room` being present (solo
+rounds have no room to notify, so they never emit at all). No read endpoint
+emits. `emit_room_event` never raises -- an HTTP failure, timeout, or
+missing config degrades to a logged warning, and the mutation's own return
+value is completely unaffected (verified directly:
+`test_mutation_succeeds_even_when_the_real_broadcast_http_call_raises`
+patches `httpx.post` itself to raise, not the wrapper function).
+
+### 5. Frontend subscription
+
+`frontend/src/lib/roomRealtime.ts`'s `subscribeToRoomBroadcast(client,
+roomId, {onNotify, onStateChange})` is a plain function (not a hook, to
+stay testable without React Testing Library -- this repo's jest config runs
+no DOM/React tests at all). Called from a `useEffect` in
+`round-simulation/page.tsx`, gated by `shouldSubscribeToRoomBroadcast(mode
+=== "multiplayer", room)` -- subscribes across the whole room lifecycle
+(not just crossfire phases), cleans up on room change/unmount. Notify
+events are debounced 400ms before triggering `refreshRoom()`, so a short
+burst of events (e.g. a partner's answer plus a resulting phase check)
+collapses into one refetch. Connection state
+(`"connecting"|"connected"|"unavailable"`) is surfaced via
+`realtimeSyncStatusLabel()` next to the existing capability banner in
+`page.tsx`, showing one of exactly: "Realtime sync active", "Realtime
+unavailable; polling backup active", or "Polling backup active" -- never
+overclaiming "live" before Supabase itself reports `SUBSCRIBED`.
+
+### 6. Polling fallback (unchanged)
+
+10B's `CROSSFIRE_POLL_INTERVAL_MS` poll and `pollActive` gating are
+untouched byte-for-byte. If the Broadcast subscription never connects (join
+denied, network issue, browser without WebSocket support), polling still
+covers crossfire phases exactly as before Phase 10E existed -- Broadcast is
+strictly additive.
+
+### 7. Known limitations
+
+- Supabase Realtime's REST broadcast endpoint does not persist rows to
+  `realtime.messages` in this self-hosted configuration (verified: a probe
+  broadcast, even with `private: true` in the message, produced zero rows)
+  -- there is no message-replay/history for a client that briefly
+  disconnects. This is fine for a notify-only signal (a missed notify just
+  means the next poll or user action catches the same state), but would
+  matter if this channel were ever asked to carry more than a refetch hint.
+- The RLS policy is tested at the SQL level (a direct psql probe simulating
+  an authenticated session), not via a full end-to-end WebSocket handshake
+  -- no browser/WebSocket test harness exists in this backend-only test
+  suite. The policy itself is the actual security-relevant artifact
+  Realtime Authorization consults at join time, so this is a faithful test
+  of the real gate, just not the full transport.
+- No dedicated frontend E2E test exercises a live two-browser Broadcast
+  round-trip; `roomRealtime.test.ts` covers the subscription wrapper's
+  logic against a mocked channel, and `workspaceShell.spec.ts` (run as part
+  of this phase's verification) confirms the page still builds/renders
+  correctly with the new subscription wired in.
