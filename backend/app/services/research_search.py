@@ -858,11 +858,39 @@ def _is_near_duplicate(body_text: str, existing_bodies: list[str], threshold: fl
     return False
 
 
+def extraction_status_for_length(text_len: int) -> tuple[str, Optional[str]]:
+    """(status, error) for an extracted-text length, using the same tiering
+    web_article_extraction.extract_article() already applies to standard
+    web extraction — reused here so GROBID (and any other extraction path)
+    can't label a thin parse "ok" just because the extractor itself
+    succeeded. Mirrors: >=500 chars -> "ok"; below that -> "partial", with
+    an explicit "too short" error once below the hard floor
+    (_MIN_ARTICLE_CHARS) shared with the web-extraction path."""
+    from app.services.web_article_extraction import _MIN_ARTICLE_CHARS
+
+    status = "ok" if text_len >= 500 else "partial"
+    error = "Article text is too short to cut a reliable card." if text_len < _MIN_ARTICLE_CHARS else None
+    return status, error
+
+
+_DOMAIN_DIVERSITY_PREFIXES: tuple[str, ...] = ("www.", "m.", "amp.")
+
+
 def _domain_from_url(url: str) -> str:
+    """Hostname used for the per-domain diversity cap, with the same kind of
+    common subdomain prefix stripped that source_quality.py already strips
+    for its own domain lookup. Without this, "example.com", "www.example.com",
+    and "m.example.com" each get their own slot under the domain cap even
+    though they're the same source — letting one site quietly crowd out
+    other, more diverse candidates."""
     try:
-        return urlparse(url).hostname or url
+        hostname = (urlparse(url).hostname or url).lower()
     except Exception:
         return url
+    for prefix in _DOMAIN_DIVERSITY_PREFIXES:
+        if hostname.startswith(prefix):
+            return hostname[len(prefix):]
+    return hostname
 
 
 # ── Text chunking ─────────────────────────────────────────────────────────────
@@ -1489,9 +1517,14 @@ def generate_candidate_cards(
                     author=grobid_meta.author_display or None,
                     published_date=grobid_meta.year or None,
                 )
+                # A one-paragraph GROBID parse (e.g. abstract only) must not
+                # be labeled "ok" just because GROBID succeeded at parsing
+                # something — apply the same length tiering web extraction uses.
+                _grobid_status, _grobid_error = extraction_status_for_length(len(extracted_text))
                 article = ExtractedArticle(
                     url=url, metadata=_meta, extracted_text=extracted_text,
-                    extraction_method="grobid", extraction_confidence=0.85, status="ok",
+                    extraction_method="grobid", extraction_confidence=0.85,
+                    status=_grobid_status, error=_grobid_error,
                 )
             else:
                 result.grobid_failed += 1
@@ -1786,6 +1819,12 @@ def generate_candidate_cards(
                     slot_id=_slot_id,
                     slot_label=_slot_label,
                     slot_target_claim=_slot_target_claim,
+                    # Keep the card anchored to the exact passage that was
+                    # ranked, role-classified, and deduped above — otherwise
+                    # generate_card_draft would independently re-select from
+                    # the whole article and the card could describe a
+                    # different passage than the one this reasoning was about.
+                    preferred_passage=chunk,
                 )
             except Exception as exc:
                 result.sources_considered.append({"url": url, "status": "draft_failed", "reason": str(exc)})
@@ -2314,6 +2353,11 @@ def _process_single_slot(
             slot_id=slot_id,
             slot_label=slot_label,
             slot_target_claim=slot_target_claim,
+            # Anchor the card to the exact winning candidate chunk (already
+            # scored, role-classified, and used for the evidence cut/citation
+            # below) rather than letting the LLM/heuristic re-select from the
+            # whole article.
+            preferred_passage=chunk,
         )
 
         _cut_cr = 1.0

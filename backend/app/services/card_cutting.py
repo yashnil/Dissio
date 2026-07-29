@@ -3164,6 +3164,7 @@ def generate_card_draft(
     slot_id: str = "",
     slot_label: str = "",
     slot_target_claim: str = "",
+    preferred_passage: Optional[str] = None,
 ) -> dict:
     """Generate a card draft dict from an ExtractedArticle.
 
@@ -3173,9 +3174,23 @@ def generate_card_draft(
     slot_id/slot_label/slot_target_claim carry evidence-set planner context so
     tags and notes can be slot-aware.
 
+    preferred_passage: when the caller has already ranked/scored a specific
+    passage from this article (e.g. the search pipeline's candidate ranker),
+    pass it here so the card is cut from THAT passage instead of one
+    independently re-selected by the LLM or the heuristic fallback — without
+    this, the ranking/role-classification/citation reasoning done upstream
+    can describe a different passage than what actually gets saved. Only
+    honored when it's an exact substring of article.extracted_text (never
+    trusted as unverified text); otherwise generation proceeds exactly as
+    before. Skips the LLM passage-selection call entirely in this case, since
+    there is nothing left for it to select.
+
     Returns a dict ready for insertion into card_drafts table.
     """
-    llm_out = _draft_with_llm(article, topic, claim_goal, side)
+    preferred_passage = (preferred_passage or "").strip()
+    has_preferred_passage = bool(preferred_passage) and preferred_passage in article.extracted_text
+
+    llm_out = None if has_preferred_passage else _draft_with_llm(article, topic, claim_goal, side)
 
     # ── Extract body_text from source ─────────────────────────────────────
     body_text: str = ""
@@ -3186,7 +3201,9 @@ def generate_card_draft(
     impact_summary: str = ""
     extraction_confidence = article.extraction_confidence
 
-    if llm_out and llm_out.body_start_idx >= 0 and llm_out.body_end_idx > llm_out.body_start_idx:
+    if has_preferred_passage:
+        body_text = preferred_passage
+    elif llm_out and llm_out.body_start_idx >= 0 and llm_out.body_end_idx > llm_out.body_start_idx:
         # Strip page chrome before using LLM-selected offsets, since the LLM
         # may have selected into chrome zones if the text had lots of preamble.
         full_text = strip_page_chrome(article.extracted_text, metadata_title=article.metadata.title or "")

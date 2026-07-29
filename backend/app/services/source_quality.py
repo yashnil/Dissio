@@ -114,11 +114,16 @@ def rate_source_quality(
         warnings.append("Page title not found.")
 
     # ── Content length signal ────────────────────────────────────────────
+    # Applies regardless of domain tier: a trusted .gov/.edu domain does not
+    # make a genuinely thin extraction trustworthy — the domain's authority
+    # doesn't help if there's barely any actual text to cut a card from. This
+    # only affects the quality LABEL shown to the user (nudging the card to
+    # "Review needed" instead of "Ready to save"); it never blocks generation
+    # or lowers the separate source-quality acceptance gate in research_search.py.
     text_len = len(extracted_text)
     if text_len < 300:
         warnings.append("Very short article — may not support a full card.")
-        if base_quality not in ("high", "medium"):
-            base_quality = "low"
+        base_quality = "low"
 
     # ── Date recency ─────────────────────────────────────────────────────
     if metadata.published_date:
