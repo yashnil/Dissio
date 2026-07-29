@@ -47,10 +47,7 @@ export default function FooterV6() {
             <li key={link.href}>
               <Link
                 href={link.href}
-                className="text-[12px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 rounded-sm"
-                style={{ color: "rgba(245,244,248,0.6)" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(245,244,248,0.85)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(245,244,248,0.6)"; }}
+                className="text-[12px] text-[rgba(245,244,248,0.6)] hover:text-[rgba(245,244,248,0.85)] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 rounded-sm"
               >
                 {link.label}
               </Link>

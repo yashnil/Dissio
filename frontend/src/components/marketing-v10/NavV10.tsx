@@ -1,15 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence, useMotionValue, useSpring } from "motion/react";
 import { Menu, X } from "lucide-react";
 import { NAV_V10, HOME_V10_SECTION_IDS } from "@/lib/marketingV10";
-
-interface NavV10Props {
-  isLoggedIn?: boolean;
-  onSignOut?: () => void;
-}
 
 function MagneticCTA({ href, label }: { href: string; label: string }) {
   const ref = useRef<HTMLAnchorElement>(null);
@@ -53,13 +49,41 @@ function MagneticCTA({ href, label }: { href: string; label: string }) {
   );
 }
 
-export default function NavV10({ isLoggedIn = false, onSignOut }: NavV10Props) {
+export default function NavV10() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>(HOME_V10_SECTION_IDS.hero);
   const [warmBg, setWarmBg] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const ioDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const router = useRouter();
+
+  // Auth check, dynamically imported: the Supabase SDK is ~240KB and only
+  // needed to flip the Sign in/Sign out label, so it's fetched in the
+  // background after mount instead of being part of the homepage's initial
+  // hydration bundle.
+  useEffect(() => {
+    let cancelled = false;
+    import("@/lib/supabase").then(({ createClient }) =>
+      createClient()
+        .auth.getUser()
+        .then(({ data }) => {
+          if (!cancelled) setIsLoggedIn(!!data?.user);
+        })
+        .catch(() => {}),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSignOut() {
+    const { createClient } = await import("@/lib/supabase");
+    await createClient().auth.signOut();
+    setIsLoggedIn(false);
+    router.refresh();
+  }
 
   // Scroll listener — passive.
   useEffect(() => {
@@ -220,9 +244,9 @@ export default function NavV10({ isLoggedIn = false, onSignOut }: NavV10Props) {
 
           {/* RIGHT: Account */}
           <div className="hidden md:flex items-center gap-2.5 shrink-0">
-            {isLoggedIn && onSignOut ? (
+            {isLoggedIn ? (
               <button
-                onClick={onSignOut}
+                onClick={handleSignOut}
                 className="text-[13px] font-medium px-3 py-1.5 rounded-lg transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2"
                 style={{ color: warmBg ? "#5A5650" : "rgba(245,244,248,0.65)" }}
               >

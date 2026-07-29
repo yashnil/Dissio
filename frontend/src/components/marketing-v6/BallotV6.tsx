@@ -10,12 +10,12 @@ export default function BallotV6() {
     const prefersReduced =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (prefersReduced) return;
+    if (prefersReduced || !sectionRef.current) return;
 
     let cancelled = false;
     let ctx: ReturnType<typeof import("gsap")["gsap"]["context"]> | null = null;
 
-    (async () => {
+    async function loadAndAnimate() {
       try {
         const { gsap } = await import("gsap");
         const { ScrollTrigger } = await import("gsap/ScrollTrigger");
@@ -38,10 +38,27 @@ export default function BallotV6() {
       } catch {
         /* GSAP failed — content is already visible via default styles */
       }
-    })();
+    }
+
+    // Defer fetching GSAP + ScrollTrigger until this below-the-fold section
+    // is actually near the viewport, instead of on mount -- avoids the
+    // network/parse cost competing with hero-critical resources on first
+    // load. The animation's own trigger ("top 70%", once: true) is
+    // unchanged; this only delays when the modules are requested.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          observer.disconnect();
+          void loadAndAnimate();
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(sectionRef.current);
 
     return () => {
       cancelled = true;
+      observer.disconnect();
       ctx?.revert();
     };
   }, []);
