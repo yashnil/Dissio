@@ -1637,6 +1637,23 @@ def generate_candidate_cards(
                 "reason": f"quality={quality_result.source_quality} below minimum={source_quality_min}",
                 "quality": quality_result.source_quality,
             })
+            # A snippet-derived source correctly failing the quality floor is
+            # still worth surfacing — it was found and had real content, it
+            # just isn't reliable enough to cut a card from. Track it as a
+            # weak lead (same shape _post_process_card_set already uses)
+            # instead of dropping it into total silence.
+            if is_snippet_source:
+                result.weak_leads.append({
+                    "url": url,
+                    "tag": "",
+                    "slot_label": "",
+                    "short_cite": "",
+                    "reason": (
+                        f"Snippet-only source — quality ({quality_result.source_quality}) "
+                        "below the minimum for a full card; verify the original manually"
+                    ),
+                    "body_excerpt": article.extracted_text[:300],
+                })
             continue
 
         result.sources_extracted += 1

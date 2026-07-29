@@ -355,10 +355,20 @@ class TestClaimLadder:
             generate_candidate_cards,
         )
 
+        # Realistic article length: the source-quality gate applies its length
+        # signal to every domain (including .edu — Phase 12B), so a passage
+        # this short from a trusted domain now correctly reads as too thin to
+        # be reliable, independent of the claim-ladder behavior this test
+        # actually exercises. Length padded to match a real Cornell LII page.
         passage = (
             "Section 230 of the Communications Decency Act grants broad immunity "
             "from civil liability to internet platforms. Courts have held that "
-            "platforms are not publishers of third-party content under this statute."
+            "platforms are not publishers of third-party content under this statute. "
+            "The provision was enacted in 1996 as part of a broader telecommunications "
+            "reform package, and subsequent case law has consistently reinforced its "
+            "scope: platforms hosting user-generated content are treated as distinct "
+            "from the speakers who created that content, shielding the intermediary "
+            "from most tort claims arising from what users post."
         )
         search_results = [self._make_search_result("https://law.cornell.edu/uscode/text/47/230", passage)]
 
