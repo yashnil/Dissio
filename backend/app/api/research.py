@@ -48,6 +48,7 @@ from app.services.research_search import (
     build_research_query_variants,
     build_research_search_query,
     canonicalize_url,
+    extraction_status_for_length,
     generate_candidate_cards,
 )
 from app.services.search_trace import build_search_trace
@@ -477,13 +478,23 @@ async def create_card_draft(body: CardDraftRequest) -> dict:
             published_date=row.get("published_date"),
             url=row.get("url", ""),
         )
+        _reloaded_text = row.get("extracted_text", "")
+        # research_sources.status is a fetch-lifecycle flag ("fetched"/
+        # "failed"), not the ok/partial/failed quality tier — recompute the
+        # tier from the stored text length (same rule every extraction path
+        # uses) instead of truthiness, so a source that was thin at save time
+        # doesn't silently read back as full-quality "ok".
+        _reloaded_status, _reloaded_error = (
+            extraction_status_for_length(len(_reloaded_text)) if _reloaded_text else ("failed", None)
+        )
         article = ExtractedArticle(
             url=row.get("url", ""),
             metadata=meta,
-            extracted_text=row.get("extracted_text", ""),
+            extracted_text=_reloaded_text,
             extraction_method="loaded",
             extraction_confidence=(row.get("extraction_metadata_json") or {}).get("confidence", 0.7),
-            status="ok" if row.get("extracted_text") else "failed",
+            status=_reloaded_status,
+            error=_reloaded_error,
         )
         source_quality = row.get("source_quality")
 
@@ -1190,6 +1201,16 @@ async def generate_cards(body: GenerateCardsRequest) -> GenerateCardsResponse:
             reason = (
                 f"{gen_result.filtered_low_quality} source(s) found but filtered out for low credibility. "
                 "Try a broader claim or use URL mode with a specific source."
+            )
+        elif gen_result.dedup_removed > 0 and gen_result.sources_extracted > 0:
+            # Every candidate passage was caught by the exact/near-duplicate
+            # check (e.g. the same wire story syndicated across outlets) —
+            # distinct from "no support" or "low quality": sources were fine,
+            # they just all said the same thing.
+            reason = (
+                f"Found {gen_result.sources_extracted} source(s), but every usable passage was a "
+                f"near-duplicate of another ({gen_result.dedup_removed} removed as repeats). Try a "
+                "more specific claim, or a source outside the outlets already covering this angle."
             )
         else:
             reason = "No credible source text clearly supported this claim."

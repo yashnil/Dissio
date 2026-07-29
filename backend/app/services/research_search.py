@@ -873,6 +873,27 @@ def extraction_status_for_length(text_len: int) -> tuple[str, Optional[str]]:
     return status, error
 
 
+def build_fallback_extracted_article(
+    url: str,
+    metadata,
+    extracted_text: str,
+    extraction_method: str,
+    extraction_confidence: float,
+):
+    """ExtractedArticle for a non-primary extraction path (GROBID, Firecrawl,
+    any future fallback) with an honest, length-based status/error — the
+    single place that decides this, so every fallback extractor is held to
+    the same tiering instead of each hardcoding its own "ok"."""
+    from app.models.research import ExtractedArticle
+
+    status, error = extraction_status_for_length(len(extracted_text))
+    return ExtractedArticle(
+        url=url, metadata=metadata, extracted_text=extracted_text,
+        extraction_method=extraction_method, extraction_confidence=extraction_confidence,
+        status=status, error=error,
+    )
+
+
 _DOMAIN_DIVERSITY_PREFIXES: tuple[str, ...] = ("www.", "m.", "amp.")
 
 
@@ -1509,7 +1530,9 @@ def generate_candidate_cards(
                 result.grobid_succeeded += 1
                 extracted_text = grobid_meta.full_text
                 extraction_method = "grobid"
-                # Build article from GROBID metadata
+                # Build article from GROBID metadata. A one-paragraph GROBID
+                # parse (e.g. abstract only) must not be labeled "ok" just
+                # because GROBID succeeded at parsing something.
                 from app.models.research import ArticleMetadata
                 _meta = ArticleMetadata(
                     url=url,
@@ -1517,14 +1540,9 @@ def generate_candidate_cards(
                     author=grobid_meta.author_display or None,
                     published_date=grobid_meta.year or None,
                 )
-                # A one-paragraph GROBID parse (e.g. abstract only) must not
-                # be labeled "ok" just because GROBID succeeded at parsing
-                # something — apply the same length tiering web extraction uses.
-                _grobid_status, _grobid_error = extraction_status_for_length(len(extracted_text))
-                article = ExtractedArticle(
+                article = build_fallback_extracted_article(
                     url=url, metadata=_meta, extracted_text=extracted_text,
                     extraction_method="grobid", extraction_confidence=0.85,
-                    status=_grobid_status, error=_grobid_error,
                 )
             else:
                 result.grobid_failed += 1
@@ -1547,13 +1565,12 @@ def generate_candidate_cards(
                     extraction_method = "firecrawl"
                     from app.models.research import ArticleMetadata
                     _meta = ArticleMetadata(url=url)
-                    article = ExtractedArticle(
-                        url=url,
-                        metadata=_meta,
-                        extracted_text=extracted_text,
-                        extraction_method=extraction_method,
-                        extraction_confidence=0.6,
-                        status="ok",
+                    # Same honesty rule as GROBID above: a bare-minimum
+                    # (200-char) Firecrawl scrape must not be labeled "ok"
+                    # just because Firecrawl returned something.
+                    article = build_fallback_extracted_article(
+                        url=url, metadata=_meta, extracted_text=extracted_text,
+                        extraction_method=extraction_method, extraction_confidence=0.6,
                     )
                 else:
                     result.firecrawl_failed += 1
@@ -1707,6 +1724,23 @@ def generate_candidate_cards(
 
             result.passages_considered += 1
 
+            # Duplicate check FIRST — before spending an LLM classification
+            # call on a chunk that's already a duplicate of an accepted
+            # passage. Mirrors _process_single_slot's ordering below, which
+            # already puts dedup ahead of classification; this loop
+            # previously ran dedup last, after classification and all three
+            # acceptance gates, wasting an LLM call on every duplicate.
+            from app.services.evidence_deduplicator import _passage_hash as _ph
+            _body_hash = _ph(chunk)
+            if _body_hash in _seen_body_hashes:
+                result.sources_considered.append({"url": url, "status": "duplicate", "reason": "exact-duplicate passage"})
+                _total_dedup_removed += 1
+                continue
+            if _is_near_duplicate(chunk, existing_bodies):
+                result.sources_considered.append({"url": url, "status": "duplicate", "reason": "near-duplicate passage"})
+                _total_dedup_removed += 1
+                continue
+
             # Classify evidence role
             role_output: Optional[EvidenceRoleOutput] = None
             if use_llm:
@@ -1784,18 +1818,6 @@ def generate_candidate_cards(
             # Generate a minimal safe_tag_scope if missing
             if not sts:
                 sts = bsc[:100]
-
-            # Pass 8: exact-hash check before Jaccard (O(1) vs O(n))
-            from app.services.evidence_deduplicator import _passage_hash as _ph
-            _body_hash = _ph(chunk)
-            if _body_hash in _seen_body_hashes:
-                result.sources_considered.append({"url": url, "status": "duplicate", "reason": "exact-duplicate passage"})
-                _total_dedup_removed += 1
-                continue
-            if _is_near_duplicate(chunk, existing_bodies):
-                result.sources_considered.append({"url": url, "status": "duplicate", "reason": "near-duplicate passage"})
-                _total_dedup_removed += 1
-                continue
 
             # Get backward-compat support level
             support_level = _EVIDENCE_ROLE_TO_SUPPORT_LEVEL.get(role, "partial_support")

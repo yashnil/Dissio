@@ -33,6 +33,7 @@ FAILURE_REASONS = (
     "citation_metadata_incomplete",
     "card_validation_failed",
     "credible_counterevidence_only",
+    "duplicate_passages_only",
     "no_credible_support_found",
 )
 
@@ -85,6 +86,11 @@ _RECOVERY: dict[str, list[str]] = {
         "The sources found argue the opposing side — consider cutting them as pre-empts",
         "Search specifically for the mechanism: 'how [X] works study'",
         "Search the impact independently: '[harm type] evidence research'",
+    ],
+    "duplicate_passages_only": [
+        "Try a more specific claim — broad claims tend to surface the same syndicated story",
+        "Use URL mode with a source outside the outlets already covering this angle",
+        "Search the mechanism or impact separately to find a genuinely different source",
     ],
     "no_credible_support_found": [
         "Try a narrower claim focused on mechanism ('how X shields from liability')",
@@ -235,6 +241,7 @@ def determine_failure_reason(
     candidates_generated: int,
     tavily_errors: list[str],
     card_validation_failures: int = 0,
+    passages_deduplicated: int = 0,
 ) -> tuple[str, str, list[str], list[str]]:
     """Return (failure_reason, detail, attempts_summary, recovery_actions).
 
@@ -345,6 +352,24 @@ def determine_failure_reason(
                 "Card-cutting validation rejected all candidates",
             ],
             _RECOVERY["card_validation_failed"],
+        )
+
+    # Stage 9b — every extracted passage was a duplicate of one already
+    # accepted (e.g. the same wire story syndicated across outlets).
+    # Distinct from Stage 10's generic catch-all: the sources and passages
+    # were fine, they just all said the same thing.
+    if passages_deduplicated > 0 and candidates_generated == 0 and sources_extracted > 0:
+        return (
+            "duplicate_passages_only",
+            (
+                f"Found {sources_extracted} source(s), but every usable passage was a "
+                f"near-duplicate of another ({passages_deduplicated} removed as repeats)"
+            ),
+            [
+                f"Extracted {sources_extracted} sources",
+                f"{passages_deduplicated} passage(s) removed as exact/near duplicates",
+            ],
+            _RECOVERY["duplicate_passages_only"],
         )
 
     # Stage 10 — sources extracted, claim simply not supported
@@ -479,6 +504,7 @@ def build_search_trace(
                 counter_evidence_count=counter_evidence_count,
                 candidates_generated=candidates_generated,
                 tavily_errors=tavily_errors,
+                passages_deduplicated=passages_deduplicated,
             )
         )
 

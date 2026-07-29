@@ -32,6 +32,7 @@ const KNOWN_REASON_LABELS: Record<string, string> = {
   citation_metadata_incomplete: "Citation metadata incomplete",
   card_validation_failed: "Evidence cut validation failed",
   credible_counterevidence_only: "Only counterevidence found",
+  duplicate_passages_only: "Sources were all repeats of each other",
   no_credible_support_found: "No credible support found",
 };
 
@@ -173,9 +174,9 @@ describe("GenerateCardsResponse failure fields", () => {
 // ── Failure category distinctness ─────────────────────────────────────────────
 
 describe("Failure reason label coverage", () => {
-  it("all 11 reason codes have labels", () => {
+  it("all 12 reason codes have labels", () => {
     const codes = Object.keys(KNOWN_REASON_LABELS);
-    expect(codes).toHaveLength(11);
+    expect(codes).toHaveLength(12);
   });
 
   it("no_search_results and provider_failure are distinct reasons", () => {
@@ -194,6 +195,12 @@ describe("Failure reason label coverage", () => {
     const counter = KNOWN_REASON_LABELS["credible_counterevidence_only"];
     const notSupported = KNOWN_REASON_LABELS["claim_not_supported"];
     expect(counter).not.toBe(notSupported);
+  });
+
+  it("duplicate_passages_only and claim_not_supported are distinct", () => {
+    const duplicate = KNOWN_REASON_LABELS["duplicate_passages_only"];
+    const notSupported = KNOWN_REASON_LABELS["claim_not_supported"];
+    expect(duplicate).not.toBe(notSupported);
   });
 });
 

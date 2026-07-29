@@ -39,6 +39,7 @@ const REASON_LABELS: Record<string, string> = {
   citation_metadata_incomplete: "Citation metadata incomplete",
   card_validation_failed: "Evidence cut validation failed",
   credible_counterevidence_only: "Only counterevidence found",
+  duplicate_passages_only: "Sources were all repeats of each other",
   no_credible_support_found: "No credible support found",
 };
 
@@ -53,6 +54,7 @@ const REASON_ICONS: Record<string, string> = {
   citation_metadata_incomplete: "📋",
   card_validation_failed: "✂️",
   credible_counterevidence_only: "↔️",
+  duplicate_passages_only: "🧬",
   no_credible_support_found: "🔎",
 };
 
