@@ -175,6 +175,34 @@ def verify_spans(body_text: str, spans: list[dict]) -> list[dict]:
     return verified
 
 
+def is_verbatim_ellipsis_cut(candidate: str, original: str) -> bool:
+    """True iff `candidate` could only have been built by selecting verbatim
+    substrings of `original` and joining them with the cutter's own omission
+    marker (matches _OMISSION_MARKER_RE, the "[…]"/"[...]" the deterministic
+    cutter inserts between non-adjacent spans).
+
+    Used to gate any client-supplied replacement for a card's saved body text
+    (e.g. a Studio "cut style" edit applied at save time): every non-marker
+    segment must appear in `original`, in order, so a saved card can never
+    carry text the source didn't actually say.
+    """
+    if not candidate or not candidate.strip():
+        return False
+    segments = [seg.strip() for seg in _OMISSION_MARKER_RE.split(candidate)]
+    segments = [seg for seg in segments if seg]
+    if not segments:
+        return False
+    search_from = 0
+    for seg in segments:
+        pos = original.find(seg, search_from)
+        if pos == -1:
+            pos = original.find(seg)  # allow the deterministic cutter's own reordering
+        if pos == -1:
+            return False
+        search_from = max(search_from, pos)
+    return True
+
+
 # ── Abbreviation set for sentence splitting ───────────────────────────────────
 
 # Common abbreviations that end with a period but are NOT sentence ends
@@ -3271,12 +3299,21 @@ def generate_card_draft(
                     if refined.tagline:
                         tag = refined.tagline
                     intelligence = refined_to_intelligence(refined)
-                    # LLM highlights are validated spans into the full passage.
-                    cut.cut_text_with_ellipses = refined.cut_body
-                    cut.cut_text = refined.cut_body
-                    cut.cut_body_spans = refined.read_aloud_spans
-                    cut.cut_body_bold_spans = _bold_within_highlights(refined.read_aloud_spans)
-                    cut.read_aloud_validation = refined.validation
+                    # refined.cut_body is the FULL passage (the refiner selects
+                    # highlight quotes, it doesn't cut) — never adopt it as the
+                    # card body, or the deterministic cut (Medium/High) the user
+                    # sees would silently revert to the uncut passage. Instead,
+                    # remap the LLM's validated highlight quotes onto the
+                    # existing cut_text_with_ellipses so the cut survives and
+                    # only the highlight selection improves.
+                    remapped = remap_spans_to_cut_body(
+                        cut.cut_text_with_ellipses or cut.cut_text or "",
+                        refined.read_aloud_spans,
+                    )
+                    if remapped:
+                        cut.cut_body_spans = remapped
+                        cut.cut_body_bold_spans = _bold_within_highlights(remapped)
+                        cut.read_aloud_validation = refined.validation
                     refined_applied = True
         except Exception as exc:
             logger.debug("LLM refiner skipped: %s", exc)

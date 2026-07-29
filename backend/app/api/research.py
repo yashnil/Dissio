@@ -41,7 +41,7 @@ from app.models.research import (
     SearchSourcesResponse,
     SearchSourceCandidate,
 )
-from app.services.card_cutting import generate_card_draft, generate_evidence_cut
+from app.services.card_cutting import generate_card_draft, generate_evidence_cut, is_verbatim_ellipsis_cut
 from app.services.claim_decomposition import decompose_claim
 from app.services.evidence_query_planner import plan_evidence_research
 from app.services.research_search import (
@@ -169,6 +169,41 @@ def _embed_text_safe(text: str) -> Optional[list[float]]:
     except Exception as exc:
         logger.warning("embed_text failed for research card: %s", exc)
         return None
+
+
+# Studio-facing fields that live only inside a card_draft's draft_json blob.
+_DRAFT_JSON_SURFACE_FIELDS = (
+    "evidence_cut", "citation", "intelligence", "evidence_role",
+    "short_cite", "mla_citation", "citation_quality", "source_domain",
+    "cut_text_with_ellipses", "selected_spans", "best_supported_claim",
+    "support_level", "support_rationale", "card_purpose", "claim_supported",
+    "overclaim_warning", "safe_tag_scope",
+)
+
+
+def _surface_draft_json_fields(row: dict) -> dict:
+    """Copy the Studio-facing fields that live only in draft_json onto the
+    row's top level, so a card_draft looks the same everywhere it's returned
+    to the frontend, regardless of which query fetched it.
+
+    Without this, a draft fetched via a plain `select("*")` (e.g. the list
+    endpoint used to reload Evidence Studio after a navigation or refresh)
+    would be missing its evidence cut, citation, and any markup saved via a
+    prior PATCH — the Studio would silently fall back to the raw, uncut body
+    text and appear to have lost every highlight and the cut style chosen.
+    """
+    dj = row.get("draft_json") or {}
+    for key in _DRAFT_JSON_SURFACE_FIELDS:
+        if key in dj:
+            row[key] = dj[key]
+    row["is_counter_evidence"] = dj.get("is_counter_evidence", row.get("is_counter_evidence", False))
+    row["is_snippet_source"] = dj.get("is_snippet_source", row.get("is_snippet_source", False))
+    row["slot_id"] = dj.get("slot_id") or row.get("slot_id") or ""
+    row["slot_label"] = dj.get("slot_label") or row.get("slot_label") or ""
+    user_markup = dj.get("user_markup")
+    if user_markup:
+        row["user_markup_json"] = user_markup
+    return row
 
 
 def _build_card_cutting_metadata(draft: dict, draft_id: str) -> dict:
@@ -493,14 +528,7 @@ async def create_card_draft(body: CardDraftRequest) -> dict:
         draft_row = insert_result.data[0]
         # Surface rich studio fields from draft_json so URL/Paste drafts populate
         # the Studio (evidence cut, citation, debate-prep) like Research Search.
-        dj = draft_row.get("draft_json") or {}
-        for _k in (
-            "evidence_cut", "citation", "intelligence", "evidence_role",
-            "short_cite", "mla_citation", "citation_quality",
-            "cut_text_with_ellipses", "selected_spans", "best_supported_claim",
-        ):
-            if _k in dj:
-                draft_row[_k] = dj[_k]
+        draft_row = _surface_draft_json_fields(draft_row)
         if research_source_id:
             sb.table("research_sources").update({"status": "card_generated"}).eq(
                 "id", research_source_id
@@ -1201,27 +1229,7 @@ async def generate_cards(body: GenerateCardsRequest) -> GenerateCardsResponse:
         try:
             row = _save_draft_to_db(draft, sb)
             # Merge draft_json fields back into the response row for frontend display
-            draft_json = draft.get("draft_json") or {}
-            row["support_level"]        = draft_json.get("support_level")
-            row["support_rationale"]    = draft_json.get("support_rationale")
-            row["card_purpose"]         = draft_json.get("card_purpose")
-            row["claim_supported"]      = draft_json.get("claim_supported")
-            row["best_supported_claim"] = draft_json.get("best_supported_claim")
-            row["overclaim_warning"]    = draft_json.get("overclaim_warning")
-            row["safe_tag_scope"]       = draft_json.get("safe_tag_scope")
-            row["evidence_role"]        = draft_json.get("evidence_role")
-            row["is_counter_evidence"]  = draft_json.get("is_counter_evidence", False)
-            row["is_snippet_source"]    = draft_json.get("is_snippet_source", False)
-            row["slot_id"]              = draft_json.get("slot_id") or draft.get("slot_id", "")
-            row["slot_label"]           = draft_json.get("slot_label") or draft.get("slot_label", "")
-            # Surface evidence-cut / citation / intelligence fields for the studio UI
-            for _k in (
-                "evidence_cut", "cut_text_with_ellipses", "selected_spans",
-                "citation", "short_cite", "mla_citation", "citation_quality",
-                "source_domain", "intelligence",
-            ):
-                if _k in draft:
-                    row[_k] = draft[_k]
+            row = _surface_draft_json_fields(row)
             saved_drafts.append(row)
         except Exception as exc:
             logger.error("Failed to persist candidate draft: %s", exc)
@@ -1257,6 +1265,20 @@ async def patch_card_draft(draft_id: str, body: PatchCardDraftRequest) -> dict:
     """Edit user-facing fields of a card draft."""
     existing_draft = _get_draft_or_404(draft_id, body.user_id)
 
+    # A body_text replacement (e.g. a Studio cut-style change applied at save
+    # time) must be verifiably built from verbatim substrings of the draft's
+    # own source text — never accepted as opaque client-supplied text. This
+    # is the same invariant the deterministic cutter already enforces when it
+    # builds cut_text_with_ellipses in the first place; here we just refuse to
+    # let it be bypassed on the way into the database.
+    if body.body_text is not None:
+        original_body = existing_draft.get("body_text") or ""
+        if not is_verbatim_ellipsis_cut(body.body_text, original_body):
+            raise HTTPException(
+                status_code=422,
+                detail="Card text must be built from the original source passage — no rewritten or invented text.",
+            )
+
     updates: dict = {}
     for field in [
         "tag", "cite", "body_text",
@@ -1278,7 +1300,7 @@ async def patch_card_draft(draft_id: str, body: PatchCardDraftRequest) -> dict:
 
     if not updates:
         result = get_supabase().table("card_drafts").select("*").eq("id", draft_id).limit(1).execute()
-        return result.data[0]
+        return _surface_draft_json_fields(result.data[0])
 
     try:
         result = (
@@ -1288,7 +1310,7 @@ async def patch_card_draft(draft_id: str, body: PatchCardDraftRequest) -> dict:
             .eq("id", draft_id)
             .execute()
         )
-        return result.data[0]
+        return _surface_draft_json_fields(result.data[0])
     except Exception as exc:
         logger.error("Failed to patch card_draft %s: %s", draft_id, exc)
         raise HTTPException(status_code=500, detail="Failed to update card draft.") from exc
@@ -1515,7 +1537,11 @@ async def list_card_drafts(
         query = query.eq("status", status)
     try:
         result = query.execute()
-        return result.data or []
+        # Without this, reopening/reloading Evidence Studio would show every
+        # draft's raw, uncut body text with no highlights or citation — the
+        # rich Studio fields (and any markup saved via PATCH) live only in
+        # draft_json, which a plain select("*") never unwraps.
+        return [_surface_draft_json_fields(row) for row in (result.data or [])]
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to fetch card drafts.") from exc
 

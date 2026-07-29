@@ -395,7 +395,17 @@ export default function EvidencePage() {
       const hasColumnSpans =
         (draft.highlighted_spans_json?.length ?? 0) > 0 ||
         (draft.underline_spans_json?.length ?? 0) > 0;
-      if (hasFullMarkup || hasColumnSpans) {
+      // The Studio's reviewed/cut text (cut_text_with_ellipses) is what the
+      // user actually looked at, highlighted, and clicked Save on — it must
+      // become the saved card's body, or the card silently reverts to the
+      // full uncut passage and every highlight offset (computed against the
+      // cut text) lands on the wrong characters. Always (re)sent when present:
+      // it may already match the draft's local body_text (e.g. autosave beat
+      // us to it), but resending the same value is a harmless no-op and
+      // guarantees the DB is never left stale relative to what's on screen.
+      const reviewedBody = draft.cut_text_with_ellipses?.trim();
+      const needsBodyTextUpdate = !!reviewedBody;
+      if (hasFullMarkup || hasColumnSpans || needsBodyTextUpdate) {
         await apiFetch(`/research/card-drafts/${draft.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -404,6 +414,7 @@ export default function EvidencePage() {
             highlighted_spans_json: draft.highlighted_spans_json ?? [],
             underline_spans_json: draft.underline_spans_json ?? [],
             ...(hasFullMarkup ? { user_markup_json: m } : {}),
+            ...(needsBodyTextUpdate ? { body_text: reviewedBody } : {}),
           }),
         });
       }

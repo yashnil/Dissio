@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Save, Copy, Download, Quote, Trash2, ExternalLink, X, Check } from "lucide-react";
-import type { CardDraft, EvidenceCutResult, SelectedSpan } from "@/types";
+import type { CardDraft, EvidenceCutResult, HighlightSpan, SelectedSpan } from "@/types";
 import { apiFetch } from "@/lib/api";
 
 import { copyCardRich, downloadCardAsTxt, hostnameOnly } from "./HighlightedCardText";
@@ -10,7 +10,10 @@ import { DebateCardPreview } from "./DebateCardPreview";
 import { CardAnalysis } from "./CardAnalysis";
 import { DebatePrepPanel } from "./DebatePrepPanel";
 import { computeSaveReadiness } from "./SaveReadinessGate";
-import { CardMarkupToolbar, CardMarkupArea, useMarkupState, buildUserMarkupPayload, isUserSpan } from "./CardMarkupToolbar";
+import {
+  CardMarkupToolbar, CardMarkupArea, useMarkupState, buildUserMarkupPayload, isUserSpan,
+  type MarkupState,
+} from "./CardMarkupToolbar";
 import { CitationDetailsPanel } from "./CitationDetailsPanel";
 
 export { hostnameOnly };
@@ -74,6 +77,46 @@ export function copyCardText(
   card: Pick<CardDraft, "cut_text_with_ellipses" | "body_text">,
 ): string {
   return card.cut_text_with_ellipses || card.body_text;
+}
+
+/**
+ * The card-draft PATCH payload for whatever the user has currently reviewed
+ * in the Studio (markup + cut-style edits). Shared by the explicit Save flow
+ * and by autosave, so both persist exactly the same shape:
+ *  - highlighted/underline spans merge in only the user's OWN additions
+ *    (AI-baseline spans are re-derived from the cut on every load, never
+ *    duplicated into the saved columns)
+ *  - body_text is always sent alongside the cut text so the two never drift:
+ *    without this, saved highlight offsets (computed against the cut/reviewed
+ *    text) would be applied to a different, longer body_text after save.
+ */
+export function buildDraftReviewPatch(
+  card: Pick<CardDraft, "highlighted_spans_json" | "underline_spans_json" | "body_text">,
+  cutBody: string,
+  markup: MarkupState,
+): {
+  user_markup_json: ReturnType<typeof buildUserMarkupPayload>;
+  highlighted_spans_json: HighlightSpan[];
+  underline_spans_json: HighlightSpan[];
+  body_text?: string;
+} {
+  const reviewedBody = cutBody?.trim();
+  return {
+    user_markup_json: buildUserMarkupPayload(markup),
+    highlighted_spans_json: [
+      ...(card.highlighted_spans_json ?? []),
+      ...markup.highlightSpans.filter(isUserSpan).map((s) => (
+        { start: s.start, end: s.end, type: "highlight" as const, reason: "user" }
+      )),
+    ],
+    underline_spans_json: [
+      ...(card.underline_spans_json ?? []),
+      ...markup.underlineSpans.filter(isUserSpan).map((s) => (
+        { start: s.start, end: s.end, type: "underline" as const, reason: "user" }
+      )),
+    ],
+    ...(reviewedBody ? { body_text: reviewedBody } : {}),
+  };
 }
 
 /** Whether the "Copy MLA" button is shown. */
@@ -278,6 +321,35 @@ export default function EvidenceStudioCard({
   // ── Markup state (user-applied highlight/underline/bold/italic) ────────────
   const { markup, setMarkup } = useMarkupState(aiSpans);
 
+  // ── Autosave: persist markup/cut edits as they happen ───────────────────────
+  // Closing the Studio (Escape, backdrop click, or the X button all converge
+  // on the same parent onClose) used to discard every highlight/underline and
+  // cut-style change that hadn't been explicitly Saved. This debounced PATCH
+  // (same payload as an explicit Save, minus the final confirm) means closing
+  // without saving loses at most the last ~1.2s of edits instead of all of
+  // them. Best-effort: a failed tick just gets picked up by the next one, or
+  // by an explicit Save. Must run above the `!expanded` early return below —
+  // hooks can't be called conditionally.
+  const isDraft = card.status === "draft" && !card.is_counter_evidence;
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) {
+      skipFirstAutosave.current = false;
+      return;
+    }
+    if (!isDraft) return;
+    const timer = setTimeout(() => {
+      const patch = buildDraftReviewPatch(card, cutBody, markup);
+      apiFetch(`/research/card-drafts/${card.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: card.user_id, ...patch }),
+      }).catch(() => { /* best-effort; next tick or explicit Save retries */ });
+    }, 1200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markup, cutBody, isDraft]);
+
   function resetMarkupToAI() {
     setMarkup({ highlightSpans: aiSpans, underlineSpans: [], boldSpans: [], italicSpans: [] });
   }
@@ -428,30 +500,13 @@ export default function EvidenceStudioCard({
 
   // ── Expanded studio — card surface (left) + organized rail (right) ───────────
   function handleSaveWithMarkup(c: CardDraft) {
-    // Merge ALL user markup into the card before saving so every formatting
-    // edit (highlight/underline/bold/italic) is persisted. Highlight + underline
-    // mirror into their dedicated columns; bold + italic ride in user_markup_json.
-    const userMarkup = buildUserMarkupPayload(markup);
-    onSave({
-      ...c,
-      cut_text_with_ellipses: cutBody,
-      user_markup_json: userMarkup,
-      highlighted_spans_json: [
-        ...(c.highlighted_spans_json ?? []),
-        ...markup.highlightSpans.filter(isUserSpan).map((s) => ({
-          start: s.start, end: s.end, type: "highlight" as const, reason: "user",
-        })),
-      ],
-      underline_spans_json: [
-        ...(c.underline_spans_json ?? []),
-        ...markup.underlineSpans.filter(isUserSpan).map((s) => ({
-          start: s.start, end: s.end, type: "underline" as const, reason: "user",
-        })),
-      ],
-    });
+    // Merge ALL user markup + the reviewed cut into the card before saving so
+    // every formatting edit (highlight/underline/bold/italic) and cut-style
+    // choice is persisted — same payload shape autosave uses below, so a
+    // manual Save and an autosave tick can never disagree about what's saved.
+    onSave({ ...c, cut_text_with_ellipses: cutBody, ...buildDraftReviewPatch(c, cutBody, markup) });
   }
 
-  const isDraft = card.status === "draft" && !card.is_counter_evidence;
   const canSave = isDraft && readiness !== "weak";
 
   async function doCopy() {
