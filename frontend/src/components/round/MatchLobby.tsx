@@ -7,6 +7,8 @@ import {
   OPPONENT_LEVEL_TO_DIFFICULTY,
   defaultRoundConfig,
   isLobbyConfigValid,
+  matchPreviewText,
+  matchRecapLines,
   opponentLevelFromDifficulty,
   prepTimeLabel,
   prepTimeOptions,
@@ -16,7 +18,11 @@ interface Props {
   onStart: (config: RoundSimulationConfig) => void;
   loading?: boolean;
   /** Changes copy only — the same config object is handed to `onStart`
-   * either way, and the caller (page.tsx) still owns solo vs. room creation. */
+   * either way, and the caller (page.tsx) still owns solo vs. room creation.
+   * The one behavioral difference: solo skips this component's own prep
+   * step (page.tsx shows prep after the round + opponent plan exist, so it
+   * can show a real opponent briefing); multiplayer still preps here,
+   * before the room exists, since there's no plan to show yet either way. */
   mode: "solo" | "multiplayer";
 }
 
@@ -67,17 +73,17 @@ function TierTile({
 }
 
 function PrepCountdown({
-  seconds,
+  config,
   onDone,
   onSkip,
   onBack,
 }: {
-  seconds: number;
+  config: RoundSimulationConfig;
   onDone: () => void;
   onSkip: () => void;
   onBack: () => void;
 }) {
-  const [remaining, setRemaining] = useState(seconds);
+  const [remaining, setRemaining] = useState(config.prep_time);
 
   useEffect(() => {
     if (remaining <= 0) {
@@ -93,19 +99,34 @@ function PrepCountdown({
   const secs = remaining % 60;
 
   return (
-    <div className="max-w-md mx-auto space-y-6 p-6 text-center">
-      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prep Time</p>
-      <p className="text-5xl font-mono font-semibold tabular-nums">
-        {minutes}:{String(secs).padStart(2, "0")}
-      </p>
-      <p className="text-sm text-muted-foreground">Use this time to review your case before the round starts.</p>
+    <div className="max-w-md mx-auto space-y-6 p-6">
+      <div className="text-center space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prep Time</p>
+        <p className="text-5xl font-mono font-semibold tabular-nums">
+          {minutes}:{String(secs).padStart(2, "0")}
+        </p>
+        <p className="text-sm text-muted-foreground">Review the room setup before your partner joins.</p>
+      </div>
+
+      <div className="rounded-lg border p-4 space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Match Card</h3>
+        <dl className="space-y-1.5">
+          {matchRecapLines(config).map((line) => (
+            <div key={line.label} className="flex items-start justify-between gap-3 text-sm">
+              <dt className="text-muted-foreground shrink-0">{line.label}</dt>
+              <dd className="text-right font-medium">{line.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
       <div className="flex flex-col gap-2">
         <button
           type="button"
           onClick={onSkip}
           className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
         >
-          Skip Prep &amp; Start
+          Skip Prep &amp; Create Room
         </button>
         <button
           type="button"
@@ -129,7 +150,11 @@ export function MatchLobby({ onStart, loading, mode }: Props) {
   }
 
   function handlePrimaryCta() {
-    if (config.prep_time > 0) {
+    // Solo hands off to page.tsx immediately — it shows its own prep step
+    // after the round (and a real opponent briefing) exist. Multiplayer has
+    // no round yet at this point, so it still preps here, before creating
+    // the room, same as before.
+    if (mode === "multiplayer" && config.prep_time > 0) {
       setStep("prep");
     } else {
       onStart(config);
@@ -139,7 +164,7 @@ export function MatchLobby({ onStart, loading, mode }: Props) {
   if (step === "prep") {
     return (
       <PrepCountdown
-        seconds={config.prep_time}
+        config={config}
         onDone={() => onStart(config)}
         onSkip={() => onStart(config)}
         onBack={() => setStep("setup")}
@@ -148,6 +173,7 @@ export function MatchLobby({ onStart, loading, mode }: Props) {
   }
 
   const selectedLevel = opponentLevelFromDifficulty(config.opponent_difficulty);
+  const matchPreview = matchPreviewText(config);
 
   return (
     <div className="max-w-2xl mx-auto space-y-8 p-6">
@@ -189,7 +215,7 @@ export function MatchLobby({ onStart, loading, mode }: Props) {
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          AI Opponent Difficulty
+          Choose Your Training Opponent
         </h2>
         <div className="grid grid-cols-2 gap-3">
           {OPPONENT_LEVEL_OPTIONS.map((opt) => (
@@ -202,6 +228,11 @@ export function MatchLobby({ onStart, loading, mode }: Props) {
             />
           ))}
         </div>
+        {matchPreview && (
+          <p className="text-xs text-muted-foreground rounded-md border border-dashed px-3 py-2">
+            {matchPreview}
+          </p>
+        )}
       </section>
 
       <section className="space-y-3">

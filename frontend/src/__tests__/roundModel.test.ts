@@ -62,14 +62,25 @@ import {
   prepTimeOptions,
   prepTimeLabel,
   isLobbyConfigValid,
+  JUDGE_TYPE_LABELS,
+  judgeTypeLabel,
+  FORMAT_LABELS,
+  formatLabel,
+  matchPreviewText,
+  matchRecapLines,
+  opponentBriefingHeadline,
+  opponentBriefingArgumentNote,
+  decisionConfidenceLabel,
 } from "@/lib/roundModel";
 import type {
   CrossfireEffect,
   CrossfireExchange,
+  OpponentBriefing,
   RoundArgument,
   RoundDecision,
   RoundDrillAttempt,
   RoundDrillAttemptResult,
+  RoundFormat,
 } from "@/types/round";
 
 function makeDrillAttemptResult(
@@ -1045,5 +1056,153 @@ describe("hasDrillAttemptCredit", () => {
   it("is true when both XP and mastery were awarded", () => {
     const result = makeDrillAttemptResult({ xp_awarded: 20, mastery_emitted: true });
     expect(hasDrillAttemptCredit(result)).toBe(true);
+  });
+});
+
+// ── Judge type / format labels ──────────────────────────────────────────────────
+
+describe("judgeTypeLabel", () => {
+  it("labels every known judge type", () => {
+    for (const key of Object.keys(JUDGE_TYPE_LABELS)) {
+      expect(judgeTypeLabel(key).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("falls back to the raw value for an unknown judge type", () => {
+    expect(judgeTypeLabel("mystery_judge")).toBe("mystery_judge");
+  });
+});
+
+describe("formatLabel", () => {
+  const ALL_FORMATS: RoundFormat[] = [
+    "full",
+    "shortened",
+    "speech_stage_drill",
+    "evidence_testing",
+    "judge_adaptation",
+  ];
+
+  it("has a non-empty label for every RoundFormat value, including ones not offered in the lobby", () => {
+    for (const format of ALL_FORMATS) {
+      expect(FORMAT_LABELS[format]).toBeDefined();
+      expect(formatLabel(format).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── Match preview / recap (lobby + prep screen) ─────────────────────────────────
+
+describe("matchPreviewText", () => {
+  it("returns null before a resolution is entered", () => {
+    const config = defaultRoundConfig({ resolution: "" });
+    expect(matchPreviewText(config)).toBeNull();
+  });
+
+  it("returns null for a whitespace-only resolution", () => {
+    const config = defaultRoundConfig({ resolution: "   " });
+    expect(matchPreviewText(config)).toBeNull();
+  });
+
+  it("names the student's side and the opposite side for the opponent", () => {
+    const config = defaultRoundConfig({ resolution: "Resolved: ...", student_side: "con" });
+    const preview = matchPreviewText(config);
+    expect(preview).toContain("Con");
+    expect(preview).toContain("Pro");
+  });
+
+  it("names the opponent difficulty level, not the raw enum value", () => {
+    const config = defaultRoundConfig({ resolution: "Resolved: ...", opponent_difficulty: "varsity" });
+    const preview = matchPreviewText(config);
+    expect(preview).toContain("Advanced");
+    expect(preview).not.toContain("varsity");
+  });
+});
+
+describe("matchRecapLines", () => {
+  it("includes one line per key match fact", () => {
+    const config = defaultRoundConfig({ resolution: "Resolved: ..." });
+    const lines = matchRecapLines(config);
+    const labels = lines.map((l) => l.label);
+    expect(labels).toEqual(["Resolution", "Your side", "Opponent", "Judge", "Format"]);
+  });
+
+  it("shows a placeholder instead of blank when the resolution is empty", () => {
+    const config = defaultRoundConfig({ resolution: "" });
+    const resolutionLine = matchRecapLines(config).find((l) => l.label === "Resolution");
+    expect(resolutionLine?.value.length).toBeGreaterThan(0);
+  });
+
+  it("renders safely for an old/legacy config with a legacy novice difficulty", () => {
+    const config = defaultRoundConfig({ resolution: "Resolved: ...", opponent_difficulty: "novice" });
+    expect(() => matchRecapLines(config)).not.toThrow();
+    const opponentLine = matchRecapLines(config).find((l) => l.label === "Opponent");
+    expect(opponentLine?.value).toBe("Medium");
+  });
+});
+
+// ── Opponent briefing (deterministic pre-round preview) ─────────────────────────
+
+const makeBriefing = (overrides: Partial<OpponentBriefing> = {}): OpponentBriefing => ({
+  side: "con",
+  core_advocacy: "The opponent argues that the resolution causes more harm than good.",
+  argument_count: 2,
+  ...overrides,
+});
+
+describe("opponentBriefingHeadline", () => {
+  it("returns the core advocacy sentence when present", () => {
+    const briefing = makeBriefing();
+    expect(opponentBriefingHeadline(briefing)).toBe(briefing.core_advocacy);
+  });
+
+  it("returns null when briefing is null (old response, or not yet loaded)", () => {
+    expect(opponentBriefingHeadline(null)).toBeNull();
+  });
+
+  it("returns null when briefing is undefined (a response from before this field existed)", () => {
+    expect(opponentBriefingHeadline(undefined)).toBeNull();
+  });
+
+  it("returns null when core_advocacy is null rather than fabricating a fallback sentence", () => {
+    expect(opponentBriefingHeadline(makeBriefing({ core_advocacy: null }))).toBeNull();
+  });
+});
+
+describe("opponentBriefingArgumentNote", () => {
+  it("mentions the argument count when positive", () => {
+    const note = opponentBriefingArgumentNote(makeBriefing({ argument_count: 3 }));
+    expect(note).toContain("3");
+  });
+
+  it("returns null when there is no briefing", () => {
+    expect(opponentBriefingArgumentNote(null)).toBeNull();
+  });
+
+  it("returns null when argument_count is zero", () => {
+    expect(opponentBriefingArgumentNote(makeBriefing({ argument_count: 0 }))).toBeNull();
+  });
+
+  it("never leaks a raw id — only ever renders a count", () => {
+    const briefing = makeBriefing({ argument_count: 1 });
+    const note = opponentBriefingArgumentNote(briefing);
+    expect(note).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/i);
+  });
+});
+
+// ── Decision confidence label ────────────────────────────────────────────────────
+
+describe("decisionConfidenceLabel", () => {
+  it("labels decisive, contested, and close", () => {
+    expect(decisionConfidenceLabel("decisive")).toBe("Decisive");
+    expect(decisionConfidenceLabel("contested")).toBe("Contested");
+    expect(decisionConfidenceLabel("close")).toBe("Close");
+  });
+
+  it("title-cases an unknown confidence value instead of hiding it", () => {
+    expect(decisionConfidenceLabel("mixed")).toBe("Mixed");
+  });
+
+  it("handles an empty string without throwing", () => {
+    expect(decisionConfidenceLabel("")).toBe("");
   });
 });

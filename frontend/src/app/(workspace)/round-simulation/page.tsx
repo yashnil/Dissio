@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api";
 import * as roundApi from "@/lib/roundApi";
 import * as roomApi from "@/lib/roomApi";
 import { MatchLobby } from "@/components/round/MatchLobby";
+import { MatchPrepScreen } from "@/components/round/MatchPrepScreen";
 import { RoundPhaseHeader } from "@/components/round/RoundPhaseHeader";
 import { RoundFlow } from "@/components/round/RoundFlow";
 import { RoundSpeechCapture } from "@/components/round/RoundSpeechCapture";
@@ -41,6 +42,7 @@ import {
 import type { CoachNoteReviewTarget, ReviewTargetTab, RoomBroadcastConnectionState } from "@/lib/roomModel";
 import type {
   CrossfireExchange,
+  OpponentBriefing,
   RoomRole,
   RoundArgument,
   RoundDecision,
@@ -61,6 +63,7 @@ type View =
   | "mode-select"
   | "setup"
   | "room-setup"
+  | "prep"
   | "lobby"
   | "round"
   | "flow"
@@ -115,6 +118,10 @@ export default function RoundSimulationPage() {
   const [drills, setDrills] = useState<RoundDrill[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Solo-only: the AI opponent's deterministic pre-round briefing, fetched
+  // once load-preparation has actually run. Shown on the "prep" view, which
+  // now sits after round creation (so this data exists) instead of before it.
+  const [opponentBriefing, setOpponentBriefing] = useState<OpponentBriefing | null>(null);
 
   // Multiplayer-only state — unused, and never read, in solo mode.
   const [room, setRoom] = useState<RoundRoom | null>(null);
@@ -204,7 +211,14 @@ export default function RoundSimulationPage() {
     setMode("solo");
     // Silently try to recover; clear if not found
     roundApi.getRoundState(saved).then((state) => {
-      if (state.simulation.status !== "completed" && state.simulation.status !== "abandoned") {
+      if (state.simulation.status === "setup") {
+        // Created (and prepared) but never started -- most likely a refresh
+        // during the solo prep screen, which has no remaining-seconds to
+        // restore. Skip straight to starting rather than landing on a
+        // "round" view for a round whose phase clock never began.
+        setSimulation(state.simulation);
+        void beginRound(saved);
+      } else if (state.simulation.status !== "completed" && state.simulation.status !== "abandoned") {
         setRoundState(state);
         setSimulation(state.simulation);
         setSpeeches(state.speeches);
@@ -315,21 +329,44 @@ export default function RoundSimulationPage() {
       const sim = await roundApi.createRound(config);
       setMode("solo");
       localStorage.setItem(ACTIVE_ROUND_KEY, sim.id);
+      setSimulation(sim);
       // Build the AI opponent's plan before the round becomes active — the
       // opponent speech endpoint requires this row to exist, even when no
       // prep material was selected (it falls back to resolutional analysis).
-      await roundApi.loadPreparation(sim.id, {
+      // Doing this now (rather than after prep) means the prep screen can
+      // show what the opponent actually prepared instead of a bare timer.
+      const prep = await roundApi.loadPreparation(sim.id, {
         cardIds: config.approved_card_ids,
         blockfileIds: config.approved_blockfile_ids,
         frontlineIds: config.approved_frontline_ids,
         prepWorkspaceId: config.prep_workspace_id,
       });
-      const started = await roundApi.startRound(sim.id);
-      setSimulation(started);
-      await refreshState(sim.id);
-      setView("round");
+      setOpponentBriefing(prep.opponent_briefing ?? null);
+      if (config.prep_time > 0) {
+        setView("prep");
+      } else {
+        await beginRound(sim.id);
+      }
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to create round.";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** Actually starts the round's phase clock — called once prep is done or
+   * skipped (or immediately, when the config has no prep time at all). */
+  async function beginRound(roundId: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const started = await roundApi.startRound(roundId);
+      setSimulation(started);
+      await refreshState(roundId);
+      setView("round");
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to start round.";
       setError(msg);
     } finally {
       setLoading(false);
@@ -577,6 +614,7 @@ export default function RoundSimulationPage() {
     setTurnContext(null);
     setCoachNoteCount(0);
     setReviewContext(null);
+    setOpponentBriefing(null);
     setMode(null);
     setView("mode-select");
     setError(null);
@@ -645,6 +683,31 @@ export default function RoundSimulationPage() {
       <div className="flex flex-col">
         <div className="py-8">
           <MatchLobby onStart={handleCreateRoom} loading={loading} mode="multiplayer" />
+          {error && (
+            <p className="text-xs text-red-600 text-center mt-4">{error}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "prep") {
+    if (!simulation) {
+      return (
+        <div className="flex flex-1 items-center justify-center py-20">
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col">
+        <div className="py-8">
+          <MatchPrepScreen
+            config={simulation.config}
+            briefing={opponentBriefing}
+            onDone={() => beginRound(simulation.id)}
+            onSkip={() => beginRound(simulation.id)}
+          />
           {error && (
             <p className="text-xs text-red-600 text-center mt-4">{error}</p>
           )}
@@ -951,6 +1014,8 @@ export default function RoundSimulationPage() {
               isLoading={loading}
               canRejudge={canManageRoundContent}
               rejudgeDisabledReason={generalActionReason}
+              studentSide={studentSide}
+              drills={drills}
             />
           ) : (
             <div className="space-y-4">

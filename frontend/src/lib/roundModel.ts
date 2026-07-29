@@ -5,11 +5,13 @@ import type {
   CrossfireEffect,
   CrossfireEffectType,
   CrossfireExchange,
+  OpponentBriefing,
   OpponentDifficulty,
   RoundArgument,
   RoundDecision,
   RoundDrillAttempt,
   RoundDrillAttemptResult,
+  RoundFormat,
   RoundPhaseType,
   RoundSide,
   RoundSimulation,
@@ -171,6 +173,20 @@ export function speakerPoints(decision: RoundDecision, side: RoundSide): number 
   return decision.speaker_points[side] ?? 27.0;
 }
 
+const DECISION_CONFIDENCE_LABELS: Record<string, string> = {
+  decisive: "Decisive",
+  contested: "Contested",
+  close: "Close",
+};
+
+/** Falls back to the raw value (title-cased) for a confidence string the
+ * frontend doesn't recognize yet, rather than hiding it. */
+export function decisionConfidenceLabel(confidence: string): string {
+  if (DECISION_CONFIDENCE_LABELS[confidence]) return DECISION_CONFIDENCE_LABELS[confidence];
+  if (!confidence) return "";
+  return confidence.charAt(0).toUpperCase() + confidence.slice(1);
+}
+
 // ── Time formatting ───────────────────────────────────────────────────────────
 
 export function formatSeconds(s: number): string {
@@ -262,6 +278,85 @@ export function prepTimeLabel(seconds: number): string {
  * before a wasted round-trip, not after. */
 export function isLobbyConfigValid(config: Pick<RoundSimulationConfig, "resolution" | "student_side">): boolean {
   return config.resolution.trim().length > 0 && (config.student_side === "pro" || config.student_side === "con");
+}
+
+export const JUDGE_TYPE_LABELS: Record<string, string> = {
+  flow: "Flow Judge",
+  lay: "Lay Judge",
+  parent: "Parent Judge",
+  technical: "Technical Judge",
+  coach: "Coach Judge",
+};
+
+/** Falls back to the raw value for any judge type not in the known list,
+ * rather than hiding it — matches the "old configs still render" rule. */
+export function judgeTypeLabel(judgeType: string): string {
+  return JUDGE_TYPE_LABELS[judgeType] ?? judgeType;
+}
+
+/** Exhaustive over RoundFormat so a new format value fails to compile here
+ * instead of silently rendering blank -- unlike the lobby's FORMAT_OPTIONS
+ * list, which intentionally only offers a subset as selectable options. */
+export const FORMAT_LABELS: Record<RoundFormat, string> = {
+  full: "Full Round",
+  shortened: "Shortened",
+  speech_stage_drill: "Speech Stage Drill",
+  evidence_testing: "Evidence Testing",
+  judge_adaptation: "Judge Adaptation",
+};
+
+export function formatLabel(format: RoundFormat): string {
+  return FORMAT_LABELS[format] ?? format;
+}
+
+/** One-line, purely client-derived summary of who argues what at what
+ * difficulty -- shown in the lobby once a resolution is entered, before any
+ * backend call. Never claims anything about the opponent's actual case
+ * (that's opponentBriefingHeadline, sourced from the real prepared plan). */
+export function matchPreviewText(
+  config: Pick<RoundSimulationConfig, "resolution" | "student_side" | "opponent_difficulty">,
+): string | null {
+  if (!config.resolution.trim()) return null;
+  const yourSide = sideLabel(config.student_side);
+  const theirSide = sideLabel(opponentSide(config.student_side));
+  const level = opponentLevelLabel(config.opponent_difficulty);
+  return `You'll argue ${yourSide}. Your opponent argues ${theirSide} at ${level} difficulty.`;
+}
+
+export interface MatchRecapLine {
+  label: string;
+  value: string;
+}
+
+/** The match-card recap shown during prep -- everything here is already in
+ * the local config, so it renders identically for solo and multiplayer and
+ * needs no backend round-trip. */
+export function matchRecapLines(
+  config: Pick<RoundSimulationConfig, "resolution" | "student_side" | "opponent_difficulty" | "judge_type" | "format">,
+): MatchRecapLine[] {
+  return [
+    { label: "Resolution", value: config.resolution.trim() || "Not set" },
+    { label: "Your side", value: sideLabel(config.student_side) },
+    { label: "Opponent", value: opponentLevelLabel(config.opponent_difficulty) },
+    { label: "Judge", value: judgeTypeLabel(config.judge_type) },
+    { label: "Format", value: formatLabel(config.format) },
+  ];
+}
+
+/** The opponent's one-sentence thesis, if the backend returned one. Never
+ * fabricates a fallback sentence when briefing data is missing (old rounds,
+ * a briefing-less response, or a still-loading request). */
+export function opponentBriefingHeadline(briefing: OpponentBriefing | null | undefined): string | null {
+  if (!briefing || !briefing.core_advocacy) return null;
+  return briefing.core_advocacy;
+}
+
+/** Never reveals which specific cards/arguments were prepped -- just a
+ * count, so it can't leak raw card/frontline ids into the UI. */
+export function opponentBriefingArgumentNote(briefing: OpponentBriefing | null | undefined): string | null {
+  if (!briefing || briefing.argument_count <= 0) return null;
+  const n = briefing.argument_count;
+  return `Prepared with ${n} argument${n === 1 ? "" : "s"} from approved material.`;
 }
 
 // ── Crossfire helpers ─────────────────────────────────────────────────────────

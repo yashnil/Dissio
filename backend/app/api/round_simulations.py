@@ -932,11 +932,22 @@ def load_preparation(
     plan = build_opponent_round_plan(round_id, config, user_id)
     supabase.table("opponent_round_plans").upsert(plan.model_dump()).execute()
 
+    # core_advocacy is computed by build_opponent_round_plan but attached as a
+    # non-Pydantic-field attribute (see opponent_strategy.py), so it never
+    # survives model_dump()/persistence -- surface it here instead, at the
+    # one call site that already has the freshly built plan in hand.
+    opponent_briefing = {
+        "side": plan.side,
+        "core_advocacy": getattr(plan, "__core_advocacy__", None),
+        "argument_count": len(plan.constructive_arguments),
+    }
+
     return {
         "approved_cards": len(card_set),
         "approved_blockfiles": len(blockfile_set),
         "approved_frontlines": len(frontline_set),
         "opponent_plan_id": plan.id,
+        "opponent_briefing": opponent_briefing,
     }
 
 

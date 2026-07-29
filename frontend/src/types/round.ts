@@ -324,6 +324,16 @@ export interface PrepWarning {
   card_id?: string;
 }
 
+/** A short, deterministic preview of the AI opponent's plan for this round —
+ * derived from real prep material (or resolutional analysis when none was
+ * approved), never fabricated evidence. Returned by /load-preparation;
+ * absent on responses from before this field existed. */
+export interface OpponentBriefing {
+  side: RoundSide;
+  core_advocacy: string | null;
+  argument_count: number;
+}
+
 // ── Multiplayer rooms (Phase 9A) ────────────────────────────────────────────
 
 export type RoomStatus = "waiting" | "active" | "completed" | "closed";

@@ -4,11 +4,13 @@ import { useEffect, useId, useState } from "react";
 import {
   CROSSFIRE_EFFECT_LABELS,
   crossfireEffectTone,
+  decisionConfidenceLabel,
   getDroppedArguments,
   getSurvivingOffense,
   winnerLabel,
 } from "@/lib/roundModel";
-import type { RoundArgument, RoundDecision } from "@/types/round";
+import { RoundTierSummary } from "@/components/round/RoundTierSummary";
+import type { RoundArgument, RoundDecision, RoundDrill, RoundSide } from "@/types/round";
 
 const EFFECT_TONE_TEXT: Record<ReturnType<typeof crossfireEffectTone>, string> = {
   red: "text-red-700 dark:text-red-400",
@@ -37,6 +39,11 @@ interface Props {
   canRejudge?: boolean;
   /** Shown instead of the controls when canRejudge is false. */
   rejudgeDisabledReason?: string | null;
+  /** Optional -- when provided (with drills), the training-tier estimate
+   * renders right under the winner banner instead of being left for the
+   * caller to place elsewhere. */
+  studentSide?: RoundSide;
+  drills?: RoundDrill[];
 }
 
 function RejudgeControl({
@@ -110,23 +117,44 @@ export function RoundBallotView({
   isLoading,
   canRejudge = true,
   rejudgeDisabledReason,
+  studentSide,
+  drills = [],
 }: Props) {
   const proSurviving = getSurvivingOffense(allArguments, "pro");
   const conSurviving = getSurvivingOffense(allArguments, "con");
   const dropped = getDroppedArguments(allArguments);
+  const confidence = decision.decision_trace.confidence
+    ? decisionConfidenceLabel(decision.decision_trace.confidence)
+    : "";
 
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Header */}
       <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-6">
-        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-          Decision
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Decision
+          </div>
+          {confidence && (
+            <span className="inline-flex rounded-full border border-primary/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {confidence}
+            </span>
+          )}
         </div>
         <div className="text-2xl font-semibold">{winnerLabel(decision)} wins</div>
         <div className="text-xs text-muted-foreground mt-1">
           {decision.judge_type} judge · Engine v{decision.engine_version}
         </div>
       </div>
+
+      {studentSide && (
+        <RoundTierSummary
+          decision={decision}
+          studentSide={studentSide}
+          allArguments={allArguments}
+          drills={drills}
+        />
+      )}
 
       {onRejudge && (
         <RejudgeControl
@@ -208,6 +236,33 @@ export function RoundBallotView({
         <div className="rounded-lg border p-4">
           <h3 className="text-sm font-semibold mb-2">Weighing</h3>
           <p className="text-sm text-muted-foreground">{decision.weighing_comparison}</p>
+        </div>
+      )}
+
+      {/* Judge adaptation — how the round would read to this judge type */}
+      {(decision.adaptation_successes.length > 0 || decision.adaptation_failures.length > 0) && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <h3 className="text-sm font-semibold">Judge Adaptation</h3>
+          {decision.adaptation_successes.length > 0 && (
+            <ul className="space-y-1">
+              {decision.adaptation_successes.map((s, i) => (
+                <li key={i} className="text-sm text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
+                  <span className="mt-0.5">✓</span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {decision.adaptation_failures.length > 0 && (
+            <ul className="space-y-1">
+              {decision.adaptation_failures.map((f, i) => (
+                <li key={i} className="text-sm text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                  <span className="mt-0.5">!</span>
+                  <span>{f}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

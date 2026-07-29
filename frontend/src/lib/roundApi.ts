@@ -12,6 +12,7 @@ import { apiFetch } from "@/lib/api";
 import type {
   CoachAnnotation,
   CoachNoteType,
+  OpponentBriefing,
   RoundArgument,
   RoundDecision,
   RoundDrill,
@@ -70,7 +71,13 @@ export function loadPreparation(
     frontlineIds?: string[];
     prepWorkspaceId?: string;
   },
-): Promise<{ approved_cards: number; approved_blockfiles: number; approved_frontlines: number; opponent_plan_id: string }> {
+): Promise<{
+  approved_cards: number;
+  approved_blockfiles: number;
+  approved_frontlines: number;
+  opponent_plan_id: string;
+  opponent_briefing?: OpponentBriefing;
+}> {
   return apiFetch(`${BASE}/${roundId}/load-preparation`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

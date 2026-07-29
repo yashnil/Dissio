@@ -68,6 +68,36 @@ export function estimateRoundTier(
   return { tier, label: ROUND_TIER_LABELS[tier], summary: TIER_SUMMARIES[tier], score };
 }
 
+/** Up to 3 short, human-readable reasons behind the tier estimate --
+ * reusing signals the backend already computed (decision.adaptation_failures
+ * is itself a set of judge-aware explanation strings) rather than inventing
+ * new scoring language. Never references a raw id. */
+export function tierReasons(
+  decision: RoundDecision,
+  studentSide: RoundSide,
+  allArguments: RoundArgument[],
+): string[] {
+  const reasons: string[] = [];
+  const won = decision.winner === studentSide;
+  reasons.push(won ? "Won the round on the flow." : "Lost the round on the flow.");
+
+  const studentDrops = allArguments.filter((a) => a.side === studentSide && a.status === "dropped").length;
+  if (studentDrops > 0) {
+    reasons.push(`${studentDrops} of your argument${studentDrops === 1 ? "" : "s"} dropped.`);
+  }
+
+  if (decision.weighing_comparison.trim().length > 0) {
+    reasons.push("Used comparative weighing to frame the round.");
+  }
+
+  for (const failure of decision.adaptation_failures) {
+    if (reasons.length >= 3) break;
+    reasons.push(failure);
+  }
+
+  return reasons.slice(0, 3);
+}
+
 /** One-line "what to work on next," derived from whichever skill the
  * generated drills show up most for. Never references a drill/round id. */
 export function nextFocusAdvice(drills: RoundDrill[]): string {

@@ -6,6 +6,7 @@
 import {
   estimateRoundTier,
   nextFocusAdvice,
+  tierReasons,
   ROUND_TIER_BADGE_CLASS,
   ROUND_TIER_LABELS,
 } from "@/lib/roundTierEstimate";
@@ -126,6 +127,54 @@ describe("ROUND_TIER_BADGE_CLASS", () => {
     for (const tier of Object.keys(ROUND_TIER_LABELS) as Array<keyof typeof ROUND_TIER_LABELS>) {
       expect(ROUND_TIER_BADGE_CLASS[tier].length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("tierReasons", () => {
+  it("leads with the win/loss outcome", () => {
+    const won = makeDecision({ winner: "pro" });
+    expect(tierReasons(won, "pro", [])[0]).toContain("Won");
+
+    const lost = makeDecision({ winner: "con" });
+    expect(tierReasons(lost, "pro", [])[0]).toContain("Lost");
+  });
+
+  it("mentions dropped arguments only on the student's own side", () => {
+    const decision = makeDecision({ winner: "pro" });
+    const args = [makeArg("AC1", "pro", "dropped"), makeArg("NC1", "con", "dropped")];
+    const reasons = tierReasons(decision, "pro", args).join(" ");
+    expect(reasons).toContain("1 of your argument");
+  });
+
+  it("omits a drops line entirely when nothing was dropped", () => {
+    const decision = makeDecision({ winner: "pro" });
+    const reasons = tierReasons(decision, "pro", []);
+    expect(reasons.some((r) => r.includes("dropped"))).toBe(false);
+  });
+
+  it("surfaces real adaptation-failure explanations from the backend", () => {
+    const decision = makeDecision({
+      winner: "pro",
+      adaptation_failures: ["Didn't do comparative weighing — flow judges expect this."],
+    });
+    const reasons = tierReasons(decision, "pro", []);
+    expect(reasons).toContain("Didn't do comparative weighing — flow judges expect this.");
+  });
+
+  it("never returns more than 3 reasons", () => {
+    const decision = makeDecision({
+      winner: "pro",
+      weighing_comparison: "Pro wins on magnitude.",
+      adaptation_failures: ["Failure A", "Failure B", "Failure C"],
+    });
+    const args = [makeArg("AC1", "pro", "dropped")];
+    expect(tierReasons(decision, "pro", args).length).toBeLessThanOrEqual(3);
+  });
+
+  it("never includes a raw decision id", () => {
+    const decision = makeDecision({ id: "11111111-2222-3333-4444-555555555555" });
+    const reasons = tierReasons(decision, "pro", []).join(" ");
+    expect(reasons).not.toContain(decision.id);
   });
 });
 
